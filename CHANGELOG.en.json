@@ -2,7 +2,7 @@
   {
     "version": "1.0.17",
     "date": "2026-11-05",
-    "name": "More accurate install checks",
+    "name": "More reliable installs and runs",
     "items": [
       {
         "t": "Installs are verified by running the program",
@@ -11,6 +11,18 @@
       {
         "t": "Health checks ignore files that cannot run",
         "d": "Files without execute permission are no longer reported as installed programs. Automatic installs also keep the platform components the CLI needs to run."
+      },
+      {
+        "t": "Finds a model CLI that has moved",
+        "d": "If the configured path stops working, SintBot looks for the same program in common install locations and keeps going. If it is nowhere to be found, the group gets a plain explanation and the operator gets an alert."
+      },
+      {
+        "t": "Clearer handling of lost logins and crashes",
+        "d": "A revoked login token now counts as an account problem, so the group can fail over and alert. A Codex run that exits with only an error gets the same treatment."
+      },
+      {
+        "t": "Fixed occasional garbled Chinese",
+        "d": "Characters split across output chunks no longer turn into garbage."
       }
     ]
   },

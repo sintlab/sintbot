@@ -1,5 +1,20 @@
 [
   {
+    "version": "1.0.17",
+    "date": "2026-11-05",
+    "name": "More accurate install checks",
+    "items": [
+      {
+        "t": "Installs are verified by running the program",
+        "d": "After installing a model CLI, setup runs it once to confirm its version. A file on disk or a clean installer exit no longer counts as success, and a failed check explains what went wrong and what to do next."
+      },
+      {
+        "t": "Health checks ignore files that cannot run",
+        "d": "Files without execute permission are no longer reported as installed programs. Automatic installs also keep the platform components the CLI needs to run."
+      }
+    ]
+  },
+  {
     "version": "1.0.16",
     "date": "2026-10-30",
     "name": "Safer AI-assisted setup, quieter design tools",

@@ -1,6 +1,6 @@
 {
   "name": "sintbot",
-  "version": "1.0.16",
+  "version": "1.0.17",
   "description": "Drive headless Claude Code (or Codex) from Slack / Feishu / WeCom group chats — one group, one project, swappable model brain. A standalone daemon, not a Claude Code plugin.",
   "bin": {
     "sbot": "bin/sbot.js",

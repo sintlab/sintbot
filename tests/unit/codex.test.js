@@ -156,7 +156,9 @@ test('runTurn: does NOT settle on turn.completed nor kill the child — waits fo
   assert.deepEqual(result.usage, { input_tokens: 10, output_tokens: 2 })
 })
 
-test('runTurn: no terminal event -> still resolves on close (crash path unchanged)', async () => {
+// 非零退出且没有任何 result 事件 ⇒ 不再 reject(那会让引擎走「执行失败」裸抛路:英文原话 + 网址进群、不过判据、零告警),
+// 而是合成一条出错结果,与 turn.failed 同一条路。退出码进文案头;stderr 原话留给账本。
+test('runTurn: 非零退出且无 result 事件 ⇒ resolve 成出错结果(不 reject);普通崩溃不标账号 / 瞬时类(对照)', async () => {
   const child = fakeChild()
   const p = runTurn({ prompt: 'hi', provider: { runner: 'codex' }, permissionMode: 'dontAsk', spawnFn: () => child })
   let state = 'pending'
@@ -164,8 +166,61 @@ test('runTurn: no terminal event -> still resolves on close (crash path unchange
   child.emitLine({ type: 'thread.started', thread_id: 'tid-1' })
   await new Promise((r) => setImmediate(r))
   assert.equal(state, 'pending') // no turn.completed -> must keep waiting on close
-  child.emit('close', 1) // codex died without a result -> non-zero close rejects
-  await assert.rejects(p, /codex exited 1/)
+  child.stderr.emit('data', Buffer.from("thread 'main' panicked: config parse error at line 3\n"))
+  child.emit('close', 1)
+  const { sessionId, result, code } = await p
+  assert.equal(state, 'resolved'); assert.equal(code, 1)
+  // 新开的轮崩着退出 ⇒ 不交回 thread.started 给的新 id(codex 多半没提交会话文件,落盘后下一轮 resume 会报 no rollout found)
+  assert.equal(sessionId, null, '崩着退出的新会话 id 不交回,与此前 reject 路不落盘同义')
+  assert.ok(result && result.isError && result.subtype === 'error')
+  assert.match(result.text, /^codex exited 1: thread 'main' panicked: config parse error/)
+  assert.equal(result.quota, undefined, '对照组:普通崩溃不标账号类'); assert.equal(result.transient, undefined)
+})
+
+// 真实案例:登录令牌被服务端吊销 ⇒ codex 刷模型清单 401 后直接退出,只有 stderr。合成结果要带 quota:account,引擎据此切备用 + 告警。
+test('runTurn: stderr 里是登录态被吊销的 401(真实原话)⇒ 合成结果标 account;干净退出 / 中止不合成', async () => {
+  const REVOKED = '2026-10-26T03:38:02.285809Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 401 Unauthorized: Encountered invalidated oauth token for user, failing request, url: https://chatgpt.com/backend-api/codex/models?client_version=0.162.0, auth error: 401, auth error code: token_revoked'
+  { const child = fakeChild()
+    const p = runTurn({ prompt: 'hi', provider: { runner: 'codex' }, permissionMode: 'dontAsk', spawnFn: () => child })
+    child.stderr.emit('data', Buffer.from(REVOKED + '\n'))
+    child.emit('close', 1)
+    const { result } = await p
+    assert.deepEqual(result.quota, { kind: 'account', window: null })
+    assert.equal(result.transient, undefined, '不是瞬时错,重试没用')
+    assert.ok(result.text.includes('token_revoked'), '原话留给账本') }
+  { const child = fakeChild() // stderr 前面有一大段 WARN(>800 字符)、致命行在最后 ⇒ 判据取尾仍命中(截头会漏)
+    const p = runTurn({ prompt: 'hi', provider: { runner: 'codex' }, permissionMode: 'dontAsk', spawnFn: () => child })
+    child.stderr.emit('data', Buffer.from('WARN noisy startup line '.repeat(60) + '\n' + REVOKED + '\n'))
+    child.emit('close', 1)
+    const { result } = await p
+    assert.equal(result.quota && result.quota.kind, 'account', '判据要对 stderr 的尾部生效'); assert.ok(result.text.includes('token_revoked')) }
+  { const child = fakeChild() // 续接的轮崩着退出 ⇒ 交回传入的旧 id(它的会话文件本来就在),不是本轮 thread.started 的新 id
+    const p = runTurn({ prompt: 'hi', provider: { runner: 'codex' }, permissionMode: 'dontAsk', sessionId: 'old-1', spawnFn: () => child })
+    child.emitLine({ type: 'thread.started', thread_id: 'old-1' })
+    child.stderr.emit('data', Buffer.from(REVOKED + '\n'))
+    child.emit('close', 1)
+    const { sessionId, result } = await p
+    assert.equal(sessionId, 'old-1'); assert.equal(result.quota.kind, 'account') }
+  { const child = fakeChild() // 对照:正常 turn.failed 后退出 ⇒ 新 id 照旧交回(那条路 codex 自己收了尾,会话文件在)
+    const p = runTurn({ prompt: 'hi', provider: { runner: 'codex' }, permissionMode: 'dontAsk', spawnFn: () => child })
+    child.emitLine({ type: 'thread.started', thread_id: 'tid-9' })
+    child.emitLine({ type: 'turn.failed', error: { message: 'workspace routing discovery unauthorized (401)' } })
+    child.emit('close', 0)
+    const { sessionId, result } = await p
+    assert.equal(sessionId, 'tid-9'); assert.equal(result.quota.kind, 'account') }
+  { const child = fakeChild() // 对照:退出码 0 且无 result ⇒ 照旧 result 为 null(引擎按「无输出」处理),不合成
+    const p = runTurn({ prompt: 'hi', provider: { runner: 'codex' }, permissionMode: 'dontAsk', spawnFn: () => child })
+    child.stderr.emit('data', Buffer.from(REVOKED + '\n'))
+    child.emit('close', 0)
+    const { result } = await p
+    assert.equal(result, null) }
+  { const child = fakeChild() // 对照:人为中止后的非零退出 ⇒ 仍是 aborted 形状,不合成出错结果
+    const ac = new AbortController()
+    const p = runTurn({ prompt: 'hi', provider: { runner: 'codex' }, permissionMode: 'dontAsk', softStopGraceMs: 10_000, signal: ac.signal, spawnFn: () => child })
+    await new Promise((r) => setImmediate(r))
+    ac.abort(); child.emit('close', 143)
+    const { result, aborted } = await p
+    assert.equal(aborted, true); assert.equal(result, null) }
 })
 
 // ③ codex 收尾时序: real-machine data confirmed close-lag ~2–3s, so the runner stays SILENT
@@ -334,4 +389,18 @@ test('normalizeEvent: codex 用量上限 ⇒ quota;普通失败不标', () => {
   const b = normalizeEvent({ type: 'error', message: limit })
   assert.deepEqual(b.quota, { kind: 'quota', window: null })
   assert.equal(normalizeEvent({ type: 'turn.failed', error: { message: 'something broke' } }).quota, undefined)
+  // 登录态被吊销(真实原话)⇒ account:引擎据此切备用 + 运维告警(此前这句不在判据里,401 零告警)
+  const c = normalizeEvent({ type: 'turn.failed', error: { message: 'workspace routing discovery unauthorized (401)' } })
+  assert.ok(c.isError); assert.deepEqual(c.quota, { kind: 'account', window: null }); assert.equal(c.transient, undefined, '不是瞬时错,重试没用')
+})
+
+// 模型程序找不到:与 claude runner 同口径 —— 人话进群、路径进日志、code 给引擎发告警
+test('runTurn: spawn ENOENT ⇒ 人话 + code=AGENT_BIN_MISSING,路径只进 log', async () => {
+  const child = fakeChild(), logs = []
+  const p = runTurn({ prompt: 'hi', provider: { runner: 'codex' }, bin: '/nonexistent/x/codex', permissionMode: 'dontAsk', log: (m) => logs.push(m), spawnFn: () => child })
+  await new Promise((r) => setImmediate(r))
+  child.emit('error', Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }))
+  const e = await p.then(() => null, (x) => x)
+  assert.ok(e); assert.equal(e.code, 'AGENT_BIN_MISSING'); assert.equal(e.message, '模型程序在这台机器上找不到了,需要管理员处理')
+  assert.ok(logs.some((m) => /cannot find agent binary '\/nonexistent\/x\/codex'/.test(m)))
 })

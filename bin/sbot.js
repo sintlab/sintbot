@@ -359,6 +359,9 @@ async function cmdAgentRun(rest) {
   process.stderr.write(dim(`▶ provider=${provName} model=${model || '(default)'} base=${provider.baseUrl || 'anthropic'}`) + '\n')
 
   try {
+    // 出错结果不一定经 onEvent 流出来(codex 推理强度回退的截留路、只有 stderr 就崩的合成路都只在 resolve 里给):
+    // 没打过就在收尾时补打一行,否则排障时只见退出码 1、一个字不说。
+    let errShown = false
     const { sessionId, result } = await runner.runTurn({
       bin: cfg.agent.bin,
       prompt,
@@ -369,9 +372,10 @@ async function cmdAgentRun(rest) {
       permissionMode: 'dontAsk', // one-shot CLI: fail-closed floor (no global setting; per-group modes live on the console cards)
       // one-shot CLI has no project context ⇒ no allow list (read-only under dontAsk).
       // Tool permissions are per-project — use a bound group for tool-using turns.
-      onEvent: renderEvent,
+      onEvent: (ev) => { if (ev && ev.type === 'result' && ev.isError) errShown = true; renderEvent(ev) },
     })
     verify.recordTurn(provider, !(result && result.isError), (result && result.text) || '') // doctor / 控制台据此报「能用」或「key 不对」
+    if (result && result.isError && !errShown) renderEvent(result)
     if (result && result.isError) {
       // 出错的轮次没有可续的上下文,不给 resume 提示;key 型模型认证失败时指一下去哪换
       if (result.authFailed) process.stderr.write(dim(`  换 key:控制台「模型」页,或重跑 sintbot setup`) + '\n')

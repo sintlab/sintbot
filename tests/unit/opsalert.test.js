@@ -237,3 +237,17 @@ test('opsalert: platform-issue —— 被挤掉 / 工具授权过期两种文案
   assert.ok(!/sbot|wecom-cli|~\//.test(tg), "告警文案零工具名 / 路径")
   t = DOWN_COOLDOWN_MS + 1; assert.equal(g.allow({ kind: 'platform-issue', platform: 'wecom', issue: 'kicked' }), true)
 })
+
+// 程序缺失(cause='binary'):原话带安装路径与产品名,告警群同样只说人话;这档不切备用,文案说清「装回之前每轮都失败」
+test('opsalert: 程序缺失文案 —— 机器名 · 模型 · 群名 · 成因与怎么救,零路径零产品名;与账号类分开去重', () => {
+  const t = alertText({ kind: 'provider-down', provider: 'claude', cause: 'binary', chatId: 'G', source: 'turn', detail: '模型程序在这台机器上找不到了,需要管理员处理' }, { instance: 'host-a', groupName: 'Demo' })
+  assert.match(t, /^🚨 【模型程序缺失】host-a · claude\n/)
+  assert.match(t, /群「Demo」的一轮因为在这台机器上找不到该模型的程序而失败/)
+  assert.match(t, /升级或迁移/); assert.match(t, /装回之前该模型的群每轮都会失败/)
+  assert.doesNotMatch(t, NO_TOOLNAME); assert.doesNotMatch(t, /opt\/homebrew|cannot find|Claude Code|PATH/i)
+  assert.match(alertText({ kind: 'provider-down', provider: 'claude', cause: 'binary', source: 'turn' }, {}), /有群的一轮/)
+  const gate = createGate(() => 1_000_000)
+  assert.equal(gate.allow({ kind: 'provider-down', provider: 'claude', cause: 'binary' }), true)
+  assert.equal(gate.allow({ kind: 'provider-down', provider: 'claude', cause: 'binary' }), false)
+  assert.equal(gate.allow({ kind: 'provider-down', provider: 'claude', cause: 'account' }), true, '程序缺失与账号异常是两件事,各报各的')
+})

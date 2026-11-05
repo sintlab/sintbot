@@ -8,8 +8,9 @@
 // (onAlert 钩子),bin 接线把文案发到 `alerts.chatId`。core 不认 runner 名、不碰错误原话以外的东西。
 //
 // 事件形状(引擎吐的):
-//   { kind:'provider-down', provider, cause:'account'|'quota', window:'weekly'|'session'|null, until:ms|null,
-//     chatId?, source:'turn'|'probe', detail? }   —— 某模型不可用(出错轮判出来的 / 额度探针判出来的)
+//   { kind:'provider-down', provider, cause:'account'|'quota'|'binary', window:'weekly'|'session'|null, until:ms|null,
+//     chatId?, source:'turn'|'probe', detail? }   —— 某模型不可用(出错轮判出来的 / 额度探针判出来的);
+//     binary = 模型程序在配置路径与各候选位置都找不到(比如 CLI 自更新换了安装位置),只从出错轮来、不切模型
 //   { kind:'provider-up',   provider }                                    —— 探针确认恢复(之前标过不可用)
 //   { kind:'failover', chatId, from, to, home, cause, until, back }       —— 某群自动切换(back=true 是切回)
 //   { kind:'platform-down', platform, downMs, detail }                     —— 某平台长连接断开超过宽限期(createConnWatch 吐)
@@ -126,7 +127,7 @@ function createConnWatch({ now = () => Date.now(), setTimer = setTimeout, clearT
 }
 
 const windowLabel = (w) => (w === 'weekly' ? '一周' : w === 'session' ? '5 小时' : '')
-const causeLabel = (c) => (c === 'account' ? '账号不可用' : '额度用完')
+const causeLabel = (c) => (c === 'account' ? '账号不可用' : c === 'binary' ? '程序缺失' : '额度用完')
 
 // 事件 → 告警正文 | ''。ctx:{ instance(这台机器怎么自称) · groupName(事发群名,可空) · when(距重置的人话,可空) }
 function alertText(ev, ctx = {}) {
@@ -141,6 +142,10 @@ function alertText(ev, ctx = {}) {
       lines.push(ev.source === 'probe' ? '额度探针读到登录态不可用' : `${group || '有群'}的一轮因账号不可用失败`)
       lines.push('请尽快检查该模型的登录态与账号状态;配了备用模型的群会自动切换,没配的群每轮都会失败。')
       return lines.join('\n')
+    }
+    if (ev.cause === 'binary') {
+      // 路径只进日志不进群(同上口径);这档不切备用 —— 装回去就好,切模型反而清会话
+      return `🚨 【模型程序缺失】${where}${ev.provider}\n${group || '有群'}的一轮因为在这台机器上找不到该模型的程序而失败(配置的路径与常见安装位置都没有)\n常见成因是刚升级或迁移过它;请在这台机器上重新安装或改回配置路径(日志里有原路径)。装回之前该模型的群每轮都会失败。`
     }
     const win = windowLabel(ev.window)
     const head = `⏳ 【模型额度用完】${where}${ev.provider}${win ? `(${win}窗口)` : ''}${ctx.when ? ` · ${ctx.when}重置` : ''}`

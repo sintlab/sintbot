@@ -2727,6 +2727,8 @@ class Engine {
       return out
     } catch (e) {
       if (cardP) { try { await cardP } catch {} } // settle a mid-flight creation first
+      // 模型程序找不到(runner 标 code,文案已是人话):让运维告警群知道 —— 否则只有人恰好开了会话才会发现
+      if (e && e.code === 'AGENT_BIN_MISSING') this._alert({ kind: 'provider-down', provider: name, cause: 'binary', chatId: msg.chatId, source: 'turn', detail: e.message })
       if (card) { await finishCard(red((buf ? buf + '\n\n' : '') + T.failedPrefix + (e && e.message))) }
       else { await reply(T.failedPrefix + (e && e.message)) }
       return { status: 'failed', provider: name, tokens: null, preview: String((e && e.message) || '').slice(0, 120), reply: redact(fullText || ''), tools: [...toolCounts.entries()].map(([name, count]) => ({ name, count })), errText: turnErrText('exception', (e && e.message) || '') }

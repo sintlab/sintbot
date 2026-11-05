@@ -9,6 +9,9 @@ const CLAUDE_WEEKLY = "You've hit your weekly limit · resets Oct 1 at 9am (Asia
 const CODEX_USAGE = "You've hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 2:30 PM."
 const ON_HOLD = "Your account is on hold and can't use Claude Code. View details or appeal: https://claude.ai/restricted"
 const OAUTH = 'Failed to authenticate: OAuth session expired and could not be refreshed'
+// 真实案例:两台共用一份凭据各自刷新(refresh token 会轮换)⇒ 服务端整族吊销;turn.failed 原话与 stderr 原话各一句
+const REVOKED_TURN = 'workspace routing discovery unauthorized (401)'
+const REVOKED_STDERR = 'unexpected status 401 Unauthorized: Encountered invalidated oauth token for user, failing request, url: https://chatgpt.com/backend-api/codex/models?client_version=0.162.0, auth error: 401, auth error code: token_revoked'
 
 test('quotaerr: 额度用尽 ⇒ quota(能分出窗口就分);账号 / 登录态 ⇒ account', () => {
   assert.deepEqual(classifyQuota(CLAUDE_WEEKLY), { kind: 'quota', window: 'weekly' })
@@ -19,6 +22,10 @@ test('quotaerr: 额度用尽 ⇒ quota(能分出窗口就分);账号 / 登录态
   assert.deepEqual(classifyQuota(OAUTH), { kind: 'account', window: null })
   // 账本里 turnErrText 会带 subtype 前缀,照样认
   assert.equal(classifyQuota('error_during_execution: ' + OAUTH).kind, 'account')
+  // 登录态被服务端吊销(真实案例):turn.failed 原话 · 重连中的 error 事件原话 · stderr 原话,三种拼法都算账号类
+  assert.deepEqual(classifyQuota(REVOKED_TURN), { kind: 'account', window: null })
+  assert.deepEqual(classifyQuota('Reconnecting... 2/5 (' + REVOKED_TURN + ')'), { kind: 'account', window: null })
+  assert.deepEqual(classifyQuota(REVOKED_STDERR), { kind: 'account', window: null })
 })
 
 test('quotaerr: 瞬时错 / 普通报错 / 裸数字 / 正文里顺口提到 limit 都不算(宁漏不误)', () => {
@@ -27,6 +34,7 @@ test('quotaerr: 瞬时错 / 普通报错 / 裸数字 / 正文里顺口提到 lim
     'API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
     'Rate limit reached for gpt-x, please retry after 20s', // 限流是瞬时错,不是额度
     'exit code 403', 'the limit of this array is 10', 'ENOENT ./x.js', '', null, undefined,
+    'HTTP 401', 'status 401', 'unauthorized access to /etc/shadow', // 裸数字 / 裸 unauthorized 不认,要两样同时出现
   ]) assert.equal(classifyQuota(s), null, `不该判为额度 / 账号类:${s}`)
 })
 
@@ -52,7 +60,7 @@ test('parseResetAt: 只有时刻 ⇒ 按产品时区取下一次到达;已过就
 
 test('parseResetAt: 解不出就 null,绝不编一个', () => {
   const now = Date.parse('2026-09-28T11:22:34+08:00')
-  for (const s of [ON_HOLD, OAUTH, 'resets 9', 'resets soon', 'try again later', '', null]) assert.equal(parseResetAt(s, { now }), null, `不该解出时刻:${s}`)
+  for (const s of [ON_HOLD, OAUTH, REVOKED_TURN, 'resets 9', 'resets soon', 'try again later', '', null]) assert.equal(parseResetAt(s, { now }), null, `不该解出时刻:${s}`)
   assert.equal(parseResetAt('resets at 25pm', { now }), null)
 })
 

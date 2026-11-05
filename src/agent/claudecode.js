@@ -14,6 +14,7 @@
 // See DESIGN.md §1 (process model) / §4.1 (permissions).
 
 const { spawn } = require('node:child_process')
+const { StringDecoder } = require('node:string_decoder')
 const { ensureProxy, proxyBaseFor } = require('./visionproxy')
 
 // Always-on 群项目基础能力: auto-allowed regardless of preset (even read-only) so the
@@ -267,7 +268,8 @@ function runTurn({
       // reach is bounded by the per-project allow list, not by a directory sandbox.)
       if (workdir) args.push('--add-dir', workdir)
 
-      const { file, spawnArgs } = resolveSpawn(bin, args)
+      const { file, spawnArgs, fallback } = resolveSpawn(bin, args)
+      if (fallback) log(`配置的 agent 路径 '${bin}' 不存在,本轮改用 ${fallback} —— 请把配置改回正确路径`) // 兜底只救急,配置仍是错的
       const child = spawnFn(file, spawnArgs, {
         env: buildEnv(provider, baseUrlOverride, extraEnv),
         cwd: workdir || process.cwd(),
@@ -341,8 +343,9 @@ function runTurn({
         else signal.addEventListener('abort', onAbort, { once: true })
       }
 
+      const stdoutDecoder = new StringDecoder('utf8') // 一个汉字可能被拆在两个分块里,逐块 toString 会变成乱码
       child.stdout.on('data', (chunk) => {
-        buf += chunk.toString('utf8')
+        buf += stdoutDecoder.write(chunk)
         let nl
         while ((nl = buf.indexOf('\n')) >= 0) {
           const line = buf.slice(0, nl).trim()
@@ -383,8 +386,11 @@ function runTurn({
       child.stderr.on('data', (c) => { stderr += c.toString('utf8') })
 
       child.on('error', (err) => finish(() => {
+        // 配置路径与各候选位置都没有:群里只说人话(这条 message 会原样进群卡与账本),路径与产品名只进日志。
+        // 英文原话带安装路径,不能进群。code 给引擎认(发运维告警),不按文案判。
         if (err.code === 'ENOENT') {
-          return reject(new Error(`cannot find agent binary '${bin}' on PATH — is Claude Code installed?`))
+          log(`cannot find agent binary '${bin}' (and no fallback copy on PATH / ~/.local/bin / nvm) — is Claude Code installed?`)
+          return reject(Object.assign(new Error('模型程序在这台机器上找不到了,需要管理员处理'), { code: 'AGENT_BIN_MISSING' }))
         }
         reject(err)
       }))

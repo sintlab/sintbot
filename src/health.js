@@ -6,6 +6,7 @@ const fs = require('node:fs')
 const net = require('node:net')
 const path = require('node:path')
 const { probeVersion, supportsFlag } = require('./agent/claudecode')
+const { locateBin } = require('./agent/winexec') // 配置路径指空时 daemon 会临时改用别处那份,doctor 得把这事说出来
 const codex = require('./agent/codexcode')
 const claudestatus = require('./agent/claudestatus')
 const codexstatus = require('./agent/codexstatus')
@@ -84,6 +85,9 @@ async function checkHealth(cfg, opts = {}) {
 
   const v = await probeVersion(cfg.agent.bin)
   add(v.ok ? 'ok' : 'fail', 'claude', v.ok ? v.version : v.error)
+  // 探针经 resolveSpawn 会自动用兜底那份 ⇒ 上一行会绿;但配置仍是错的,下次兜底那份也没了就全军覆没
+  const loc = locateBin(cfg.agent.bin)
+  if (loc.fallback) add('warn', 'agent.bin', `配置的路径 ${cfg.agent.bin} 不存在,实际在用 ${loc.fallback} —— 请改回配置`)
   // 长会话自动压缩:老 CLI 不认 `--autocompact`,spawn 侧会自动不传(否则每轮必崩)。
   // ⚠ 但**降级必须看得见** —— 不说的话症状是「会话越长越糊」,没人会想到是 CLI 版本(教训 26)。
   // 阈值为 0 = operator 主动关掉,不必报。
@@ -141,7 +145,7 @@ async function checkHealth(cfg, opts = {}) {
     const a = cfg.alerts && cfg.alerts.chatId != null ? String(cfg.alerts.chatId).trim() : ''
     if (!a) add('ok', 'alerts', '未配运维告警群(可选)— 模型账号异常 / 额度用完只会在出事的群里说')
     else if (cfg.groups && cfg.groups[a]) add('warn', 'alerts', '运维告警群同时绑定了项目 — 它应保持未绑定,否则助手会在里面干活、告警被对话淹掉')
-    else add('ok', 'alerts', '运维告警群已配 — 模型账号异常 / 额度用完 / 自动切换 / 平台连接中断会通知到那里' + (require('./config').chatPlatform(cfg, a) === 'wecom' ? '(企业微信群:要先在群里 @ 过机器人,否则推不进去)' : ''))
+    else add('ok', 'alerts', '运维告警群已配 — 模型账号异常 / 额度用完 / 模型程序缺失 / 自动切换 / 平台连接中断会通知到那里' + (require('./config').chatPlatform(cfg, a) === 'wecom' ? '(企业微信群:要先在群里 @ 过机器人,否则推不进去)' : ''))
   }
 
   // codex 登录态:`codex login status` 只读本机状态(已登录退出码 0)。provider 行和指向 codex 的备用模型行

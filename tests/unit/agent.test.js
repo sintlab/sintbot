@@ -349,3 +349,21 @@ test('normalizeEvent: 「No conversation found with session ID」标 sessionGone
   const ok = normalizeEvent({ type: 'result', subtype: 'success', is_error: false, result: '日志里出现过 No conversation found with session ID 这句', session_id: 's' })
   assert.equal(ok.sessionGone, undefined, '成功轮的正文提到这句也不算')
 })
+
+// 模型程序找不到(配置路径与各候选位置都没有):群里只说人话,路径只进日志;code 给引擎发运维告警(原话带路径,不能进群)
+test('runTurn: spawn ENOENT ⇒ 错误文案是人话(零路径零产品名)+ code=AGENT_BIN_MISSING,路径进 log;别的 spawn 错照旧裸抛', async () => {
+  { const child = fakeClaudeChild(), logs = []
+    const p = runTurn({ prompt: 'hi', provider: {}, bin: '/nonexistent/x/claude', closeGraceMs: 20, log: (m) => logs.push(m), spawnFn: () => child })
+    await new Promise((r) => setImmediate(r))
+    child.emit('error', Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }))
+    const e = await p.then(() => null, (x) => x)
+    assert.ok(e); assert.equal(e.code, 'AGENT_BIN_MISSING')
+    assert.equal(e.message, '模型程序在这台机器上找不到了,需要管理员处理')
+    assert.ok(logs.some((m) => /cannot find agent binary '\/nonexistent\/x\/claude'/.test(m)), '路径在日志里,排障够用') }
+  { const child = fakeClaudeChild()
+    const p = runTurn({ prompt: 'hi', provider: {}, bin: '/nonexistent/x/claude', closeGraceMs: 20, spawnFn: () => child })
+    await new Promise((r) => setImmediate(r))
+    child.emit('error', Object.assign(new Error('spawn EACCES'), { code: 'EACCES' }))
+    const e = await p.then(() => null, (x) => x)
+    assert.ok(e && e.code === 'EACCES' && /EACCES/.test(e.message), '对照组:非 ENOENT 不改口径') }
+})

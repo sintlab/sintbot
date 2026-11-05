@@ -11,6 +11,7 @@
 // confirmed. The event mapping mirrors the samples captured there.
 
 const { spawn } = require('node:child_process')
+const { StringDecoder } = require('node:string_decoder')
 const { IS_WIN, resolveSpawn } = require('./winexec')
 const { classifyTransient } = require('./transienterr') // 瞬时错(过载 / 限流)判据,与 claude runner 共用
 const { classifyQuota } = require('./quotaerr') // 额度 / 账号类判据(切备用模型的依据),与 claude runner 共用
@@ -228,7 +229,8 @@ function runOnce(opts, effort) {
     if (extraEnv) Object.assign(env, extraEnv)
 
     const args = buildArgs({ sessionId, model: model || provider.model, workdir, permissionMode, reasoningEffort: effort, autocompactTokens })
-    const { file, spawnArgs } = resolveSpawn(bin, args)
+    const { file, spawnArgs, fallback } = resolveSpawn(bin, args)
+    if (fallback) log(`配置的 agent 路径 '${bin}' 不存在,本轮改用 ${fallback} —— 请把配置改回正确路径`) // 与 claude runner 同一条兜底
     const child = spawnFn(file, spawnArgs, {
       env,
       cwd: workdir || process.cwd(),
@@ -291,8 +293,9 @@ function runOnce(opts, effort) {
       else signal.addEventListener('abort', onAbort, { once: true })
     }
 
+    const stdoutDecoder = new StringDecoder('utf8') // 一个汉字可能被拆在两个分块里,逐块 toString 会变成乱码
     child.stdout.on('data', (chunk) => {
-      buf += chunk.toString('utf8') // Node reads bytes → UTF-8, no PowerShell GBK pipe issue
+      buf += stdoutDecoder.write(chunk) // Node reads bytes → UTF-8, no PowerShell GBK pipe issue
       let nl
       while ((nl = buf.indexOf('\n')) >= 0) {
         const line = buf.slice(0, nl).trim()
@@ -312,7 +315,11 @@ function runOnce(opts, effort) {
     child.stderr.on('data', (c) => { stderr += c.toString('utf8') })
 
     child.on('error', (err) => done(() => {
-      if (err.code === 'ENOENT') return reject(new Error(`cannot find agent binary '${bin}' on PATH — is Codex CLI installed? (npm i -g @openai/codex)`))
+      // 人话进群、原话进日志、code 给引擎发告警 —— 与 claude runner 同口径
+      if (err.code === 'ENOENT') {
+        log(`cannot find agent binary '${bin}' (and no fallback copy) — is Codex CLI installed? (npm i -g @openai/codex)`)
+        return reject(Object.assign(new Error('模型程序在这台机器上找不到了,需要管理员处理'), { code: 'AGENT_BIN_MISSING' }))
+      }
       reject(err)
     }))
 
@@ -326,8 +333,17 @@ function runOnce(opts, effort) {
         if (lagMs > CLOSE_LAG_WARN_MS) log(`codex 收尾偏慢: 答案→close ${lagMs}ms(rollout 落盘, code=${code})— 正常约 2–3s;若持续接近 20s 兜底请调大 agent.hardReleaseMs`)
       }
       done(() => {
+        // 只有 stderr、没有任何 result 事件就非零退出(真实案例:登录令牌被吊销 ⇒ 刷模型清单 401 后直接退出)。
+        // 此前这里 reject ⇒ 引擎走「执行失败」裸抛路:英文原话 + 网址原样进群、不过额度 / 账号判据、零告警。
+        // 现在合成一条 error result,与 turn.failed 同一条路:瞬时 / 账号判据 → 人话 / 切备用 / 告警;原话仍留给账本与日志。
+        // 退出码放文案头,排障时一眼分得清是进程崩了还是服务端拒了。引擎零改动。
         if (code !== 0 && !lastResult && !aborted) {
-          return reject(new Error(`codex exited ${code}: ${stderr.trim().slice(0, 800) || '(no stderr)'}`))
+          // 取尾不取头:致命的那行通常在最后,前面可能是一大段 WARN;截了头判据会漏、原话进群零告警(审查提醒)
+          lastResult = normalizeEvent({ type: 'error', message: `codex exited ${code}: ${stderr.trim().slice(-800) || '(no stderr)'}` })
+          // 崩着退出时 codex 多半还没提交可续接的会话文件 ⇒ 不把本轮刚拿到的新 thread id 交回去:引擎会照常落盘,
+          // 下一轮 resume 它就报「no rollout found」,而引擎对这种失败没有自愈路(只有空轮 / 被掐断的会话会换新会话)。
+          // 续接的轮仍交回传入的旧 id(它的文件本来就在)。与此前 reject 路「不落盘」同一语义。
+          capturedSessionId = sessionId || null
         }
         resolve({ sessionId: capturedSessionId, result: lastResult, code, aborted })
       })

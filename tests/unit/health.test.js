@@ -11,13 +11,30 @@ const net = require('node:net')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { checkHealth } = require('../../src/health')
+const { checkHealth, whichSync } = require('../../src/health')
 
 const base = () => ({ _path: '/some/config.json', agent: { bin: '__sbot_no_such_bin__', permissionMode: 'dontAsk' }, providers: {}, groups: {} })
 
 // 空 home(无任何 MCP 配置)——大多数用例用它,保证没有 browser: 行混进来
 const emptyHome = fs.mkdtempSync(path.join(os.tmpdir(), 'sbot-health-'))
 const check = (cfg) => checkHealth(cfg, { home: emptyHome })
+
+test('whichSync: rejects directories and non-executable placeholders, finds a runnable alternative', { skip: process.platform === 'win32' }, (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sbot-which-'))
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  const first = path.join(dir, 'first'); const second = path.join(dir, 'second')
+  fs.mkdirSync(first); fs.mkdirSync(second)
+  const bad = path.join(first, 'claude'); const good = path.join(second, 'claude')
+  fs.writeFileSync(bad, 'echo native binary not installed\n', { mode: 0o644 })
+  fs.writeFileSync(good, '#!/bin/sh\necho "2.1.318 (Claude Code)"\n', { mode: 0o755 })
+  assert.equal(whichSync(first), null)
+  assert.equal(whichSync(bad), null)
+  assert.equal(whichSync(good), good, 'control: an executable file is accepted')
+  const oldPath = process.env.PATH
+  t.after(() => { if (oldPath === undefined) delete process.env.PATH; else process.env.PATH = oldPath })
+  process.env.PATH = [first, second].join(path.delimiter)
+  assert.equal(whichSync('claude'), good)
+})
 
 test('health: 配置文件组 / 其他人可读 ⇒ config 行 warn 并给出 chmod 600;0600 ⇒ ok', { skip: process.platform === 'win32' }, async () => {
   const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'sbot-health-cfg-')), 'config.json')

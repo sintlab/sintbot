@@ -33,11 +33,13 @@ SintBot 每一轮都调用本机的 `claude` 命令行干活(Codex 群调用 `co
 
 **安装**,任选一种:
 
-- 让向导装:`sintbot setup` 在终端里运行时发现没装就直接装(就是下一条的 npm 命令,源连不上会自动换镜像)。
-- npm:`npm i -g @anthropic-ai/claude-code`(国内连不上官方源时加 `--registry https://registry.npmmirror.com`)。
-- 官方安装程序:见 [Claude Code 安装说明](https://code.claude.com/docs/zh-CN/setup)。
+- 让向导装:`sintbot setup` 在终端里运行时发现没装、或 `--version` 跑不通就直接装(就是下一条的 npm 命令,源连不上会自动换镜像)。安装后必须通过 `--version` 校验才算成功。
+- npm:`npm i -g @anthropic-ai/claude-code --include=optional --ignore-scripts=false`。平台二进制属于可选依赖,还需要执行安装后脚本;国内连不上官方源时加 `--registry https://registry.npmmirror.com`。
+- 官方原生安装程序(手动安装推荐):见 [Claude Code 安装说明](https://code.claude.com/docs/zh-CN/setup)。选一种方式,避免多份安装互相覆盖。
 
-装好后 `claude --version` 能打出版本号即可。升级用 `claude update`(npm 装的也可以 `npm i -g @anthropic-ai/claude-code@latest`)。
+装好后 `claude --version` 能打出版本号即可。升级用 `claude update`(npm 装的也可以 `npm i -g @anthropic-ai/claude-code@latest --include=optional --ignore-scripts=false`),升级后重新验证。
+
+升级后若出现 `permission denied` 或 `native binary not installed`,先用 `command -v claude`(Windows 用 `where.exe claude`)核对入口,再按所选方式完整重装,运行 `claude --version` 和 `sintbot doctor` 验证。包版本或 npm 退出码不能证明程序可用;给占位文件或残缺二进制补执行权限也无法修复。保留 `~/.claude` 和 `~/.claude.json` 中的配置与会话历史。
 
 **认证**,按要用的模型选一种:
 

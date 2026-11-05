@@ -1461,26 +1461,32 @@ async function cmdSetup(rest) {
     const nodeOk = Number(process.versions.node.split('.')[0]) >= 22
     if (!fromInstaller || !nodeOk) process.stdout.write(`  ${nodeOk ? cyan('✓') : red('✗')} Node ${process.versions.node}${nodeOk ? '' : red(T('(需要 ≥ 22)', ' (needs 22 or later)'))}\n`)
     const installDep = (name, binName) => {
-      const r = installdeps.installGlobal(name, { log: (l) => process.stdout.write(dim('  ' + l) + '\n') })
+      const r = installdeps.installGlobal(name, { bin: binName, log: (l) => process.stdout.write(dim('  ' + l) + '\n') })
       const bin = whichSync(binName)
       if (r.ok && bin) { process.stdout.write(`  ${cyan('✓')} ${T('已安装', 'Installed')} ${binName} ${dim(bin)}\n`); return bin }
+      if (r.verification && !r.verification.ok) {
+        process.stdout.write(`  ${red('✗')} ${T(`安装后 ${binName} --version 校验失败:${r.verification.error}。请检查 PATH 或重新完整安装;不要仅凭文件存在、包版本或 npm 退出码判断成功。`, `Post-install ${binName} --version verification failed: ${r.verification.error}. Check PATH or reinstall completely; a file, package version or successful npm exit is not proof of a working CLI.`)}\n`)
+        return null
+      }
       if (r.ok) {
         const pre = installdeps.globalPrefix()
         const dir = pre ? (process.platform === 'win32' ? pre : path.join(pre, 'bin')) : T('npm prefix -g 下的 bin 目录', 'the bin folder under npm prefix -g')
         process.stdout.write(`  ${yellow('!')} ${T(`装好了,但当前 PATH 里找不到 ${binName} —— 把 ${dir} 加进 PATH,重开终端再跑一次 sintbot setup`, `Installed, but ${binName} is not on PATH: add ${dir} to PATH, open a new terminal and run sintbot setup again`)}\n`)
         return null
       }
-      process.stdout.write(`  ${red('✗')} ${T(`安装失败(退出码 ${r.code})—— 多半是 npm 全局目录没有写权限,做法见 https://github.com/sintlab/sintbot/blob/main/docs/zh-CN/install.md「一键安装」`, `Install failed (exit code ${r.code}), most likely the npm global folder is not writable; see https://github.com/sintlab/sintbot/blob/main/docs/install.md`)}\n`)
+      process.stdout.write(`  ${red('✗')} ${T(`安装失败(退出码 ${r.code})—— 请查看上方 npm 错误,排查见 https://github.com/sintlab/sintbot/blob/main/docs/zh-CN/install.md「一键安装」`, `Install failed (exit code ${r.code}); check the npm error above and see https://github.com/sintlab/sintbot/blob/main/docs/install.md`)}\n`)
       return null
     }
     const claudeName = (raw.agent && raw.agent.bin) || 'claude'
     let claudeBin = whichSync(claudeName)
-    if (claudeBin) process.stdout.write(`  ${cyan('✓')} claude ${dim(claudeBin)}\n`)
+    const claudeCheck = installdeps.probeCli(claudeBin || claudeName)
+    if (!claudeCheck.ok) claudeBin = null
+    if (claudeBin) process.stdout.write(`  ${cyan('✓')} claude ${dim(claudeCheck.version)} ${dim(claudeBin)}\n`)
     else {
-      process.stdout.write(`  ${red('✗')} ${T('没找到 claude(Claude Code CLI)—— 每一轮都靠它干活', 'claude (Claude Code CLI) not found; every turn runs on it')}\n`)
+      process.stdout.write(`  ${red('✗')} ${T('claude(Claude Code CLI)不可用 —— 每一轮都靠它干活', 'claude (Claude Code CLI) is unavailable; every turn runs on it')} ${dim(claudeCheck.error)}\n`)
       // 必需组件:终端里直接装,不问(1.0.13,用户定「安装要精简」);不在终端里(管道、CI)不替他装
       if (process.stdin.isTTY) claudeBin = installDep('claude', claudeName)
-      else process.stdout.write(dim(T(`  稍后自己装:npm i -g ${installdeps.PACKAGES.claude}`, `  Install it later: npm i -g ${installdeps.PACKAGES.claude}`)) + '\n')
+      else process.stdout.write(dim(T(`  稍后自己装:npm i -g ${installdeps.PACKAGES.claude} --include=optional --ignore-scripts=false`, `  Install it later: npm i -g ${installdeps.PACKAGES.claude} --include=optional --ignore-scripts=false`)) + '\n')
     }
     // Claude 登录态留到模型步一起报,那里据此决定推荐走哪条路。官方非交互子命令,0.2s、不联网;
     // 老版本 CLI 没有它(ok:false)⇒ null,当作没探到

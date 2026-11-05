@@ -23,7 +23,21 @@ function chooseRegistry(configured, officialReachable) {
 
 // pkg 可以是一个包名,也可以是一组(设计图标库四个包一条命令装齐)
 function installArgs(pkg, registry) {
-  return ['install', '-g', ...[].concat(pkg), ...(registry ? ['--registry', registry] : [])]
+  const packages = [].concat(pkg)
+  // Claude's npm package needs both its platform optional dependency and postinstall.
+  const native = packages.some((p) => /^@anthropic-ai\/claude-code(?:@|$)/.test(p))
+  return ['install', '-g', ...packages, ...(native ? ['--include=optional', '--ignore-scripts=false'] : []), ...(registry ? ['--registry', registry] : [])]
+}
+
+// A file (or npm exit 0) is not proof of a working CLI: interrupted extraction
+// can leave a placeholder instead of the native binary. Never start a session here.
+function probeCli(bin, { name = 'claude', run = spawnSync } = {}) {
+  const { file, spawnArgs } = resolveSpawn(bin, ['--version'])
+  const r = run(file, spawnArgs, { encoding: 'utf8', timeout: 15_000, windowsHide: true })
+  const version = String(r.stdout || '').trim()
+  const expected = name === 'claude' ? /\bClaude Code\b/i : /\bcodex(?:-cli)?\b/i
+  const ok = r.status === 0 && expected.test(version) && /\b\d+\.\d+\.\d+\b/.test(version)
+  return { ok, version: ok ? version : '', error: ok ? '' : String(r.error?.message || r.stderr || r.stdout || `exit ${r.status}${r.signal ? ` (${r.signal})` : ''}`).trim().slice(0, 1000) }
 }
 
 function runNpm(args, opts = {}) {
@@ -53,10 +67,13 @@ function globalPrefix(run = runNpm) {
 }
 
 // 装一个(name ∈ PACKAGES 的键)。stdio 继承终端;返回 { ok, pkg, registry, code }。
-function installGlobal(name, { run = runNpm, log = () => {} } = {}) {
+function installGlobal(name, { run = runNpm, log = () => {}, probe = probeCli, bin = name } = {}) {
   const pkg = PACKAGES[name]
   if (!pkg) throw new Error(`unknown package: ${name}`)
-  return installPackages(pkg, { run, log })
+  const result = installPackages(pkg, { run, log })
+  if (!result.ok) return result
+  const verification = probe(bin, { name })
+  return { ...result, ok: verification.ok, verification }
 }
 
 // 按包名装(一个或一组),选源同上。只给向导装确定的包用(Claude Code / Codex / 设计图标库),不接用户输入的名字
@@ -69,4 +86,4 @@ function installPackages(pkg, { run = runNpm, log = () => {} } = {}) {
   return { ok: r.status === 0, pkg, registry, code: r.status }
 }
 
-module.exports = { OFFICIAL, MIRROR, PACKAGES, isOfficial, chooseRegistry, installArgs, pickRegistry, globalPrefix, installGlobal, installPackages }
+module.exports = { OFFICIAL, MIRROR, PACKAGES, isOfficial, chooseRegistry, installArgs, probeCli, pickRegistry, globalPrefix, installGlobal, installPackages }

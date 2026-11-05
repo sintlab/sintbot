@@ -11,7 +11,7 @@ const { spawnSync } = require('node:child_process')
 
 const BIN = path.join(__dirname, '..', '..', 'bin', 'sbot.js')
 
-function runSetup(lang, extraArgs = []) {
+function runSetup(lang, extraArgs = [], claudeScript = '') {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sbot-setup-eof-'))
   try {
     const home = path.join(tmp, 'home')
@@ -19,6 +19,7 @@ function runSetup(lang, extraArgs = []) {
     fs.mkdirSync(home)
     fs.mkdirSync(bin)
     fs.symlinkSync(process.execPath, path.join(bin, 'node'))
+    if (claudeScript) fs.writeFileSync(path.join(bin, 'claude'), claudeScript, { mode: 0o755 })
     const cfg = path.join(tmp, 'config.json')
     const r = spawnSync(process.execPath, [BIN, 'setup', '--config', cfg, ...extraArgs], {
       cwd: tmp, input: '', encoding: 'utf8', timeout: 60000, maxBuffer: 4 * 1024 * 1024,
@@ -65,4 +66,15 @@ test('setup --full still asks the platform questions', { skip: process.platform 
   assert.match(out, /接哪个聊天平台|接哪些聊天平台/)
   assert.match(out, /项目根目录/)
   assert.doesNotMatch(out, /这台机器在中国大陆吗/) // --full 也不问地区
+})
+
+test('setup verifies a real CLI version instead of accepting an executable placeholder', { skip: process.platform === 'win32' }, () => {
+  const bad = runSetup('en', [], '#!/usr/bin/env node\nconsole.log("Error: claude native binary not installed.")\n')
+  assert.equal(bad.r.error, undefined)
+  assert.match(bad.out, /Claude Code CLI\) is unavailable/)
+  assert.match(bad.out, /native binary not installed/)
+  assert.doesNotMatch(bad.out, /✓[^\n]*claude/)
+  const good = runSetup('en', [], '#!/usr/bin/env node\nif(process.argv.includes("--version")){console.log("2.1.318 (Claude Code)");process.exit(0)}\nprocess.exit(1)\n')
+  assert.equal(good.r.error, undefined)
+  assert.match(good.out, /✓[^\n]*claude[^\n]*2\.1\.318 \(Claude Code\)/, 'control: a working CLI is accepted')
 })

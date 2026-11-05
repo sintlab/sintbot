@@ -34,11 +34,18 @@ function loopbackTarget(baseUrl) {
 // PATH 里找可执行文件(同步、零依赖;doctor 与控制台都调,不能起子进程)
 function whichSync(name) {
   if (!name) return null
-  if (name.includes('/') || name.includes('\\')) return fs.existsSync(name) ? name : null
+  const runnable = (p) => {
+    try {
+      if (!fs.statSync(p).isFile()) return null
+      fs.accessSync(p, process.platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK)
+      return p
+    } catch { return null }
+  }
+  if (name.includes('/') || name.includes('\\')) return runnable(name)
   const exts = process.platform === 'win32' ? (process.env.PATHEXT || '.EXE;.CMD;.BAT').split(';') : ['']
   for (const dir of String(process.env.PATH || '').split(path.delimiter)) {
     if (!dir) continue
-    for (const ext of exts) { const p = path.join(dir, name + ext); try { if (fs.statSync(p).isFile()) return p } catch {} }
+    for (const ext of exts) { const p = runnable(path.join(dir, name + ext)); if (p) return p }
   }
   return null
 }

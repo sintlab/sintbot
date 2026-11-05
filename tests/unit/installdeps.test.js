@@ -16,7 +16,8 @@ function fakeNpm({ registry = 'https://registry.npmjs.org/', ping = true, instal
     if (args[0] === 'install') return { status: install }
     return { status: 1 }
   }
-  return { run, calls }
+  const probe = () => ({ ok: true, version: '2.1.318 (Claude Code)', error: '' })
+  return { run, calls, probe }
 }
 
 test('isOfficial: only registry.npmjs.org counts, with or without trailing slash', () => {
@@ -36,7 +37,8 @@ test('chooseRegistry: official reachable → no flag; unreachable → npmmirror'
 })
 
 test('installArgs: global install, --registry only when given', () => {
-  assert.deepEqual(d.installArgs('@anthropic-ai/claude-code', null), ['install', '-g', '@anthropic-ai/claude-code'])
+  assert.deepEqual(d.installArgs('@anthropic-ai/claude-code', null), ['install', '-g', '@anthropic-ai/claude-code', '--include=optional', '--ignore-scripts=false'])
+  assert.deepEqual(d.installArgs('@anthropic-ai/claude-code@2.1.318', d.MIRROR), ['install', '-g', '@anthropic-ai/claude-code@2.1.318', '--include=optional', '--ignore-scripts=false', '--registry', d.MIRROR])
   assert.deepEqual(d.installArgs('@openai/codex', d.MIRROR), ['install', '-g', '@openai/codex', '--registry', d.MIRROR])
   assert.deepEqual(d.installArgs(['a', 'b'], d.MIRROR), ['install', '-g', 'a', 'b', '--registry', d.MIRROR])
 })
@@ -58,19 +60,19 @@ test('pickRegistry: pings the official registry with a short fetch timeout', () 
 test('installGlobal: installs the right package, inherits the terminal, reports the mirror switch', () => {
   const npm = fakeNpm({ ping: false })
   const logs = []
-  const r = d.installGlobal('claude', { run: npm.run, log: (l) => logs.push(l) })
+  const r = d.installGlobal('claude', { run: npm.run, probe: npm.probe, log: (l) => logs.push(l) })
   assert.equal(r.ok, true)
   assert.equal(r.pkg, '@anthropic-ai/claude-code')
   assert.equal(r.registry, d.MIRROR)
   const inst = npm.calls.find((c) => c.args[0] === 'install')
-  assert.deepEqual(inst.args, ['install', '-g', '@anthropic-ai/claude-code', '--registry', d.MIRROR])
+  assert.deepEqual(inst.args, ['install', '-g', '@anthropic-ai/claude-code', '--include=optional', '--ignore-scripts=false', '--registry', d.MIRROR])
   assert.equal(inst.opts.stdio, 'inherit')
   assert.ok(logs.some((l) => l.includes('国内镜像')))
 })
 
 test('installGlobal: a failed npm install comes back as ok:false with the exit code', () => {
   const npm = fakeNpm({ install: 243 })
-  const r = d.installGlobal('codex', { run: npm.run })
+  const r = d.installGlobal('codex', { run: npm.run, probe: () => assert.fail('must not probe a failed install') })
   assert.equal(r.ok, false)
   assert.equal(r.code, 243)
   assert.equal(r.pkg, '@openai/codex')
@@ -93,4 +95,32 @@ test('installPackages: the design icon libraries go in one npm install, same reg
 
 test('globalPrefix: trimmed npm prefix -g', () => {
   assert.equal(d.globalPrefix(fakeNpm().run), '/opt/npm-global')
+})
+
+test('installGlobal: npm exit 0 is a failure when the installed CLI cannot run', () => {
+  const npm = fakeNpm()
+  const probe = (bin, opts) => {
+    assert.equal(bin, '/custom/claude')
+    assert.equal(opts.name, 'claude')
+    return { ok: false, version: '', error: 'EACCES' }
+  }
+  const r = d.installGlobal('claude', { run: npm.run, probe, bin: '/custom/claude' })
+  assert.equal(r.code, 0, 'npm itself succeeded')
+  assert.equal(r.ok, false, 'a broken CLI must not be reported as installed')
+  assert.equal(r.verification.error, 'EACCES')
+})
+
+test('probeCli: validates version output and rejects placeholders, permission errors and timeouts', () => {
+  const check = (result) => d.probeCli('claude', { run: (file, args, opts) => {
+    assert.deepEqual(args.slice(-1), ['--version'])
+    assert.equal(opts.timeout, 15_000)
+    assert.equal(opts.encoding, 'utf8')
+    return result
+  } })
+  assert.equal(check({ status: 0, stdout: '2.1.318 (Claude Code)\n' }).ok, true)
+  assert.equal(check({ status: 0, stdout: 'Error: claude native binary not installed.' }).ok, false)
+  assert.equal(check({ status: 1, stdout: '2.1.318 (Claude Code)' }).ok, false)
+  assert.equal(check({ status: null, error: new Error('spawn EACCES') }).error, 'spawn EACCES')
+  assert.equal(check({ status: null, error: new Error('spawn ETIMEDOUT') }).ok, false)
+  assert.equal(d.probeCli('codex', { name: 'codex', run: () => ({ status: 0, stdout: 'codex-cli 0.164.0\n' }) }).ok, true)
 })

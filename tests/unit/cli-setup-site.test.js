@@ -11,7 +11,8 @@ const BIN = path.join(__dirname, '..', '..', 'bin', 'sbot.js')
 
 const FAKE_CLAUDE = `#!/usr/bin/env node
 const args = process.argv.slice(2)
-if (args.includes('auth') || args.includes('--version')) process.exit(1)
+if (args.includes('--version')) { console.log('2.1.318 (Claude Code)'); process.exit(0) }
+if (args.includes('auth')) process.exit(1)
 const url = process.env.ANTHROPIC_BASE_URL || ''
 const ok = url.includes('api.minimaxi.com')
 process.stdout.write(JSON.stringify({ type: 'result', subtype: ok ? 'success' : 'error', is_error: !ok, session_id: 's', result: ok ? 'ready' : 'API Error: 401 invalid api key', usage: {} }) + '\\n')

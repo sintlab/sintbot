@@ -35,11 +35,13 @@ SintBot runs every turn through the `claude` CLI on this machine (Codex groups u
 
 **Install it** in any of these ways:
 
-- **Let the wizard do it.** If `sintbot setup` finds no Claude Code, it installs it when run in a terminal. It runs the npm command below and switches to the mirror when the official registry is unreachable.
-- **npm:** `npm i -g @anthropic-ai/claude-code`. If the official registry is unreachable, add `--registry https://registry.npmmirror.com`.
-- **The official installer:** see the [Claude Code setup guide](https://code.claude.com/docs/en/setup).
+- **Let the wizard do it.** If `sintbot setup` finds Claude Code missing or unable to run `--version`, it installs it when run in a terminal. It runs the npm command below and switches to the mirror when the official registry is unreachable. Installation is successful only after the CLI passes `--version` verification.
+- **npm:** `npm i -g @anthropic-ai/claude-code --include=optional --ignore-scripts=false`. The platform binary is an optional dependency and requires the postinstall script. If the official registry is unreachable, add `--registry https://registry.npmmirror.com`.
+- **The official native installer (recommended for manual installation):** see the [Claude Code setup guide](https://code.claude.com/docs/en/setup). Choose one installation method to avoid conflicting copies.
 
-When `claude --version` prints a version, you are done. Upgrade with `claude update` (or `npm i -g @anthropic-ai/claude-code@latest` for an npm install).
+When `claude --version` prints a version, you are done. Upgrade with `claude update` (or `npm i -g @anthropic-ai/claude-code@latest --include=optional --ignore-scripts=false` for an npm install), then verify again.
+
+If an update leaves `permission denied` or `native binary not installed`, check `command -v claude` (`where.exe claude` on Windows), then reinstall completely using your chosen method and rerun `claude --version` and `sintbot doctor`. A package version or npm exit code alone does not verify the executable. Adding execute permission cannot repair a placeholder or truncated binary. Preserve `~/.claude` and `~/.claude.json`, which hold settings and conversation history.
 
 **Authenticate** according to the model you plan to use:
 

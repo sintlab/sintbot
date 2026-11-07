@@ -160,7 +160,7 @@ test('流式会话:节流窗内只记最后一帧、窗到补发;finish 带最�
   await flush()
   assert.equal(sent.length, 2); assert.equal(sent[1].stream.content, 'abc')
   assert.equal(sent[1].stream.id, sent[0].stream.id, '同一条流')
-  await ses.finish('abc 完成', { footer: '12s · 300 tokens' })
+  assert.equal(await ses.finish('abc 完成', { footer: '12s · 300 tokens' }), 'ok')
   const last = sent[sent.length - 1]
   assert.equal(last.stream.finish, true)
   assert.equal(last.stream.content, 'abc 完成\n\n> 12s · 300 tokens', '页脚是引用行,不带企微不认的 <font>(10-12 真机原样露出过)')
@@ -232,10 +232,46 @@ test('流式会话:收尾正文超过单条上限 ⇒ 流里放第一片,其余�
   const ses = W.createStreamSession({ send: async (b) => { sent.push(b); return { errcode: 0 } }, sendMarkdown: async (c) => { extra.push(c); return 'ok' }, ...clk })
   const big = Array.from({ length: 1500 }, (_, i) => `行 ${i} 内容内容内容内容`).join('\n')
   assert.ok(Buffer.byteLength(big) > W.MD_SAFE_BYTES)
-  await ses.finish(big)
+  assert.equal(await ses.finish(big), 'ok')
   assert.equal(sent.length, 1); assert.equal(sent[0].stream.finish, true)
   assert.ok(extra.length >= 1)
   assert.equal([sent[0].stream.content, ...extra].join('\n'), big)
+})
+
+test('流式会话:最终流帧拒绝或缺 ACK 时不能报告已送达', async () => {
+  for (const bad of [{ errcode: 420, errmsg: 'rejected' }, null, {}]) {
+    const ses = W.createStreamSession({ send: async body => body.stream.finish ? bad : { errcode: 0 },
+      sendMarkdown: async () => 'ok', ...fakeClock(), log: () => {} })
+    ses.update('处理中')
+    await flush()
+    assert.equal(await ses.finish('答案'), null)
+  }
+})
+
+test('流式会话:普通 markdown 续片任一未确认则终结失败', async () => {
+  const big = Array.from({ length: 1500 }, (_, i) => `行 ${i} 内容内容内容内容`).join('\n')
+  for (const bad of [null, '', undefined]) {
+    let continuations = 0
+    const ses = W.createStreamSession({ send: async () => ({ errcode: 0 }),
+      sendMarkdown: async () => { continuations++; return continuations === 1 ? bad : 'ok' },
+      ...fakeClock(), log: () => {} })
+    assert.equal(await ses.finish(big), null)
+    assert.ok(continuations > 0)
+  }
+})
+
+test('流式会话:前一段终帧失败时后续成功也不能确认完整答案', async () => {
+  const clk = fakeClock()
+  let firstId = null
+  const ses = W.createStreamSession({ send: async body => {
+    firstId ||= body.stream.id
+    return body.stream.finish && body.stream.id === firstId ? { errcode: 420 } : { errcode: 0 }
+  }, sendMarkdown: async () => 'ok', ...clk, throttleMs: 0, log: () => {} })
+  ses.update('第一段')
+  clk.advance(9 * 60_000 + 1)
+  ses.update('第一段第二段')
+  await flush()
+  assert.equal(await ses.finish('第一段第二段第三段'), null)
 })
 
 // ── 协议层(假 WebSocket)────────────────────────────────────────────────────────
@@ -327,6 +363,26 @@ test('协议:表格转文本 + 超长切片在 send 这条路生效(多片依次
   assert.equal(contents[0], '**a · b**\n- 1 · 2')
   for (const c of contents) assert.ok(Buffer.byteLength(c) <= W.MD_SAFE_BYTES)
   await p.stop()
+})
+
+test('协议:回复和主动推送的前片被拒时，后片成功也不确认整条正文', async () => {
+  const big = 'x'.repeat(W.MD_SAFE_BYTES + 10)
+  for (const mode of ['reply', 'fallback', 'send']) {
+    const { p } = mkPlatform()
+    const ws = await startAndSubscribe(p)
+    const cmd = mode === 'reply' ? 'aibot_respond_msg' : 'aibot_send_msg'
+    const pending = mode === 'reply'
+      ? p.reply({ chatId: 'wrG', reqId: 'R', reqAt: 1000 }, big)
+      : mode === 'fallback' ? p.reply({ chatId: 'wrG' }, big) : p.send('wrG', big)
+    for (let i = 0; i < 2; i++) {
+      await flush()
+      const frames = ws.sent.filter(frame => frame.cmd === cmd)
+      assert.equal(frames.length, i + 1, `${mode}: each part waits for its ACK`)
+      ws.reply(frames[i].headers.req_id, i === 0 ? { errcode: 40008, errmsg: 'rejected' } : {})
+    }
+    assert.equal(await pending, null, `${mode}: a later successful part cannot hide the rejection`)
+    await p.stop()
+  }
 })
 
 test('协议:错误回包不带 req_id 只记日志、不卡住任何等待者(对照:正常回包仍按 req_id 送达)', async () => {

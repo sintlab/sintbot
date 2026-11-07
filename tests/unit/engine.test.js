@@ -1970,6 +1970,35 @@ test('engine: the message timestamp + spawned TZ follow cfg.timezone, not the ho
   assert.match(captured.prompt, /时间口径.*UTC/) // manifest 的口径行跟着换
 })
 
+test('engine: hot-reloaded timezone updates the next turn timestamp and child TZ', async () => {
+  const seen = []
+  const runner = okRunner(async (opts) => {
+    seen.push(opts)
+    return { sessionId: 'same-session', result: { text: 'ok' } }
+  })
+  const store = mkStore()
+  const eng = new Engine(baseCfg(), { runner, store })
+  const { fmtStamp } = require('../../src/core/time')
+  const at = Date.now() + 5000
+  const message = (text, createTimeMs) => ({ ...mkMsg(text), createTimeMs })
+
+  await eng.handleMessage(message('before', at), mkPlatform()); await tick()
+  assert.equal(seen[0].extraEnv.TZ, 'Asia/Shanghai')
+  assert.equal(store.getSession('G'), 'same-session')
+
+  eng.reload(baseCfg({ timezone: 'UTC' }))
+  await eng.handleMessage(message('after', at + 60_000), mkPlatform()); await tick()
+  assert.equal(seen.length, 2)
+  assert.ok(seen[1].prompt.includes(`[${fmtStamp(at + 60_000, 'UTC')} u] after`))
+  assert.match(seen[1].prompt, /时间口径.*UTC/)
+  assert.equal(seen[1].extraEnv.TZ, 'UTC')
+  assert.equal(eng.baseSkillEnv('G').TZ, 'UTC')
+  assert.equal(store.getSession('G'), 'same-session', 'changing timezone keeps the current model session')
+
+  eng.reload(baseCfg({ timezone: 'Not/A_Zone' }))
+  assert.equal(eng.baseSkillEnv('G').TZ, 'Asia/Shanghai', 'invalid timezone uses the product fallback')
+})
+
 test('engine: enabling a plugin mid-session re-injects the updated manifest WITHOUT resetting the session', async () => {
   let captured
   const store = mkStore()

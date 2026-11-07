@@ -333,6 +333,33 @@ test('runTurn: rejected reasoning effort → retry once WITHOUT the effort (grac
   assert.ok(logs.some((m) => /回退模型默认/.test(m)), 'the downgrade is logged for the operator')
 })
 
+test('runTurn: an effort error after turn progress never replays tools or streamed text', async () => {
+  const rejection = { type: 'turn.failed', error: { message: JSON.stringify({ error: { message: 'Unsupported value', param: 'reasoning.effort' } }) } }
+  for (const progressed of [
+    { type: 'item.started', item: { type: 'command_execution', command: 'write a file' } },
+    { type: 'item.completed', item: { type: 'agent_message', text: 'partial answer' } },
+    { type: 'item.completed', item: { type: 'file_change', changes: [{ path: 'a.txt', kind: 'add' }] } },
+  ]) {
+    const child = fakeChild()
+    let spawns = 0
+    const events = []
+    const p = runTurn({
+      prompt: 'hi', provider: { reasoningEffort: 'max' }, permissionMode: 'dontAsk',
+      onEvent: (event) => events.push(event),
+      spawnFn: () => { if (++spawns > 1) throw new Error('unsafe retry'); return child },
+    })
+    child.emitLine({ type: 'thread.started', thread_id: 'tid-1' })
+    child.emitLine(progressed)
+    child.emitLine(rejection)
+    child.emit('close', 1)
+    const out = await p
+    assert.equal(spawns, 1, `${progressed.item.type} must not run a second turn`)
+    assert.equal(out.result.isError, true)
+    assert.equal(out.effortFellBack, undefined)
+    assert.equal(events.filter((event) => event.type === 'result' && event.isError).length, 0)
+  }
+})
+
 test('runTurn: a non-effort error does NOT retry (single spawn, readable error surfaces)', async () => {
   const children = [fakeChild()]
   let i = 0

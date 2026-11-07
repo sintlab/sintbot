@@ -1167,6 +1167,7 @@ function createSlackPlatform({
           try { await throttle.settle() } catch { /* 在途那帧失败无所谓,下面就落地了 */ }
           let answerTs = null
           try { answerTs = await postMessage(channel, text, { threadTs, retries: 2 }) } catch { answerTs = null }
+          let deliveredTs = answerTs
           if (answerTs) {
             // 答案已独立落地 ⇒ 进度消息功成身退,线程里只留一条终态(不刷屏)。
             // ⚠ 顺序不能反:先删后发的话,发失败就把两头都丢了。
@@ -1177,12 +1178,16 @@ function createSlackPlatform({
             //   留着的话就是一条"答案已出、旁边还有个能点的停止"的消息,点下去只会得到一句
             //   「当前没有在跑的任务」,把人教成"这按钮坏的"。
             log('🔴 slack 最终答案独立发送失败 —— 退回写入进度消息')
-            try { await call('chat.update', messagePayload(channel, text, { ts }), { retries: 1 }) } catch (e) { log('slack 收尾写入也失败: ' + ((e && e.code) || e)) }
+            try {
+              const updated = await call('chat.update', messagePayload(channel, text, { ts }), { retries: 1 })
+              if (updated && updated.ok === true) deliveredTs = ts
+              else log('slack 收尾写入未确认')
+            } catch (e) { log('slack 收尾写入也失败: ' + ((e && e.code) || e)) }
           }
           react('white_check_mark')
           if (replyCtx.ts) removeReactionFrom(channel, replyCtx.ts, 'hourglass_flowing_sand').catch(() => {})
           await setStatus('active') // ⚠ 无条件 —— 不转就转圈到一小时超时
-          return answerTs
+          return deliveredTs
         },
 
         // ack 后转静默:撤掉进度消息,保住"静默轮群里不留痕迹"(engine.js dropAckCard)

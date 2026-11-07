@@ -661,6 +661,7 @@ class Engine {
   // are bound to the platform at start — changing those still needs a restart.)
   reload(newCfg) {
     this.cfg = newCfg
+    this.tz = normalizeTz(newCfg.timezone)
     const max = newCfg.agent && newCfg.agent.maxConcurrent
     this.sem.max = max > 0 ? max : 0
   }

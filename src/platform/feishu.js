@@ -170,8 +170,19 @@ function createCardWriter({
   let fulls = 0          // 整卡更新 card.update
   let closes = 0         // 关流式 card.settings
   let lastSeen = ''      // 最近一次收到的累积文本(判重用)
+  let confirmedText = null // 只记录平台确认过的正文,不能把已派发当成已送达
   let chain = Promise.resolve()
-  const enqueue = (fn) => { chain = chain.then(fn).catch((e) => log('feishu card op error: ' + (e && e.message))); return chain }
+  let finishResult = null
+  const enqueue = (fn, { terminal = false } = {}) => {
+    const operation = chain.then(fn)
+    chain = operation.catch((e) => { log('feishu card op error: ' + (e && e.message)); return null })
+    return terminal ? operation.then((ack) => ack === true ? true : null, () => null) : chain
+  }
+  const confirmedCardAck = (response, action) => {
+    assertCardOk(response, action)
+    if (!response || response.code !== 0) throw new Error(`${action}未确认:未返回 code=0`)
+    return true
+  }
   const expired = () => now() - openedAt >= streamWindowMs
 
   // ⚠ 序号由上面那个分配器**统一发**,整卡更新不再自己取秒级时间戳 —— 服务端只比大小
@@ -179,21 +190,29 @@ function createCardWriter({
   // 才是会撞的那种写法。
   const writeBody = async (elements) => {
     fulls++
-    await updateCardEntity(client, cardId, {
+    const response = await updateCardEntity(client, cardId, {
       schema: '2.0',
       config: { streaming_mode: false, summary: { content: '' } },
       body: { elements },
     }, seq++)
+    confirmedCardAck(response, '更新卡')
     streamOpen = false
+    return true
   }
-  const writeFull = (text) => writeBody([{ tag: 'markdown', content: text, element_id: elementId }])
+  const writeFull = async (text) => {
+    const ack = await writeBody([{ tag: 'markdown', content: text, element_id: elementId }])
+    confirmedText = text
+    return ack
+  }
 
   const pushStream = async (text) => {
     pushes++
-    assertCardOk(await client.cardkit.v1.cardElement.content({
+    confirmedCardAck(await client.cardkit.v1.cardElement.content({
       path: { card_id: cardId, element_id: elementId },
       data: { content: text, sequence: seq++, uuid: crypto.randomUUID() },
     }), '流式推送')
+    confirmedText = text
+    return true
   }
 
   // 单一写入口。⚠ **只有「流式到期」那两个码才降级** —— 其它错误照抛(由 enqueue 记进
@@ -216,15 +235,16 @@ function createCardWriter({
   }
 
   const closeStreaming = async () => {
-    if (!streamOpen) return
-    streamOpen = false
+    if (!streamOpen) return true
     closes++
     try {
-      assertCardOk(await client.cardkit.v1.card.settings({
+      confirmedCardAck(await client.cardkit.v1.card.settings({
         path: { card_id: cardId },
         data: { settings: JSON.stringify({ config: { streaming_mode: false } }), sequence: seq++, uuid: crypto.randomUUID() },
       }), '关流式')
     } catch (e) { if (!ERR_STREAM_DEAD.has(e.code)) throw e } // 已经自动关了 = 目的已达成
+    streamOpen = false
+    return true
   }
 
   const throttle = createCardThrottle({ intervalMs: throttleMs, send: (t) => enqueue(() => write(t)), now, setTimer, clearTimer })
@@ -240,30 +260,31 @@ function createCardWriter({
     },
     // buildElements(t):答案含表格时给出整卡元素(表格精致化);返回 null ⇒ 普通 markdown。
     finish(text, { buildElements = () => null } = {}) {
-      if (done) return chain
+      if (done) return finishResult
       done = true
       const leftover = throttle.drain() // 取消挂起帧,拿回还没推的文本
       const t = String(text || '') || leftover || ''
       let els = null
       try { els = buildElements(t) } catch { /* 构建失败按无表格处理 */ }
-      const needsWrite = !!(t && t !== throttle.lastSent())
-      return enqueue(async () => {
+      finishResult = enqueue(async () => {
         try {
           if (els) {
             // 表格被拒就退普通 markdown(宁可松散不可丢内容)
-            try { return await writeBody(els) } catch (e) { log('feishu card table render fallback: ' + (e && e.message)) }
+            try { const ack = await writeBody(els); confirmedText = t; return ack }
+            catch (e) { log('feishu card table render fallback: ' + (e && e.message)) }
           }
           // ⭐ 有正文一律整卡更新落地;没有新正文才只关流式 —— **绝不拿空正文去刷卡**,
           //    那会把已经推上去的内容抹掉(「ack 后转静默」走的正是空正文这条)。
-          if (needsWrite) return await writeFull(t)
-          await closeStreaming()
+          if (t && t !== confirmedText) return await writeFull(t)
+          return await closeStreaming()
         } finally {
           // ⚠ 这行必须打在**收尾之后**:收尾自己那一次调用(整卡更新 / 关流式)就发生在这个
           // 回调里。原先它打在回调外、且只报节流器的派发次数 ⇒ 降级后的整卡更新与收尾那次
           // 全在账外(实测漏计 ≈44 次/天)。注释写着「配额账可实测」,那就得真能对上账。
           log(`card ops: ${pushes + fulls + closes} 次调用(流式 ${pushes} · 整卡 ${fulls} · 关流式 ${closes})`)
         }
-      })
+      }, { terminal: true })
+      return finishResult
     },
     // recall:先断掉后续流式帧再去删消息。⚠ 只冻结不收尾 —— 撤不掉时调用方还要退一句中性收尾。
     markClosed() { frozen = true },
@@ -427,10 +448,10 @@ function answerCardElements(text, { milestones = [], footer = '' } = {}) {
   return elements
 }
 
-function createFeishuPlatform({ appId, appSecret, botOpenId = null, onlyWhenMentioned = false, log = () => {}, onConn = () => {}, ws = {}, card = {} } = {}) {
+function createFeishuPlatform({ appId, appSecret, botOpenId = null, onlyWhenMentioned = false, log = () => {}, onConn = () => {}, ws = {}, card = {}, client: suppliedClient = null } = {}) {
   if (!appId || !appSecret) throw new Error('feishu: appId and appSecret required')
 
-  const client = new lark.Client({ appId, appSecret, loggerLevel: lark.LoggerLevel.warn })
+  const client = suppliedClient || new lark.Client({ appId, appSecret, loggerLevel: lark.LoggerLevel.warn })
   // 流式卡片推送节流窗(ms)。缺省 1500 = 每 1.5s 最多刷一次卡;显式 0 ⇒ 逐帧推(旧行为)。
   const cardThrottleMs = Number(card.throttleMs) === 0 ? 0 : Math.max(0, Number(card.throttleMs) || 1500)
   let wsClient = null
@@ -482,9 +503,12 @@ function createFeishuPlatform({ appId, appSecret, botOpenId = null, onlyWhenMent
         params: { receive_id_type: 'chat_id' },
         data: { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text: content }) },
       })
-      // 返回 message_id:画布播报靠它关联「点表情即触发」(boardwatch.takeNotice);
-      // 其余调用方历来不看返回值,零回归。
-      return (r && r.data && r.data.message_id) || (r && r.message_id) || null
+      // SDK 对 HTTP 200 + 业务 code≠0 不抛。只有 code===0 且有消息 ID
+      // 才能把主动发送当作已确认；调用方据此决定是否结算。
+      if (!r || r.code !== 0) { log('feishu send rejected: code=' + (r && r.code)); return null }
+      const messageId = (r.data && r.data.message_id) || r.message_id || null
+      if (!messageId) log('feishu send rejected: missing message_id')
+      return messageId
     } catch (e) {
       log('feishu send error: ' + larkErrMsg(e))
       return null
@@ -1255,7 +1279,7 @@ async function sendChatCard(client, chatId, cardJson) {
 // sequence 缺省 = 秒级时间戳(单发一张卡时用它最省事);写入器那种「同一张卡要写很多次」的
 // 场合必须自带序号,由它那个唯一的分配器统一发 —— 两条路各自取号才是会撞的写法。
 async function updateCardEntity(client, cardId, cardJson, sequence = null) {
-  assertCardOk(await client.cardkit.v1.card.update({
+  return assertCardOk(await client.cardkit.v1.card.update({
     path: { card_id: cardId },
     data: { card: { type: 'card_json', data: JSON.stringify(cardJson) }, sequence: sequence == null ? Math.floor(Date.now() / 1000) : sequence },
   }), '更新卡')

@@ -3,7 +3,29 @@
 
 const { test } = require('node:test')
 const assert = require('node:assert/strict')
-const { parseText, shouldHandleGroup, createCardThrottle, createCardWriter, answerCardElements, assertCardOk } = require('../../src/platform/feishu')
+const { parseText, shouldHandleGroup, createCardThrottle, createCardWriter, answerCardElements, assertCardOk, createFeishuPlatform } = require('../../src/platform/feishu')
+
+test('active text send confirms only code zero with a message ID', async () => {
+  const responses = [
+    { code: 0, data: { message_id: 'accepted-1' } },
+    { code: 999, msg: 'rejected', data: { message_id: 'misleading-id' } },
+    { code: 0, data: {} },
+    { data: { message_id: 'missing-code' } },
+  ]
+  const sent = [], logs = []
+  const client = { im: { message: { create: async (request) => {
+    sent.push(request)
+    return responses.shift()
+  } } } }
+  const platform = createFeishuPlatform({ appId: 'fixture', appSecret: 'fixture', client, log: value => logs.push(value) })
+  assert.equal(await platform.send('chat-1', 'hello'), 'accepted-1')
+  assert.equal(await platform.send('chat-1', 'hello'), null, 'rejected code must override a misleading ID')
+  assert.equal(await platform.send('chat-1', 'hello'), null, 'success without an ID is not confirmed')
+  assert.equal(await platform.send('chat-1', 'hello'), null, 'missing code is not success')
+  assert.equal(sent.length, 4)
+  assert.equal(sent.every(request => request.data.receive_id === 'chat-1'), true)
+  assert.equal(logs.filter(value => value.includes('send rejected')).length, 3)
+})
 
 // ── 回答卡表格精致化(v0.11.5):markdown 表格段 → 原生 table 组件 ──────────────
 
@@ -722,9 +744,31 @@ test('cardWriter: 流式回其它错误码 ⇒ 记进日志,绝不静默当成�
 test('cardWriter: finish 的最终正文走整卡更新 —— 长任务的答案原先就丢在流式那条路上', async () => {
   const h = writerHarness()
   h.w.update('写到一半'); await h.w.settle()
-  await h.w.finish('完整答案')
+  assert.equal(await h.w.finish('完整答案'), true, '最终正文得到明确确认')
   assert.deepEqual(h.apis(), ['push', 'full'])
   assert.equal(h.calls[1].body[0].content, '完整答案')
+})
+
+test('cardWriter: 最终整卡更新被业务拒绝时不得确认终结', async () => {
+  const h = writerHarness({ updateReply: () => ({ code: 9499, msg: 'bad card json' }) })
+  assert.equal(await h.w.finish('最终答案'), null)
+  assert.equal(await h.w.finish('最终答案'), null, '重复收尾不能把失败改报成功')
+  assert.deepEqual(h.apis(), ['full'])
+  assert.ok(h.logs.some((line) => /card op error/.test(line) && /9499/.test(line)))
+})
+
+test('cardWriter: 最终更新缺少明确 code=0 时不得确认终结', async () => {
+  const h = writerHarness({ updateReply: () => ({}) })
+  assert.equal(await h.w.finish('最终答案'), null)
+  assert.deepEqual(h.apis(), ['full'])
+})
+
+test('cardWriter: 流式帧被拒后同文收尾仍须整卡落地', async () => {
+  const h = writerHarness({ pushReply: () => ({ code: 99991400, msg: 'too many request' }) })
+  h.w.update('最终答案'); await h.w.settle()
+  assert.equal(await h.w.finish('最终答案'), true)
+  assert.deepEqual(h.apis(), ['push', 'full'], '已派发但未确认的流式帧不能跳过终结写入')
+  assert.equal(h.calls[1].body[0].content, '最终答案')
 })
 
 test('cardWriter: finish 跨过窗口后照样把答案落地(整卡更新不受 10 分钟限制)', async () => {
@@ -740,7 +784,14 @@ test('cardWriter: finish 跨过窗口后照样把答案落地(整卡更新不受
 test('cardWriter: finish 无新正文 ⇒ 只关流式,绝不拿空正文把卡刷空', async () => {
   const h = writerHarness()
   h.w.update('已收到,正在处理…'); await h.w.settle()
-  await h.w.finish('已收到,正在处理…') // 与最后一帧相同
+  assert.equal(await h.w.finish('已收到,正在处理…'), true) // 与最后一帧相同,已确认的正文仍可确认终结
+  assert.deepEqual(h.apis(), ['push', 'settings'])
+})
+
+test('cardWriter: 关流式被拒时不得把已确认正文误作已收尾', async () => {
+  const h = writerHarness({ settingsReply: () => ({ code: 9499, msg: 'permission denied' }) })
+  h.w.update('最终答案'); await h.w.settle()
+  assert.equal(await h.w.finish('最终答案'), null)
   assert.deepEqual(h.apis(), ['push', 'settings'])
 })
 
@@ -789,6 +840,12 @@ test('cardWriter: 表格整卡更新被拒 ⇒ 退回 markdown 整卡更新,内�
   assert.deepEqual(h.apis(), ['full', 'full'])
   assert.equal(h.calls[1].body[0].content, text, '退回时正文原样落地')
   assert.ok(h.logs.some((l) => /table render fallback/.test(l)))
+})
+
+test('cardWriter: 表格和 markdown 两次终结更新都被拒时不得确认', async () => {
+  const h = writerHarness({ updateReply: () => ({ code: 9499, msg: 'bad card json' }) })
+  assert.equal(await h.w.finish('查询结果:\n\n' + RANK_TABLE, { buildElements: answerCardElements }), null)
+  assert.deepEqual(h.apis(), ['full', 'full'])
 })
 
 test('cardWriter: markClosed 之后 update 不再受理(recall 先断写入再删消息)', async () => {

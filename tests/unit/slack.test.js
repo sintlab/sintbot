@@ -491,11 +491,24 @@ test('createStreamingCard: 独立那条发不出去时,答案退回写进进度�
   const plat = require('../../src/platform/slack').createSlackPlatform({ botToken: 'xoxb-t', appToken: 'xapp-t', fetchImpl: f, card: { throttleMs: 1 }, log: (m) => logs.push(m) })
   const card = await plat.createStreamingCard(CTX)
   const ts = await card.finish('答案')
-  assert.equal(ts, null)
+  assert.equal(ts, '200.2', '进度消息确认写成答案后返回其原有 ts')
   const upd = calls.filter((c) => c.method === 'chat.update').pop()
   assert.equal(JSON.parse(upd.body.blocks)[0].text, '答案', '退而求其次:至少让答案留在进度消息里')
   assert.equal(calls.some((c) => c.method === 'chat.delete'), false, '答案没落地就绝不删进度消息')
   assert.equal(calls.filter((c) => c.method === 'agents.sessions.setStatus').pop().body.status, 'active')
+})
+
+test('createStreamingCard: 独立发送和进度写入都被拒时不报告已送达', async () => {
+  const { f, calls } = cardMock((method, _body, all) => {
+    if (method === 'chat.postMessage') return all.filter((c) => c.method === method).length === 1
+      ? { ok: true, ts: '200.2' } : { ok: false, error: 'ratelimited' }
+    if (method === 'chat.update') return { ok: false, error: 'channel_not_found' }
+    return { ok: true, agent_status: 'active' }
+  })
+  const card = await mk(f).createStreamingCard(CTX)
+  assert.equal(await card.finish('答案'), null)
+  assert.equal(calls.filter((c) => c.method === 'chat.update').length, 1)
+  assert.equal(calls.some((c) => c.method === 'chat.delete'), false)
 })
 
 test('createStreamingCard: 原生状态不可用只降级,不影响这一轮,且不再反复去撞', async () => {

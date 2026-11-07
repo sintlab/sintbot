@@ -275,14 +275,23 @@ function createStreamSession({ send, sendMarkdown, now = () => Date.now(), setTi
   let closed = false
   let chain = Promise.resolve()
   let segments = 0
+  let terminalFailed = false
 
   const frame = (content, finish) => {
     const id = streamId
     // 内容空串服务端会拒,占个省略号(首帧往往只有一个换行)
     chain = chain.then(() => send({ msgtype: 'stream', stream: { id, finish, content: content || '…' } })).then((ack) => {
-      if (ack && ack.errcode) log(`流式帧被拒(${ack.errcode}): ${ack.errmsg || ''}`)
+      if (!ack || ack.errcode !== 0) {
+        log(`流式帧被拒(${ack && ack.errcode}): ${(ack && ack.errmsg) || ''}`)
+        if (finish) terminalFailed = true
+        return null
+      }
       return ack
-    }).catch((e) => log('流式帧发送异常: ' + (e && e.message)))
+    }).catch((e) => {
+      log('流式帧发送异常: ' + (e && e.message))
+      if (finish) terminalFailed = true
+      return null
+    })
     return chain
   }
   const open = () => { streamId = newId(); segStart = now(); segments++; sentInSeg = false }
@@ -314,7 +323,7 @@ function createStreamSession({ send, sendMarkdown, now = () => Date.now(), setTi
       if (!timer) timer = setTimer(flush, wait)
     },
     async finish(text, opts = {}) {
-      if (closed) return
+      if (closed) return null
       closed = true
       if (timer) { clearTimer(timer); timer = null }
       pending = null
@@ -325,13 +334,21 @@ function createStreamSession({ send, sendMarkdown, now = () => Date.now(), setTi
       if (opts.footer && (body || sentInSeg)) body = (body ? body + '\n\n' : '') + '> ' + String(opts.footer).replace(/\n+/g, ' ')
       if (!body && !sentInSeg) {
         if (!streamId) { open(); await frame('(无内容)', true) } // 一帧都没推过、正文也空:给一句交代,别让人干等
-        return // 刚分完段、新段没发过帧、也没有新内容 ⇒ 什么都不用发(上一段已定格)
+        else await chain // 刚分完段时要等上一段终帧确认,不能凭排队就算成功
+        return terminalFailed ? null : 'ok'
       }
       if (!streamId) open()
       const chunks = splitMarkdown(body, maxBytes)
       const first = chunks.shift() || ''
-      await frame(first || '(无内容)', true)
-      for (const c of chunks) { try { await sendMarkdown(c) } catch (e) { log('收尾续片发送失败: ' + (e && e.message)) } }
+      const finalAck = await frame(first || '(无内容)', true)
+      let delivered = !!finalAck && !terminalFailed
+      for (const c of chunks) {
+        try {
+          const ack = await sendMarkdown(c)
+          if (typeof ack !== 'string' || !ack) { delivered = false; log('收尾续片未确认') }
+        } catch (e) { delivered = false; log('收尾续片发送失败: ' + (e && e.message)) }
+      }
+      return delivered ? 'ok' : null
     },
     // 给单测与 connHealth 看的内部状态
     _state: () => ({ streamId, offset, segments, closed, pending: pending != null }),
@@ -784,20 +801,26 @@ function createWecomPlatform(o = {}) {
       const chunks = splitMarkdown(mdForWecom(body))
       if (!chunks.length) return null
       if (poll && replyCtx && replyCtx.chatId) poll.noteActivity(replyCtx.chatId) // 机器人开口 ⇒ 续跟进窗口 + 热档
-      let last = null
-      for (const c of chunks) last = canRespond(replyCtx) ? await respondMarkdown(replyCtx.reqId, c) : await sendMarkdown(replyCtx && replyCtx.chatId, c)
+      let allConfirmed = true
+      for (const c of chunks) {
+        const ack = canRespond(replyCtx) ? await respondMarkdown(replyCtx.reqId, c) : await sendMarkdown(replyCtx && replyCtx.chatId, c)
+        if (typeof ack !== 'string' || !ack) allConfirmed = false
+      }
       if (poll && replyCtx && replyCtx.chatId) poll.kick(replyCtx.chatId, AFTER_REPLY_POLL_MS) // 答完几秒就补拉一次:跟进句通常紧跟在回答后
-      return last
+      return allConfirmed ? 'ok' : null
     },
 
     async send(chatId, content) {
       const chunks = splitMarkdown(mdForWecom(content))
       if (!chunks.length || !chatId) return null
       if (poll) poll.noteActivity(chatId)
-      let last = null
-      for (const c of chunks) last = await sendMarkdown(chatId, c)
+      let allConfirmed = true
+      for (const c of chunks) {
+        const ack = await sendMarkdown(chatId, c)
+        if (typeof ack !== 'string' || !ack) allConfirmed = false
+      }
       if (poll) poll.kick(chatId, AFTER_REPLY_POLL_MS)
-      return last
+      return allConfirmed ? 'ok' : null
     },
 
     // 发一张按钮卡(通用形状见 toTemplateCard);返回 { msgId:null, taskId } —— 企微不回消息 id,按钮事件靠 task_id 对号

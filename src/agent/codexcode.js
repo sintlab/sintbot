@@ -176,11 +176,18 @@ function runTurn(opts = {}) {
   // the first result event, idempotently — an early error would swallow the retry's
   // success). SUCCESS results pass through immediately, preserving prompt finalize.
   let heldErr = null
+  let retrySafe = true
+  // A rejected request is safe to resubmit only before Codex emits any item or
+  // successful turn event. Inspect raw events because some completed items do not
+  // produce a normalized event (for example, file_change).
+  const observeFirstAttempt = (raw) => {
+    if (!['thread.started', 'turn.started', 'turn.failed', 'error'].includes(raw.type)) retrySafe = false
+  }
   const proxy = opts.onEvent
     ? (ev) => { if (ev && ev.type === 'result' && ev.isError) { heldErr = ev; return } opts.onEvent(ev) }
     : undefined
-  return runOnce({ ...opts, onEvent: proxy }, wantEffort).then((res) => {
-    if (heldErr && isEffortRejection(res.result) && !res.aborted) {
+  return runOnce({ ...opts, onEvent: proxy, onRawEvent: observeFirstAttempt }, wantEffort).then((res) => {
+    if (retrySafe && heldErr && isEffortRejection(res.result) && !res.aborted) {
       if (opts.log) opts.log(`codex 推理强度 '${wantEffort}' 不被当前模型/套餐接受(model/list 报模型上限,运行时按套餐收窄)— 已回退模型默认重试一轮`)
       return runOnce(opts, '').then((r2) => ({ ...r2, effortFellBack: wantEffort }))
     }
@@ -208,6 +215,7 @@ function runOnce(opts, effort) {
     appendSystemPrompt,
     extraEnv,
     onEvent,
+    onRawEvent,
     signal,
     softStopGraceMs = 10000,
     log = () => {}, // daemon logger — warns when the answer→close (rollout-flush) lag is high
@@ -303,6 +311,7 @@ function runOnce(opts, effort) {
         if (!line) continue
         let raw
         try { raw = JSON.parse(line) } catch { continue } // skip non-JSON noise
+        if (onRawEvent) { try { onRawEvent(raw) } catch { /* observer must not kill the turn */ } }
         if (raw.type === 'thread.started' && raw.thread_id) capturedSessionId = raw.thread_id
         const ev = normalizeEvent(raw)
         if (!ev) continue

@@ -2,59 +2,26 @@
 
 English · [简体中文](./CONTRIBUTING.zh-CN.md)
 
-Everyone taking part is expected to follow the [Code of Conduct](./CODE_OF_CONDUCT.md). Bugs and feature requests go through the [issue forms](https://github.com/sintlab/sintbot/issues/new/choose).
+This repository contains platform integration, documentation and runtime artifacts for SintBot 1.3.0 with its built-in core. The release supports macOS, one Feishu group and Codex message turns.
 
-## Getting it running
+## Check a change
+
+Use macOS and Node.js 22 or newer:
 
 ```bash
-git clone https://github.com/sintlab/sintbot.git && cd sintbot
-npm install
-npm test                                   # zero-dependency node --test; CI runs Node 22 / 24 / 26
-node bin/sbot.js chat -C /path/to/project  # simulate group messages in the terminal, no chat platform needed
-node bin/sbot.js agent run "say hi"        # a single headless trial turn
+npm ci --ignore-scripts
+node --test tests/public-release-smoke.test.js
+node bin/sintbot-v2.js help
 ```
 
-Requirements: Node.js ≥ 22, with `claude` on the PATH.
+The public smoke suite checks the actual entry, binary loading and rejection of a missing core. It does not contact Feishu or start a model. For changes to supported behavior, add focused host tests without credentials or production data. Follow the [installation guide](./docs/install.md) for an authorized group check; package loading alone does not prove message delivery.
 
-## Code map
+## Boundaries
 
-```
-bin/sbot.js            CLI entry point and the wiring of every subcommand (setup / start / ui / service / feishu / cron …)
-src/core/              the engine: group → session / lock / queue / dedup / slash commands / self-briefing / scheduled tasks / redaction / ledger
-src/agent/             runners: claudecode.js (spawns claude) · codexcode.js (spawns codex) · quota and login probes
-src/platform/          chat platform adapters: feishu.js · slack.js · wecom.js · multi.js (multi-platform router)
-src/ui/                the console: server.js (http + SSE) · console.html (single-file front end)
-src/*.js               config, health checks, plugins, design style files, previews, service install and more
-tests/unit/            unit tests, one file per module
-```
+- Keep decisions in the built-in core. Do not add a fallback or import a previous release's engine to bypass a failure.
+- Preserve receipt and state safety. Never silently reset uncertain effects or replay an unknown model dispatch.
+- Keep changes to the supported host/integration scope. Unsupported platforms, model routes and commands must remain rejected until separately implemented and accepted.
+- Keep English and Chinese documentation aligned, and verify actual process startup when changing entry wiring.
+- Do not include secrets, production logs, private paths, test accounts or personal information in a contribution.
 
-Architecture and key design decisions: [DESIGN.md](./DESIGN.md). Interface contracts live in `src/core/interfaces.js`.
-
-## Conventions
-
-- **The core does not know platform or agent names.** `src/core/` never mentions "feishu", "slack" or "claudecode"; it only knows the contracts in `interfaces.js`. A new platform means a new adapter plus wiring in `bin/sbot.js`.
-- **No tool names in front of users.**
-  - The console and group messages show no command names such as `sbot`, and no internal machine paths (`~/.sbot/…`, the install directory). In front of group members, the product has one name only (`brand`).
-  - Command names inside the agent's self-briefing are exempt: they are instructions to execute, and group members never see them.
-  - Before adding user-visible text, ask: do group members need to know what this thing is called?
-- **Headless means never hang.** Anything that might wait for interactive input, such as an approval, a git password or a host-key confirmation, must have a policy or a timeout as a fallback.
-- **Never hard-code secrets.** Use `"env:VAR"` in examples.
-- **Shipped material does not name other products in the same space.** This covers the README, docs, comments and package.json.
-- **CLI help.** Every `sbot <subcommand>` must answer `--help` and appear in the `sbot help` list; `tests/unit/cli-help.test.js` checks this.
-- **Bin wiring.** `bin/sbot.js` destructures its requires at the top, and `tests/unit/bin-wiring.test.js` checks that calls match exports. After changing the bin's wiring, always start the process for real once.
-- **Docs are bilingual.** English lives at the original path and Chinese under `docs/zh-CN/`; at the repo root, Chinese files use the `.zh-CN.md` suffix. When you change a doc that exists in both languages, update both.
-
-## Testing and verification
-
-- Write new logic as pure functions where possible and unit-test them. Anything that touches the network uses injected fakes; unit tests never make real requests.
-- **Negative results need a control.** An assertion such as "X is not on the page" or "the scan found no problems" must also assert something that is certainly there. If that comes out as 0, the scan never actually ran.
-- **Console changes:** before pushing, click through the change in headless Chrome.
-
-## Commits
-
-- One commit, one change; explain the "why" in the message.
-- Release-history entries (`CHANGELOG.json` / `.en.json`) are written for group members; see [docs/RELEASE.md](./docs/RELEASE.md).
-
-## License
-
-SintBot is licensed under the [PolyForm Shield License 1.0.0](./LICENSE). By submitting a contribution, you agree that it is licensed under the same terms and that the maintainer may relicense it, including under an open-source license.
+Contributions are covered by the included [LICENSE](./LICENSE). Report security issues using [SECURITY.md](./SECURITY.md), not a public issue.

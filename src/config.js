@@ -40,7 +40,8 @@ const DEFAULTS = {
   // 写死会**覆盖 CLI 的默认**,于是每次 Anthropic 出新一代,sbot 的默认就悄悄落后一代
   // (2026-08-03 核对时正卡在 opus-4-8,而 CLI 默认已是 Opus 5)。要钉死型号在控制台选。
   providers: { claude: {} },
-  // "<chatId>": { workdir, provider?, model?, allowedTools?: [], disallowedTools?: [] }
+  // "<chatId>": { workdir, provider?, model?, codexSteer?: false, allowedTools?: [], disallowedTools?: [] }
+  // codexSteer defaults on for Codex groups; explicit false opts out.
   // — one project per group; permissions are scoped to that group's own workdir.
   groups: {},
 }

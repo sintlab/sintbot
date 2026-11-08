@@ -7,7 +7,7 @@ sbot.config.json
 *.log
 .DS_Store
 
-# build artifacts (npm pack output — see docs/RELEASE.md)
+# local package artifacts
 *.tgz
 
 # Claude Code: personal/local settings and notes (never commit)

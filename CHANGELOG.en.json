@@ -1,5 +1,77 @@
 [
   {
+    "version": "1.3.0",
+    "date": "2026-11-08",
+    "name": "Built-in core",
+    "items": [
+      {
+        "t": "Adds a built-in core",
+        "d": "This release supports Codex messages in one Feishu group on macOS. Whiteboards, multiple groups and other platforms will follow. Keep existing multi-group installations and configure this release separately using the installation guide."
+      }
+    ]
+  },
+  {
+    "version": "1.2.1",
+    "date": "2026-11-05",
+    "name": "Follow-up notice fix",
+    "items": [
+      {
+        "t": "No false queue notice right after a task starts",
+        "d": "A follow-up sent in the first few seconds joins the running task once the channel is ready, without first saying it will wait until the task ends."
+      }
+    ]
+  },
+  {
+    "version": "1.2.0",
+    "date": "2026-11-05",
+    "name": "Steadier follow-ups, clearer errors",
+    "items": [
+      {
+        "t": "The reply card follows the latest follow-up",
+        "d": "Once a follow-up is accepted, the card moves under that message, so the answer ends up at the bottom of the group. A short notice is sent only when the card cannot move."
+      },
+      {
+        "t": "Recalls and redos no longer lose messages",
+        "d": "A recalled follow-up that had not been delivered no longer runs on its own. A redo in a new session or on another model keeps delivered follow-ups, except recalled ones."
+      },
+      {
+        "t": "Codex requests no longer stall a task",
+        "d": "Approval and question requests are declined according to the protocol, and the task continues."
+      },
+      {
+        "t": "Console messages can join the running task",
+        "d": "A console message with Reply checked is treated like a group member's. The group line is posted first, the dialog says where the message will go, and the result reports where it landed."
+      },
+      {
+        "t": "Feishu answer cards show the model and quota",
+        "d": "The small print on the card now includes the current model and account quota."
+      },
+      {
+        "t": "Plain explanations for network and billing errors",
+        "d": "Network failures, low balance and expired subscriptions are explained in the group. Repeated network failures alert the operator, and account problems can fail over."
+      },
+      {
+        "t": "Lost sessions are redone automatically",
+        "d": "Claude and Codex groups clear a session that no longer exists, redo the message in a new one, and say so in the group."
+      }
+    ]
+  },
+  {
+    "version": "1.1.0",
+    "date": "2026-11-05",
+    "name": "Codex busy follow-up",
+    "items": [
+      {
+        "t": "Codex can receive follow-ups during a task",
+        "d": "Busy follow-up is on by default for Codex groups. Ordinary human follow-up messages enter the active task through the App Server; related requests can adjust the work, independent requests are answered separately in order, and unconfirmed deliveries return to the queue. It can be disabled per group; Claude groups and scheduled, quiet, and polled messages keep their existing behavior."
+      },
+      {
+        "t": "Busy follow-up is limited to the effective Codex backend",
+        "d": "The console shows the control for the backend currently in use, and the server validates it too. Changes apply from the next turn."
+      }
+    ]
+  },
+  {
     "version": "1.0.17",
     "date": "2026-11-05",
     "name": "More reliable installs and runs",

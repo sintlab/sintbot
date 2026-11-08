@@ -369,14 +369,6 @@ function buildMcpConfig(workdir, enabledGlobalNames = [], home = os.homedir(), o
   return { mcpServers: out }
 }
 
-// 启用即放行:运行时合并进 allowedTools 的规则(载入的 MCP 全放行,skill 按勾选)
-function pluginAllowRules(mcpConfig, skills = []) {
-  return [
-    ...Object.keys((mcpConfig && mcpConfig.mcpServers) || {}).map((n) => `mcp__${n}__*`),
-    ...skills.map((s) => `Skill(${s})`),
-  ]
-}
-
 // spawn 用:strict config 落盘到 ~/.sbot/mcp/<hash>.json(按 workdir 稳定路径)。
 // 原子写(temp+rename,避免并发 spawn 读到截断 JSON)+ POSIX mode 0o600(含 MCP server
 // 密钥的文件限本用户读)+ 写时清理 >1h 旧残留(进程崩溃留下的孤儿;当前 turn 刚写不删)。
@@ -403,6 +395,6 @@ function writeMcpConfigFile(workdir, cfg, home = os.homedir()) {
   return f
 }
 
-module.exports = { globalPlugins, codexPlugins, parseCodexMcpServers, projectPlugins, buildMcpConfig, pluginAllowRules, writeMcpConfigFile, scanSkills, mcpSummary, installedPlugins, mcpBrowserUrl, browserTargets,
+module.exports = { globalPlugins, codexPlugins, parseCodexMcpServers, projectPlugins, buildMcpConfig, writeMcpConfigFile, scanSkills, mcpSummary, installedPlugins, mcpBrowserUrl, browserTargets,
   // MCP 可达性预检
   mcpProbeTarget, isLocalHost, probeMcp, probeMcpServers, mcpReachability, resetProbeCache, PROBE_TIMEOUT_MS, PROBE_TTL_OK_MS, PROBE_TTL_DOWN_MS }

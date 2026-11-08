@@ -32,7 +32,7 @@ function parseText(message) {
   let c
   try { c = JSON.parse(message.content) } catch { return null }
 
-  // 附件标记(v0.11.7):图片/文件消息不再整条丢弃 —— 转成带下载坐标的文本标记喂给 agent
+  // 附件标记:图片/文件消息不再整条丢弃 —— 转成带下载坐标的文本标记喂给 agent
   // (真机踩过:「我发给你的图里的那张表」,图被静默丢了,agent 无从知道有图)。标记里
   // message_id + key 正是 `sbot feishu download` 要的两个参数,清单同步教这条藤怎么摸;
   // 历史(fetchChatHistory)同一条解析线 ⇒ 群里翻旧图也拿得到坐标。
@@ -145,6 +145,31 @@ function assertCardOk(r, what = '卡片操作') {
 const ERR_STREAM_DEAD = new Set([200850, 300309])
 const STREAM_WINDOW_MS = 9 * 60 * 1000 // 10 分钟的窗口留 1 分钟余量(时钟漂移 + 在途请求)
 
+// Opt-in seam for a future durable effect executor. Every call to invoke is
+// exactly one SDK request; the boundary sees its stable operation ID, target,
+// confirmed result or thrown error. It must persist intent before invoking.
+// Without a boundary, all existing card behavior remains unchanged.
+async function cardOperation(boundary, operationKey, kind, target, invoke) {
+  if (!boundary) return invoke()
+  if (typeof boundary !== 'function' || typeof operationKey !== 'string' ||
+      !operationKey || Buffer.byteLength(operationKey) > 256) {
+    throw new TypeError('card operation boundary needs a stable operation key')
+  }
+  let invoked = false
+  let settled = false
+  let invokeError = null
+  const result = await boundary({ operationId: `${operationKey}:${kind}${target.sequence == null ? '' : ':' + target.sequence}`,
+    kind, ...target, invoke: async () => {
+      if (invoked) throw new Error('card operation already invoked')
+      invoked = true
+      try { return await invoke() } catch (e) { invokeError = e; throw e }
+      finally { settled = true }
+    } })
+  if (invokeError) throw invokeError
+  if (!invoked || !settled) throw new Error('card operation boundary did not await one SDK call')
+  return result
+}
+
 // ── 卡片写入器(纯工厂:client / 时钟 / 窗口全可注入 ⇒ 可单测)─────────────────────
 // 一张流式卡的**所有**写操作都从这里出去,好处是「往哪条路写」只剩一个判断点:
 //   窗口内        → cardElement.content(有打字机动画)
@@ -155,6 +180,7 @@ const STREAM_WINDOW_MS = 9 * 60 * 1000 // 10 分钟的窗口留 1 分钟余量(�
 function createCardWriter({
   client, cardId, elementId = 'answer', log = () => {}, now = () => Date.now(),
   throttleMs = 0, streamWindowMs = STREAM_WINDOW_MS, setTimer = setTimeout, clearTimer = clearTimeout,
+  operationBoundary = null, operationKey = null,
 } = {}) {
   const openedAt = now()
   let seq = 1            // 流式与整卡更新共用的**唯一**序号分配器(混用同一张卡必须同源)
@@ -173,10 +199,17 @@ function createCardWriter({
   let confirmedText = null // 只记录平台确认过的正文,不能把已派发当成已送达
   let chain = Promise.resolve()
   let finishResult = null
+  let boundaryError = null
+  let updateRevision = 0
+  let flushedRevision = -1
   const enqueue = (fn, { terminal = false } = {}) => {
-    const operation = chain.then(fn)
-    chain = operation.catch((e) => { log('feishu card op error: ' + (e && e.message)); return null })
-    return terminal ? operation.then((ack) => ack === true ? true : null, () => null) : chain
+    const operation = chain.then(() => { if (boundaryError) throw boundaryError; return fn() })
+    chain = operation.catch((e) => {
+      log('feishu card op error: ' + (e && e.message))
+      if (operationBoundary) boundaryError = e
+      return null
+    })
+    return terminal ? (operationBoundary ? operation : operation.then((ack) => ack === true ? true : null, () => null)) : chain
   }
   const confirmedCardAck = (response, action) => {
     assertCardOk(response, action)
@@ -188,14 +221,19 @@ function createCardWriter({
   // ⚠ 序号由上面那个分配器**统一发**,整卡更新不再自己取秒级时间戳 —— 服务端只比大小
   // (倒退实测回 300317 sequence number compare failed),小整数完全够用;两条路各自取号
   // 才是会撞的那种写法。
-  const writeBody = async (elements) => {
+  const writeBody = async (elements, boundary = operationBoundary) => {
     fulls++
-    const response = await updateCardEntity(client, cardId, {
-      schema: '2.0',
-      config: { streaming_mode: false, summary: { content: '' } },
-      body: { elements },
-    }, seq++)
-    confirmedCardAck(response, '更新卡')
+    const sequence = seq++
+    await cardOperation(boundary, operationKey, 'card.update',
+      { cardId, sequence }, async () => {
+        const response = await updateCardEntity(client, cardId, {
+          schema: '2.0',
+          config: { streaming_mode: false, summary: { content: '' } },
+          body: { elements },
+        }, sequence)
+        confirmedCardAck(response, '更新卡')
+        return response
+      })
     streamOpen = false
     return true
   }
@@ -207,10 +245,13 @@ function createCardWriter({
 
   const pushStream = async (text) => {
     pushes++
-    confirmedCardAck(await client.cardkit.v1.cardElement.content({
+    const sequence = seq++
+    const uuid = crypto.randomUUID()
+    await cardOperation(operationBoundary, operationKey, 'cardElement.content',
+      { cardId, elementId, sequence, uuid }, async () => confirmedCardAck(await client.cardkit.v1.cardElement.content({
       path: { card_id: cardId, element_id: elementId },
-      data: { content: text, sequence: seq++, uuid: crypto.randomUUID() },
-    }), '流式推送')
+      data: { content: text, sequence, uuid },
+    }), '流式推送'))
     confirmedText = text
     return true
   }
@@ -226,7 +267,7 @@ function createCardWriter({
     }
     if (streamOpen) {
       try { return await pushStream(text) } catch (e) {
-        if (!ERR_STREAM_DEAD.has(e.code)) throw e
+        if (operationBoundary || !ERR_STREAM_DEAD.has(e.code)) throw e
         log(`feishu card: 流式已到期(${e.code}),改走整卡更新`)
         streamOpen = false
       }
@@ -237,12 +278,15 @@ function createCardWriter({
   const closeStreaming = async () => {
     if (!streamOpen) return true
     closes++
+    const sequence = seq++
+    const uuid = crypto.randomUUID()
     try {
-      confirmedCardAck(await client.cardkit.v1.card.settings({
+      await cardOperation(operationBoundary, operationKey, 'card.settings',
+        { cardId, sequence, uuid }, async () => confirmedCardAck(await client.cardkit.v1.card.settings({
         path: { card_id: cardId },
-        data: { settings: JSON.stringify({ config: { streaming_mode: false } }), sequence: seq++, uuid: crypto.randomUUID() },
-      }), '关流式')
-    } catch (e) { if (!ERR_STREAM_DEAD.has(e.code)) throw e } // 已经自动关了 = 目的已达成
+        data: { settings: JSON.stringify({ config: { streaming_mode: false } }), sequence, uuid },
+      }), '关流式'))
+    } catch (e) { if (operationBoundary || !ERR_STREAM_DEAD.has(e.code)) throw e } // 已经自动关了 = 目的已达成
     streamOpen = false
     return true
   }
@@ -256,11 +300,37 @@ function createCardWriter({
       const t = String(text || '')
       if (!t || t === lastSeen) return
       lastSeen = t
+      updateRevision++
+      flushedRevision = -1
       throttle.push(t)
     },
+    // Durable v2 callers use this before a terminal reply attempt. Drain a
+    // throttled trailing frame and wait for every earlier SDK operation. A
+    // concurrent update invalidates the proof, so finish must flush again.
+    async flush() {
+      if (!operationBoundary || done || frozen) {
+        throw new Error('durable card flush needs an open operation boundary')
+      }
+      const revision = updateRevision
+      const trailing = throttle.drain()
+      if (trailing !== null) enqueue(() => write(trailing))
+      await chain
+      if (boundaryError) throw boundaryError
+      if (done || frozen || updateRevision !== revision) {
+        throw new Error('durable card changed during flush')
+      }
+      flushedRevision = revision
+      return true
+    },
     // buildElements(t):答案含表格时给出整卡元素(表格精致化);返回 null ⇒ 普通 markdown。
-    finish(text, { buildElements = () => null } = {}) {
+    finish(text, { buildElements = () => null, terminalOperationBoundary } = {}) {
       if (done) return finishResult
+      const terminal = terminalOperationBoundary !== undefined
+      if (terminal && (!operationBoundary || typeof terminalOperationBoundary !== 'function' ||
+          flushedRevision !== updateRevision || frozen ||
+          typeof text !== 'string' || !text.trim())) {
+        throw new Error('durable card terminal needs flushed nonempty text and one boundary')
+      }
       done = true
       const leftover = throttle.drain() // 取消挂起帧,拿回还没推的文本
       const t = String(text || '') || leftover || ''
@@ -268,10 +338,22 @@ function createCardWriter({
       try { els = buildElements(t) } catch { /* 构建失败按无表格处理 */ }
       finishResult = enqueue(async () => {
         try {
+          if (terminal) {
+            // The outer finalReply effect owns this one SDK call. A final
+            // card.update also closes streaming mode; no card.settings or
+            // second outbound attempt may be nested under that effect.
+            const elements = els || [{ tag: 'markdown', content: t, element_id: elementId }]
+            const ack = await writeBody(elements, terminalOperationBoundary)
+            confirmedText = t
+            return ack
+          }
           if (els) {
             // 表格被拒就退普通 markdown(宁可松散不可丢内容)
             try { const ack = await writeBody(els); confirmedText = t; return ack }
-            catch (e) { log('feishu card table render fallback: ' + (e && e.message)) }
+            catch (e) {
+              if (operationBoundary) throw e
+              log('feishu card table render fallback: ' + (e && e.message))
+            }
           }
           // ⭐ 有正文一律整卡更新落地;没有新正文才只关流式 —— **绝不拿空正文去刷卡**,
           //    那会把已经推上去的内容抹掉(「ack 后转静默」走的正是空正文这条)。
@@ -287,8 +369,8 @@ function createCardWriter({
       return finishResult
     },
     // recall:先断掉后续流式帧再去删消息。⚠ 只冻结不收尾 —— 撤不掉时调用方还要退一句中性收尾。
-    markClosed() { frozen = true },
-    settle: () => chain,
+    markClosed() { frozen = true; flushedRevision = -1 },
+    settle: () => chain.then((result) => { if (boundaryError) throw boundaryError; return result }),
     stats: () => ({ pushes, fullUpdates: fulls, closes, calls: pushes + fulls + closes, streamOpen, seq }),
   }
 }
@@ -306,7 +388,7 @@ function createCardWriter({
  *   card                  — 流式卡片调优:throttleMs(推送节流窗,默认 1500;0 = 逐帧推)
  * @returns {import('../core/interfaces').Platform}
  */
-// ── 回答卡表格精致化(v0.11.5)──────────────────────────────────────────────
+// ── 回答卡表格精致化──────────────────────────────────────────────
 // markdown 表格在卡片里被客户端渲染成分页控件:行高松散、长列截断还要横向滚动
 // (2026-08-04 群里真实反馈「显示不全、不紧凑、不精致」)。原生 table 组件能钉住这些:
 // 紧凑行高(low)+ 固定列宽 + 灰底表头。列宽策略出自真机探针逐张对比、operator 拍板:
@@ -365,7 +447,7 @@ function tableElement(seg) {
   }
 }
 
-// 可复制版折叠区(v0.11.11):原生 table 好看但手机端选不中、整卡转发也带不走表格内容(飞书平台
+// 可复制版折叠区:原生 table 好看但手机端选不中、整卡转发也带不走表格内容(飞书平台
 // 限制,卡片 config 无「可复制」开关)。v0.11.4 的解法是每次都**另发一条**纯文本 —— 真机 14 小时
 // 里 4 次,其中 2 次卡片内已有同样的表格,纯属重复,群里嫌累赘(2026-08-06 用户提)。
 // 现在收进卡片内一个**默认收起**的折叠面板:不要的人完全看不见,要复制的人展开即得,群里不再
@@ -391,7 +473,7 @@ function copyPanel(tsv) {
   }
 }
 
-// 「过程」折叠区(v0.11.93):引擎从本轮正文里认出的里程碑行(`>> …`,见 engine milestonesOf),收尾
+// 「过程」折叠区:引擎从本轮正文里认出的里程碑行(`>> …`,见 engine milestonesOf),收尾
 // 时整批交到这里。默认收起 —— 卡片仍然只露答案(v0.11.11 的「简」不破),要看做了哪几步的人展开即得;
 // 中止 / 出错时它就是「做到哪了」。形状与 copyPanel 同款(同一组已被服务端接受的字段)。
 function milestonePanel(lines) {
@@ -417,13 +499,14 @@ function milestonePanel(lines) {
 // 三样都没有 ⇒ null(调用方走原 markdown 收尾,零变化)。
 // footer(2026-09-16 用户提):耗时与 tokens 一行,引擎拼好文字、这里只管形状 —— 与生图进度卡 /
 // 接管卡的小字同款(text_size notation + 灰字;note 组件在 schema 2.0 已被拒,见 memory 卡片全集)。
-function answerCardElements(text, { milestones = [], footer = '' } = {}) {
+function answerCardElements(text, { milestones = [], footer = '', footerDetail = '' } = {}) {
   const segs = scanTables(text)
   const tables = segs.filter((s) => s.kind === 'table')
   const ms = (Array.isArray(milestones) ? milestones : []).filter((m) => typeof m === 'string' && m.trim())
   const ft = typeof footer === 'string' ? footer.trim() : ''
+  const ftDetail = typeof footerDetail === 'string' ? footerDetail.trim() : ''
   const nativeTables = tables.length > 0 && tables.length <= 5
-  if (!nativeTables && !ms.length && !ft) return null
+  if (!nativeTables && !ms.length && !ft && !ftDetail) return null
   const elements = []
   if (nativeTables) {
     for (const seg of segs) {
@@ -445,6 +528,11 @@ function answerCardElements(text, { milestones = [], footer = '' } = {}) {
   // ⚠ 顺序钉死:正文 → 可复制版 → 过程 → 小字。小字是整卡最底、右对齐(2026-09-16 定下的位置:
   //   「小号字体、卡片右下角」);notation = 12px,是 markdown 组件最小的一档,右对齐靠 text_align。
   if (ft) elements.push({ tag: 'markdown', text_size: 'notation', text_align: 'right', content: `<font color='grey'>${ft}</font>` })
+  // 型号来自可配置字段,不能直接插进 font 标签;把第二行独立成元素,手机宽度不足时自然换行。
+  if (ftDetail) {
+    const safe = ftDetail.replace(/[\r\n]+/g, ' ').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    elements.push({ tag: 'markdown', text_size: 'notation', text_align: 'right', content: `<font color='grey'>${safe}</font>` })
+  }
   return elements
 }
 
@@ -457,6 +545,7 @@ function createFeishuPlatform({ appId, appSecret, botOpenId = null, onlyWhenMent
   let wsClient = null
   let watchdog = null
   let tickTimer = null
+  let serviceIntakeClosed = true
 
   // WS liveness tuning — see wswatchdog.js. All configurable via cfg.feishu.ws so the
   // detection策略 can be tuned on the real machine without a code change. pingTimeout is the KEY knob: the SDK's pong-watchdog is off by
@@ -516,8 +605,34 @@ function createFeishuPlatform({ appId, appSecret, botOpenId = null, onlyWhenMent
   }
 
   return {
+    features: { cardQuota: true, noticeCard: true }, // 飞书支持通知卡;企微/Slack 退回文本
     async start(onMessage, hooks = {}) {
       if (!botOpenId && !onlyWhenMentioned) log('warning: feishu.botOpenId not set — cannot tell @bot from @others; all group messages will be handled')
+      if (hooks.onFatal !== undefined && typeof hooks.onFatal !== 'function') {
+        throw new TypeError('feishu fatal intake hook must be a function')
+      }
+      serviceIntakeClosed = false
+      let intakeClosed = false
+      const closeFatalIntake = (error) => {
+        if (!hooks.onFatal || intakeClosed) return
+        // This is the opt-in durable ingress boundary: a failed receipt/lock
+        // operation cannot be reduced to a log line and followed by more input.
+        intakeClosed = true
+        serviceIntakeClosed = true
+        if (tickTimer) { clearInterval(tickTimer); tickTimer = null }
+        if (watchdog) watchdog.stop()
+        try { if (wsClient?.close) wsClient.close({ force: true }) } catch {}
+        try {
+          Promise.resolve(hooks.onFatal(error)).catch(e =>
+            log('feishu fatal intake hook rejected: ' + (e && e.message)))
+        } catch (e) {
+          log('feishu fatal intake hook threw: ' + (e && e.message))
+        }
+      }
+      const reportOnMessageFailure = error => {
+        log('feishu onMessage error: ' + (error && error.message))
+        closeFatalIntake(error)
+      }
 
       const dispatcher = new lark.EventDispatcher({}).register({
         // 撤回即停:用户撤回了发给 bot 的消息 ⇒ 引擎跳过/中止对它的处理(排队剔除,运行中如 /stop)。
@@ -526,6 +641,7 @@ function createFeishuPlatform({ appId, appSecret, botOpenId = null, onlyWhenMent
         // no-handle 警告实锤在推),注册 handler 即收,不需要发版。⚠ payload 不带 chat_id —— 匹配
         // 只靠 message_id(播报消息 id 全局唯一,足够)。
         'im.message.reaction.created_v1': async (data) => {
+          if (serviceIntakeClosed) return
           if (watchdog) watchdog.onEvent()
           try {
             const ev = (data && data.event) || data || {}
@@ -556,6 +672,7 @@ function createFeishuPlatform({ appId, appSecret, botOpenId = null, onlyWhenMent
         },
         // 需在开放平台补订阅 im.message.recalled_v1(与 receive_v1 同权限);未订阅则事件不来,零回归。
         'im.message.recalled_v1': async (data) => {
+          if (serviceIntakeClosed) return
           if (watchdog) watchdog.onEvent() // 任何入站事件都是链路活性信号
           try {
             const ev = (data && data.event) || data || {}
@@ -575,6 +692,7 @@ function createFeishuPlatform({ appId, appSecret, botOpenId = null, onlyWhenMent
         // (subscribeBoard),后台还须订阅事件类型 + 发版;未订阅零回归。纪律同 recall:到达即
         // 打日志、不在 handler 里 await 慢查询。
         'board.whiteboard.updated_v1': async (data) => {
+          if (serviceIntakeClosed) return
           if (watchdog) watchdog.onEvent()
           try {
             const ev = (data && data.event) || data || {}
@@ -591,6 +709,7 @@ function createFeishuPlatform({ appId, appSecret, botOpenId = null, onlyWhenMent
           }
         },
         'im.message.receive_v1': async (data) => {
+          if (intakeClosed || serviceIntakeClosed) return
           if (watchdog) watchdog.onEvent() // any inbound event ⇒ link is alive (liveness signal)
           try {
             const ev = (data && data.event) || data || {}
@@ -621,7 +740,8 @@ function createFeishuPlatform({ appId, appSecret, botOpenId = null, onlyWhenMent
             // Fire-and-forget into the engine (NFR1): a turn can run for minutes,
             // and whether the SDK serializes pending handlers is not contractual —
             // message reception must never block on turn completion.
-            Promise.resolve(onMessage({
+            let result
+            try { result = onMessage({
               chatId: message.chat_id,
               userId: openId || 'unknown',
               senderName,
@@ -629,9 +749,11 @@ function createFeishuPlatform({ appId, appSecret, botOpenId = null, onlyWhenMent
               msgId: message.message_id,
               createTimeMs: Number(message.create_time) || Date.now(),
               replyCtx: { chatId: message.chat_id, messageId: message.message_id },
-            })).catch((e) => log('feishu onMessage error: ' + (e && e.message)))
+            }) } catch (error) { reportOnMessageFailure(error); return }
+            Promise.resolve(result).catch(reportOnMessageFailure)
           } catch (e) {
             log('feishu event error: ' + (e && e.message))
+            closeFatalIntake(e)
           }
         },
       })
@@ -693,7 +815,7 @@ function createFeishuPlatform({ appId, appSecret, botOpenId = null, onlyWhenMent
 
     async reply(replyCtx, content) {
       const mid = replyCtx && replyCtx.messageId
-      // 挂到触发它的那条消息下(v0.11.10):群里多人交叉说话时,独立发一条看不出这句在回应谁。
+      // 挂到触发它的那条消息下:群里多人交叉说话时,独立发一条看不出这句在回应谁。
       // 回复失败(原消息已撤回/超期)⇒ 退回直接发 —— 形态是锦上添花,把消息弄丢才是事故。
       if (mid && content) {
         try {
@@ -704,6 +826,20 @@ function createFeishuPlatform({ appId, appSecret, botOpenId = null, onlyWhenMent
         } catch (e) { log('feishu reply fallback: ' + (e && e.message)) }
       }
       return sendText(replyCtx && replyCtx.chatId, content)
+    },
+
+    // Durable terminal effects already record one attempt before this call.
+    // Return the raw SDK outcome so the caller can require a message ID;
+    // never fall back to a second send when this attempt is ambiguous.
+    async replyOnce(replyCtx, content) {
+      const mid = replyCtx && replyCtx.messageId
+      if (typeof mid !== 'string' || !/^om_[A-Za-z0-9_-]{1,124}$/.test(mid) ||
+          typeof replyCtx.chatId !== 'string' || !replyCtx.chatId ||
+          typeof content !== 'string' || !content) {
+        throw new TypeError('durable Feishu reply needs exact message target and text')
+      }
+      return client.im.message.reply({ path: { message_id: mid },
+        data: { msg_type: 'text', content: JSON.stringify({ text: content }) } })
     },
 
     async send(chatId, content) {
@@ -721,9 +857,15 @@ function createFeishuPlatform({ appId, appSecret, botOpenId = null, onlyWhenMent
     // old content is always a prefix of the new, the client renders a typewriter
     // effect. `finish` flips streaming_mode off so the card settles.
     // All ops are serialized so the per-card `sequence` stays strictly increasing.
-    async createStreamingCard(replyCtx, { title = 'sbot' } = {}) {
+    async createStreamingCard(replyCtx, { title = 'sbot', operationBoundary = null,
+      operationKey = null } = {}) {
       const chatId = replyCtx && replyCtx.chatId
       if (!chatId) return null
+      if (operationBoundary && (typeof operationBoundary !== 'function' ||
+          typeof operationKey !== 'string' || !operationKey ||
+          Buffer.byteLength(operationKey) > 256)) {
+        throw new TypeError('card operation boundary needs a stable operation key')
+      }
       const ELEM = 'answer'
       // No header — the reply card shows just the answer body (no "sbot" title line).
       const cardJson = {
@@ -733,54 +875,120 @@ function createFeishuPlatform({ appId, appSecret, botOpenId = null, onlyWhenMent
       }
 
       let cardId
-      let msgId = null // 撤回这张卡要用(ack 后转静默的收尾);投递结果里带回来,别丢在地上
+      let msgId = null // 静默收尾时撤回这张卡要用;投递结果里带回来,别丢在地上
       try {
         // ⚠ SDK 对业务错误(HTTP 200 + code≠0)不抛 —— 不查 code 的话,建卡被拒时这里拿到的是
         //   空 card_id,拿着它去投递会 400,**真实的 cardkit 拒绝理由就被那个 400 盖掉了**
         //   (排查时只看得见「消息发送失败」)。sendChatCard 早修过同一处,写法照抄。
-        const created = assertCardOk(await client.cardkit.v1.card.create({ data: { type: 'card_json', data: JSON.stringify(cardJson) } }), '建卡')
+        const created = await cardOperation(operationBoundary, operationKey, 'card.create',
+          { chatId, replyToMsgId: replyCtx && replyCtx.messageId || null },
+          async () => {
+            const response = assertCardOk(await client.cardkit.v1.card.create({
+              data: { type: 'card_json', data: JSON.stringify(cardJson) },
+            }), '建卡')
+            if (operationBoundary && response?.code !== 0) {
+              throw new Error('建卡结果未确认:未返回 code=0')
+            }
+            if (!response?.data?.card_id) throw new Error('建卡被拒:未返回 card_id')
+            return response
+          })
         cardId = created && created.data && created.data.card_id
         if (!cardId) throw new Error('建卡被拒:未返回 card_id')
-        // 挂到触发它的那条消息下(v0.11.10):群里多人交叉说话时,独立发一条卡看不出在回应谁。
+        // 挂到触发它的那条消息下:群里多人交叉说话时,独立发一条卡看不出在回应谁。
         // 排队合并批次的锚点是最新那条(见 _coalesce)。回复形态的卡照常流式更新(真机探针验过)。
         // 拿不到消息 id(合成消息)或回复失败(原消息已被撤回)⇒ 退回直接发,绝不因此丢答案。
-        const posted = await postCard(client, chatId, replyCtx && replyCtx.messageId, cardId)
+        const posted = await postCard(client, chatId, replyCtx && replyCtx.messageId, cardId,
+          { operationBoundary, operationKey })
         msgId = posted
       } catch (e) {
         log('feishu card create error: ' + (e && e.message))
+        if (operationBoundary) throw e
         return null // caller falls back to a plain-text reply
       }
 
       // 全部写操作交给写入器(流式窗口判断、序号分配、错误码检查都在它一处)。
-      const writer = createCardWriter({ client, cardId, elementId: ELEM, log, throttleMs: cardThrottleMs })
+      const writer = createCardWriter({ client, cardId, elementId: ELEM, log,
+        throttleMs: cardThrottleMs, operationBoundary, operationKey })
 
       return {
-        // 撤回整张卡(ack 之后该轮却以静默/中止收场时用)。scope 零新增 —— send_as_bot 本就
+        durableTarget() {
+          if (!operationBoundary || !cardId || !msgId) {
+            throw new Error('durable card target unavailable')
+          }
+          return Object.freeze({ chatId, cardId, msgId })
+        },
+        // 撤回整张卡(ack 或过程文字之后该轮却以静默收场时用)。scope 零新增 —— send_as_bot 本就
         // 覆盖撤回自己发的消息。先把在途的卡片操作排干,免得撤完又被补一帧打回来。
         async recall() {
           if (!msgId) return false
           writer.markClosed()
-          try { await writer.settle() } catch { /* 在途操作失败无所谓,照撤 */ }
-          try { await client.im.message.delete({ path: { message_id: msgId } }); return true }
-          catch (e) { log('feishu card recall error: ' + (e && e.message)); return false }
+          try { await writer.settle() } catch (e) {
+            if (operationBoundary) throw e
+            /* 在途操作失败无所谓,照撤 */
+          }
+          try {
+            await cardOperation(operationBoundary, operationKey, 'message.delete',
+              { chatId, cardId, msgId }, async () => {
+                const response = assertCardOk(await client.im.message.delete({
+                  path: { message_id: msgId },
+                }), '撤卡')
+                if (operationBoundary && response?.code !== 0) {
+                  throw new Error('撤卡结果未确认:未返回 code=0')
+                }
+                return response
+              })
+            return true
+          } catch (e) {
+            log('feishu card recall error: ' + (e && e.message))
+            if (operationBoundary) throw e
+            return false
+          }
         },
         // push the FULL text so far (cumulative). No-ops if unchanged (hash-skip).
         update(text) { writer.update(text) },
-        // 收尾:把最终正文落地并关掉流式。表格精致化(v0.11.5)= 答案含表格时整卡更新成
+        // Opt-in durable terminal handoff: all earlier card operations must
+        // finish before the terminal effect begins its own external attempt.
+        flush() { return writer.flush() },
+        // 收尾:把最终正文落地并关掉流式。表格精致化= 答案含表格时整卡更新成
         // 「markdown 段 + 原生表格组件」;无表格也走整卡更新(流式那条路会在第 10 分钟失效)。
-        // opts.milestones:引擎认出的 `>> ` 里程碑,收进「过程」折叠区(v0.11.93)
+        // opts.milestones:引擎认出的 `>> ` 里程碑,收进「过程」折叠区
         // opts.footer:耗时与 tokens 一行小字,挂在整卡最底(2026-09-16)
-        finish(text, opts = {}) { return writer.finish(text, { buildElements: (t) => answerCardElements(t, opts) }) },
+        finish(text, opts = {}) { return writer.finish(text, {
+          buildElements: (t) => answerCardElements(t, opts),
+          ...(Object.hasOwn(opts, 'terminalOperationBoundary')
+            ? { terminalOperationBoundary: opts.terminalOperationBoundary } : {}),
+        }) },
       }
     },
 
-    async stop() {
+    async stop({ strict = false } = {}) {
       // Stop the watchdog + tick first so a mid-shutdown state change can't trigger
       // a rebuild, then close the socket cleanly (close({force}) is the SDK's
       // documented teardown — kills timers + the reconnect loop, no orphan sockets).
+      if (typeof strict !== 'boolean') throw new TypeError('feishu stop strict must be boolean')
+      serviceIntakeClosed = true
       if (tickTimer) { try { clearInterval(tickTimer) } catch {} tickTimer = null }
-      if (watchdog) { try { watchdog.stop() } catch {} }
-      try { if (wsClient && wsClient.close) wsClient.close({ force: true }) } catch {}
+      if (watchdog) {
+        if (strict) watchdog.stop()
+        else try { watchdog.stop() } catch {}
+      }
+      const closing = wsClient
+      if (strict) {
+        if (closing) {
+          if (typeof closing.close !== 'function' ||
+              typeof closing.getConnectionStatus !== 'function') {
+            throw new Error('feishu strict stop cannot verify WS closure')
+          }
+          await closing.close({ force: true })
+          const state = closing.getConnectionStatus()?.state
+          if (state !== 'idle') {
+            throw new Error('feishu strict stop WS remains connected or unverified')
+          }
+        }
+        wsClient = null
+        return true
+      }
+      try { if (closing?.close) await closing.close({ force: true }) } catch {}
       wsClient = null
     },
   }
@@ -1239,21 +1447,46 @@ async function sendChatImage(client, chatId, absPath) {
 // msgId 供按钮回调/表情命中(takeNotice 锚点),cardId 供后续实体全量更新(单卡回填)。
 // 投递一张已建好的卡:优先「回复」到指定消息(群里看得出在回应谁),没有消息 id 或回复被拒
 // (原消息已撤回/超出可回复期)就退回直接发到群里。返回 message_id(撤回/表情命中锚点)。
-async function postCard(client, chatId, replyToMsgId, cardId) {
+async function postCard(client, chatId, replyToMsgId, cardId,
+  { operationBoundary = null, operationKey = null } = {}) {
   const content = JSON.stringify({ type: 'card', data: { card_id: cardId } })
   const pick = (r) => (r && ((r.data && r.data.message_id) || r.message_id)) || null
   if (replyToMsgId) {
     try {
       // ⚠ SDK 对业务错误不抛(HTTP 200 + code≠0)⇒ 判成功要看 code,不能只看有没有 id:
       // 成功却没取到 id 时若落到下面的直发,群里就是**两张卡**(比失去撤回能力糟得多)。
-      const r = await client.im.message.reply({ path: { message_id: replyToMsgId }, data: { msg_type: 'interactive', content } })
+      const r = await cardOperation(operationBoundary, operationKey, 'message.reply',
+        { chatId, cardId, replyToMsgId }, async () => {
+          const response = await client.im.message.reply({ path: { message_id: replyToMsgId },
+            data: { msg_type: 'interactive', content } })
+          if (operationBoundary && typeof response?.code !== 'number') {
+            throw new Error('卡片回复结果未确认:未返回业务码')
+          }
+          if (operationBoundary && response?.code === 0 && !pick(response)) {
+            throw new Error('卡片回复结果未确认:未返回 message_id')
+          }
+          return response
+        })
       if (r && r.code === 0) return pick(r)
-    } catch { /* 原消息已撤回/超期 ⇒ 退回直接发 */ }
+    } catch (e) {
+      if (operationBoundary) throw e
+      /* 原消息已撤回/超期 ⇒ 退回直接发 */
+    }
   }
-  return pick(await client.im.message.create({
-    params: { receive_id_type: 'chat_id' },
-    data: { receive_id: chatId, msg_type: 'interactive', content },
-  }))
+  const r = await cardOperation(operationBoundary, operationKey, 'message.create',
+    { chatId, cardId }, async () => {
+      const response = await client.im.message.create({
+        params: { receive_id_type: 'chat_id' },
+        data: { receive_id: chatId, msg_type: 'interactive', content },
+      })
+      if (operationBoundary) {
+        assertCardOk(response, '投递卡')
+        if (response?.code !== 0) throw new Error('卡片投递结果未确认:未返回 code=0')
+        if (!pick(response)) throw new Error('卡片投递结果未确认:未返回 message_id')
+      }
+      return response
+    })
+  return pick(r)
 }
 
 async function sendChatCard(client, chatId, cardJson) {
@@ -1311,7 +1544,7 @@ async function fetchChatHistory(client, chatId, n = 20) {
     createTimeMs: Number(m.create_time) || 0,
     msgType: m.msg_type,
     text: parseText({ message_type: m.msg_type, message_id: m.message_id, content: (m.body && m.body.content) || '' }), // message_id 进附件标记 ⇒ 历史里的图也能 download
-    // ⚠ @ 信息只在**这一层**补(v0.11.68):parseText 把 `@_user_N` 占位符抹掉是对的(实时收信那条路也用它,
+    // ⚠ @ 信息只在**这一层**补:parseText 把 `@_user_N` 占位符抹掉是对的(实时收信那条路也用它,
     //   agent 每轮收到的正文本就不该带占位符),但历史里因此看不出「这条是发给崔总的」还是「问我的」——
     //   排查者据此误判过「真人消息被静默吞掉」(实为 @了别人未@bot,门控正确不触发);agent 读 history 也分不清。
     //   某项目近 200 条里真人 76 条,12 条(16%)是这种。id 可能是字符串也可能是 {open_id} 对象,两种都认。

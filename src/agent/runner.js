@@ -1,16 +1,18 @@
-// Runner dispatch — selects the AgentRunner by provider so the rest of sbot (engine,
-// CLI, UI server) only ever calls one `runTurn` and stays backend-agnostic. A provider
-// with `runner: "codex"` drives OpenAI Codex CLI (GPT; DESIGN §1); everything
-// else drives Claude Code. The caller's `bin` is the Claude bin (cfg.agent.bin) — override
-// it to the codex bin when routing there. probeVersion (the Claude-bin startup probe) is
-// re-exported; codex has its own probe via codexcode.probeVersion (used by health.js).
+// Runner dispatch — selects the AgentRunner by provider so the rest of SintBot calls one
+// `runTurn`. Codex uses App Server by default and `codex exec` when the group
+// explicitly disables busy follow-up; all other providers use Claude Code. The caller's `bin` is
+// the Claude bin (cfg.agent.bin) — override it when routing to Codex.
 
 const claudeAgent = require('./claudecode')
 const codexAgent = require('./codexcode')
+const codexApp = require('./codexapp')
+const { routeBackend } = require('./privatecore')
 
 function runTurn(opts) {
-  if (opts && opts.provider && opts.provider.runner === 'codex') {
-    return codexAgent.runTurn({ ...opts, bin: (opts.provider && opts.provider.bin) || 'codex' })
+  const route = routeBackend(opts && opts.provider && opts.provider.runner, opts && opts.codexApp, opts && opts.codexSteer, opts && opts.codexProjectDocFallback)
+  if (route !== 'claude') {
+    const codexOpts = { ...opts, bin: (opts.provider && opts.provider.bin) || 'codex' }
+    return route === 'codex-app' ? codexApp.runTurn(codexOpts) : codexAgent.runTurn(codexOpts)
   }
   return claudeAgent.runTurn(opts)
 }

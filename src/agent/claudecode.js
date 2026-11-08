@@ -20,12 +20,15 @@ const { ensureProxy, proxyBaseFor } = require('./visionproxy')
 // Always-on 群项目基础能力: auto-allowed regardless of preset (even read-only) so the
 // self-knowledge manifest's advertised base skills actually run. Both CLIs fence to the
 // group's own chat ($SBOT_CHAT_ID); feishu also fences paths to cwd. Additive; deny wins.
-const BASE_SKILL_ALLOWS = ['Bash(sbot feishu *)', 'Bash(sbot wecom *)', 'Bash(sbot cron *)', 'Bash(sbot imagen *)', 'Bash(sbot design *)', 'Bash(sbot preview *)']
+const { claudeBaseSkillAllows, claudeBuildArgs, claudePluginAllowRules, claudeNormalizeEvent } = require('./privatecore')
+const { coreFailedResult } = require('./errtag')
+const BASE_SKILL_ALLOWS = claudeBaseSkillAllows()
 // Windows executable resolution (npm .cmd shim vs native .exe) is shared with the
 // codex runner — see winexec.js for the why (ENOENT on .cmd, never the POSIX shim).
 const { IS_WIN, resolveSpawn } = require('./winexec')
-const { classifyTransient } = require('./transienterr') // 瞬时错(过载 / 限流)判据,与 codex runner 共用
-const { classifyQuota } = require('./quotaerr') // 额度 / 账号类判据(切备用模型的依据),与 codex runner 共用
+const { tagError } = require('./errtag') // 出错原话 → quota / sessionMissing / transient 之一(优先级只在那一处定),与 codex runner 共用
+const closedRunnerResults = new WeakSet()
+const isClosedRunnerResult = result => !!result && typeof result === 'object' && closedRunnerResults.has(result)
 
 // Build the child env from a resolved provider. `baseUrlOverride` (when given)
 // replaces provider.baseUrl for ANTHROPIC_BASE_URL — used to point `claude` at
@@ -67,72 +70,26 @@ function buildEnv(provider = {}, baseUrlOverride, extraEnv) {
 
 // Map a raw `claude` stream-json line to a normalized AgentEvent (interfaces.js).
 function normalizeEvent(ev) {
-  switch (ev.type) {
-    case 'system': {
-      const r = { type: 'system', subtype: ev.subtype, sessionId: ev.session_id }
-      // 压缩事件带的量(v0.11.93,2.1.260 真机核对):会话文件里是 `compactMetadata.preTokens`,SDK 输出层
-      // 叫 `compact_metadata.pre_tokens` —— 二进制里两种拼法都在,两种都认。引擎拿它报「此前上下文约 X」:
-      // 此前用上一条 assistant 的 usage 顶替,而读进来的工具结果还没进任何 usage,真机少报 5 倍
-      // (报 3.6 万,实际 187836)。没有就不编数,引擎自会退回旧口径。
-      const meta = ev.compact_metadata || ev.compactMetadata
-      if (meta && typeof meta === 'object') {
-        const pre = Number(meta.pre_tokens != null ? meta.pre_tokens : meta.preTokens)
-        const post = Number(meta.post_tokens != null ? meta.post_tokens : meta.postTokens)
-        if (pre > 0) r.preTokens = pre
-        if (post > 0) r.postTokens = post
-      }
-      return r
+  const result = claudeNormalizeEvent(ev)
+  // JSON cannot carry `undefined`; retain the frozen JS object's optional
+  // property shape at the public runner boundary.
+  if (ev.type === 'system') { result.subtype = ev.subtype; result.sessionId = ev.session_id }
+  else if (ev.type === 'assistant' || ev.type === 'user') {
+    result.sessionId = ev.session_id
+    if (ev.type === 'assistant') for (const tool of result.tools) {
+      if (!Object.hasOwn(tool, 'name')) tool.name = undefined
+      if (!Object.hasOwn(tool, 'input')) tool.input = undefined
     }
-
-    case 'assistant': {
-      const blocks = (ev.message && ev.message.content) || []
-      return {
-        type: 'assistant',
-        text: blocks.filter((b) => b.type === 'text').map((b) => b.text).join(''),
-        thinking: blocks.filter((b) => b.type === 'thinking').map((b) => b.thinking).join(''),
-        tools: blocks.filter((b) => b.type === 'tool_use').map((b) => ({ name: b.name, input: b.input })),
-        sessionId: ev.session_id,
-      }
-    }
-
-    case 'user': {
-      const blocks = (ev.message && ev.message.content) || []
-      return {
-        type: 'tool_result',
-        results: blocks.filter((b) => b.type === 'tool_result'),
-        sessionId: ev.session_id,
-      }
-    }
-
-    case 'result': {
-      // ⚠ 出错时 CLI 的原因多半**不在 result 里**而在 errors[](error_during_execution / error_max_turns 的真实
-      //   形状,2026-09-08 审查从 2.1.260 二进制核对);API 过载(529)那种则是 subtype success + is_error +
-      //   result 带「API Error: 529 …」。两种都得让账本与瞬时错判据看见 —— 只看 result,前一种原因永远是空。
-      const errs = ev.is_error && Array.isArray(ev.errors)
-        ? ev.errors.map((x) => (typeof x === 'string' ? x : (x && x.message) || JSON.stringify(x))).filter(Boolean)
-        : []
-      const text = ev.result != null && ev.result !== '' ? ev.result : (errs.length ? errs.join('; ') : ev.result)
-      const r = {
-        type: 'result',
-        subtype: ev.subtype,
-        text,
-        isError: ev.is_error,
-        usage: ev.usage,
-        sessionId: ev.session_id,
-      }
-      // 瞬时错(服务端过载 / 限流)给群面一句人话;text 仍是原话,留给账本(判据在 transienterr,两 runner 共用)
-      if (ev.is_error) { const t = classifyTransient(text); if (t) r.transient = t }
-      // 额度 / 账号类(用完了 · 账号被停 · 登录态刷新失败)标 quota:引擎据此自动切到备用模型(判据在 agent/quotaerr,两 runner 共用)
-      if (ev.is_error) { const q = classifyQuota(text); if (q) r.quota = q }
-      // 续接的会话在 CLI 那边已经没了(典型:Claude Code 默认清掉 30 天没动过的会话记录)。引擎据此换新会话重做,
-      // 否则这个群之后每条消息都带着同一个死 id 去续接、条条报错,直到有人 /new。
-      if (ev.is_error && /No conversation found with session ID/i.test(String(text || ''))) r.sessionGone = true
-      return r
-    }
-
-    default:
-      return { type: ev.type, raw: ev }
   }
+  else if (ev.type === 'result') {
+    result.subtype = ev.subtype
+    result.isError = ev.is_error
+    result.usage = ev.usage
+    result.sessionId = ev.session_id
+    if (!Object.hasOwn(result, 'text')) result.text = undefined
+    if (ev.is_error) tagError(result, result.text)
+  }
+  return result
 }
 
 // key 型模型认证失败时造的那条出错 result(形状同 normalizeEvent 的 result)。quota 直接标 account:
@@ -169,6 +126,8 @@ function runTurn({
   extraEnv,
   appendSystemPrompt,
   onEvent,
+  onDurableEvent,
+  onTurnAccepted,
   signal,
   log = () => {}, // daemon logger — 与 codex runner 同一个口子(engine 两边都传 this.log)
   spawnFn = spawn, // 可注入,供单测驱动 spawn/解析环路(与 codexcode 同一形状)
@@ -181,6 +140,7 @@ function runTurn({
 } = {}) {
   return new Promise((resolve, reject) => {
     if (!prompt) return reject(new Error('runTurn: prompt required'))
+    if (onDurableEvent !== undefined && typeof onDurableEvent !== 'function') return reject(new TypeError('onDurableEvent must be a function'))
 
     // CLI 能力探测必须先于 spawn(见 supportsFlag)。结果按 bin 缓存 ⇒ 只有进程内第一轮真探一次
     // (`--help` 毫秒级);不需要压缩的群连探都不探。
@@ -214,19 +174,13 @@ function runTurn({
     // to start) can resolve a base-URL override first. Closes over resolve/reject.
     function launch(baseUrlOverride) {
       // Prompt travels via stdin (see spawn below), so it's absent from argv here.
-      const args = ['-p', '--output-format', 'stream-json', '--verbose']
-      const m = model || provider.model
-      if (m) args.push('--model', m)
-      if (sessionId) args.push('--resume', sessionId)
-      if (permissionMode && permissionMode !== 'default') args.push('--permission-mode', permissionMode)
       // 长会话上下文上限:超过即让 CLI 原地压缩(--autocompact)。不传 ⇒ CLI 只在模型窗口边缘
       // 才压 —— 多天群会话实测涨到 96 万 token 都没压过一次。
       // ⚠ 旗子先经能力探测(见 supportsFlag):老 CLI 不认它,传了**每轮必崩**。探不出来也不传 ——
       // 降级(压缩不生效)好过整群跑不动。但**降级必须出声**:静默失效正是最难查的那类(教训 26),
       // 所以这里打日志、doctor 另有一行如实标。
-      if (autocompactTokens > 0) {
-        if (autocompactSupported === true) args.push('--autocompact', String(autocompactTokens))
-        else if (onEvent) {
+      if (autocompactTokens > 0 && autocompactSupported !== true) {
+        if (onEvent) {
           try {
             onEvent({ type: 'log', message: autocompactSupported === false
               ? 'claude CLI 不认 --autocompact(版本偏低)⇒ 长会话自动压缩已停用;升级 claude 即可恢复'
@@ -241,32 +195,20 @@ function runTurn({
       // merged here without touching the group's saved allow list; deny still wins.
       // Groups without a plugins config keep the traditional self-loading — zero regression.
       // Config travels as a file, not inline JSON argv (Windows cmd.exe shim mangles quotes).
+      let mcpConfigPath, pluginAllows = []
       if (plugins && workdir) {
-        const { buildMcpConfig, pluginAllowRules, writeMcpConfigFile } = require('../plugins')
+        const { buildMcpConfig, writeMcpConfigFile } = require('../plugins')
         // 传 log:跳过死 MCP 的那一行要走 daemon 带时间戳的 logger(v0.11.61 口径),不能退成裸 stderr
         const mcpCfg = buildMcpConfig(workdir, plugins.mcp || [], undefined, { log })
-        args.push('--mcp-config', writeMcpConfigFile(workdir, mcpCfg), '--strict-mcp-config')
-        const extra = pluginAllowRules(mcpCfg, plugins.skills || [])
-        if (extra.length) allowedTools = [...(allowedTools || []), ...extra]
+        mcpConfigPath = writeMcpConfigFile(workdir, mcpCfg)
+        pluginAllows = claudePluginAllowRules(Object.keys(mcpCfg.mcpServers || {}), plugins.skills || [])
       }
-      // Base skills (always-on, 群项目基础能力): auto-allow the platform skills + `sbot cron` … so a
-      // read-only/whitelist group's agent can still use the skills its manifest advertises.
-      // (Codex ignores this — no allow/deny; its shell needs danger-full-access instead.)
-      allowedTools = [...(allowedTools || []), ...BASE_SKILL_ALLOWS]
-      // Policy-driven headless permission (DESIGN §4.1): a confined allow/deny list
-      // + `--permission-mode dontAsk` means out-of-policy tools auto-deny and never
-      // hang. Enforced by the CLI harness, so it's identical across model backends.
-      if (allowedTools && allowedTools.length) args.push('--allowedTools', allowedTools.join(','))
-      if (disallowedTools && disallowedTools.length) args.push('--disallowedTools', disallowedTools.join(','))
-      // Extra system prompt (engine injects the NO_REPLY/sender-tag contract).
-      // Travels as argv: keep callers' text ASCII-safe so
-      // the Windows cmd.exe shim path can't mangle it (user prompt stays on stdin).
-      if (appendSystemPrompt) args.push('--append-system-prompt', appendSystemPrompt)
-      // Directory scope: cwd = the project's own workdir, and the ONLY --add-dir is that
-      // same workdir — never an external path. So file tools (Read/Edit/Write/Grep/Glob)
-      // stay confined to the project directory. (Bash isn't OS-jailed by the CLI — its
-      // reach is bounded by the per-project allow list, not by a directory sandbox.)
-      if (workdir) args.push('--add-dir', workdir)
+      // The binary owns the permission, tool allow/deny and argument policy.
+      // Node only resolves capability and writes the project-scoped MCP file.
+      const args = claudeBuildArgs({ model, providerModel: provider.model, sessionId,
+        permissionMode, autocompactTokens, autocompactSupported,
+        mcpConfigPath, allowedTools, pluginAllows, disallowedTools,
+        appendSystemPrompt, workdir })
 
       const { file, spawnArgs, fallback } = resolveSpawn(bin, args)
       if (fallback) log(`配置的 agent 路径 '${bin}' 不存在,本轮改用 ${fallback} —— 请把配置改回正确路径`) // 兜底只救急,配置仍是错的
@@ -295,13 +237,49 @@ function runTurn({
       let killTimer = null
       let closeTimer = null
       let settled = false
+      let childCloseObserved = false
+      let acceptanceFailed = false
+      let turnAccepted = false
+      let durableWork = Promise.resolve()
+      let durableFailed = false
       // Resolution is guarded (exactly once) because a close-grace timer can force the
       // turn to settle before the 'close' event fires — otherwise a lingering pipe would
       // wedge the per-group lock forever (never-hang invariant).
       const finish = (fn) => { if (settled) return; settled = true; if (killTimer) clearTimeout(killTimer); if (closeTimer) clearTimeout(closeTimer); if (signal) signal.removeEventListener('abort', onAbort); fn() }
+      const resolveRun = result => {
+        if (childCloseObserved) closedRunnerResults.add(result)
+        resolve(result)
+      }
       const killTree = () => {
         if (IS_WIN && child.pid) { try { spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore', windowsHide: true }) } catch {}; return }
         try { child.kill('SIGKILL') } catch { /* already gone */ }
+      }
+      // The durable v2 dispatch ACK is a separate, synchronous boundary. Renderer
+      // callbacks intentionally swallow errors; this callback must never do so.
+      // No normalized event is delivered before the child's init identifies the
+      // accepted turn. CLI tools may already have executed before observation.
+      const failTurnAcceptance = (error) => {
+        acceptanceFailed = true
+        buf = ''
+        killTree()
+        finish(() => reject(error))
+      }
+      const failDurableEvent = (error) => {
+        if (durableFailed || settled) return
+        durableFailed = true
+        buf = ''
+        killTree()
+        finish(() => reject(error))
+      }
+      const persistEvent = async (event) => {
+        if (!onDurableEvent || !event) return
+        let timer
+        try {
+          await Promise.race([
+            Promise.resolve().then(() => onDurableEvent(event)),
+            new Promise((_, fail) => { timer = setTimeout(() => fail(new Error('Claude durable event hook timed out')), 10000) }),
+          ])
+        } finally { clearTimeout(timer) }
       }
       // Force-resolve if 'close' doesn't arrive within closeGraceMs of the trigger (the
       // final result, or an abort). On Windows the cmd.exe shim / spawned MCP servers can
@@ -323,7 +301,9 @@ function runTurn({
         closeTimer = setTimeout(() => {
           if (!aborted && !(lastResult && lastResult.authFailed)) log(`claude 答案已到但 ${closeGraceMs}ms 内没退出 ⇒ 强制收尾;本轮若起过后台命令(run_in_background),它会被一起收掉,下一轮可能空转一次`)
           killTree()
-          finish(() => resolve({ sessionId: capturedSessionId, result: lastResult, code: null, aborted }))
+          const complete = () => finish(() => resolveRun({ sessionId: capturedSessionId, result: lastResult, code: null, aborted }))
+          if (onDurableEvent) durableWork.then(complete, failDurableEvent)
+          else complete()
         }, closeGraceMs)
       }
       const onAbort = () => {
@@ -343,8 +323,25 @@ function runTurn({
         else signal.addEventListener('abort', onAbort, { once: true })
       }
 
+      // 这段回调不在任何 Promise 链里,抛错会直接带走整个进程 ⇒ 核心失败只结束当前轮。
+      // 已经拿到结果时保留结果(答案已交付,只差收尾)。原因只进日志,不带事件原文。
+      let coreFailed = false
+      const failCore = (error) => {
+        if (onDurableEvent) { failDurableEvent(error); return }
+        coreFailed = true
+        buf = ''
+        log(`binary core failed in claude stream: ${error && error.message}`)
+        if (lastResult) return
+        lastResult = coreFailedResult(capturedSessionId)
+        if (onEvent) { try { onEvent(lastResult) } catch { /* renderer must not kill the turn */ } }
+        killTree()
+        armCloseGrace()
+      }
       const stdoutDecoder = new StringDecoder('utf8') // 一个汉字可能被拆在两个分块里,逐块 toString 会变成乱码
-      child.stdout.on('data', (chunk) => {
+      const processChunk = async (chunk) => {
+        // Legacy callers may still receive a late buffered line after close;
+        // only the v2 gate forbids post-settlement delivery.
+        if (coreFailed || acceptanceFailed || durableFailed || ((onTurnAccepted || onDurableEvent) && settled)) return
         buf += stdoutDecoder.write(chunk)
         let nl
         while ((nl = buf.indexOf('\n')) >= 0) {
@@ -353,18 +350,43 @@ function runTurn({
           if (!line) continue
           let raw
           try { raw = JSON.parse(line) } catch { continue } // skip non-JSON noise
+          if (onTurnAccepted && !turnAccepted) {
+            if (raw.type !== 'system' || raw.subtype !== 'init' || typeof raw.session_id !== 'string' || !raw.session_id) {
+              failTurnAcceptance(new Error('Claude turn emitted an event before start confirmation'))
+              return
+            }
+            let accepted
+            try { accepted = onTurnAccepted({ channel: 'claude-code', sessionId: raw.session_id }) } catch (error) {
+              failTurnAcceptance(error)
+              return
+            }
+            let asyncAccepted = false
+            try { asyncAccepted = !!accepted && typeof accepted.then === 'function' } catch (error) {
+              failTurnAcceptance(error)
+              return
+            }
+            if (asyncAccepted) {
+              // An async write cannot guard following lines in this same chunk.
+              Promise.resolve(accepted).catch(() => {})
+              failTurnAcceptance(new Error('Claude turn start confirmation must be synchronous'))
+              return
+            }
+            turnAccepted = true
+          }
           // key 错快速失败(1.0.3):claude 对 401 / 403 默认重试约 3 分钟才放弃,第一次重试时(实测 0.8 秒)就会先报一条
           // `system/api_retry` 带 error_status。只对 API key 型模型(有 baseUrl)当场收尾 —— 订阅登录的 401 可能是
           // Claude Code 自己在刷新登录,让它重试;5xx / 529 这类过载照旧重试。造一条出错 result 交给上层:账号类失败
           // 那套(备用模型 / 运维告警 / 群里人话)和重试耗尽时一样走,只是不用等。
           if (raw.type === 'system' && raw.subtype === 'api_retry' && provider.baseUrl && (raw.error_status === 401 || raw.error_status === 403) && !lastResult && !aborted) {
             lastResult = authFailedResult(raw.error_status, raw.error, capturedSessionId)
+            if (onDurableEvent) await persistEvent(lastResult)
             if (onEvent) { try { onEvent(lastResult) } catch { /* renderer must not kill the turn */ } }
             killTree()
             armCloseGrace()
             continue
           }
-          const ev = normalizeEvent(raw)
+          let ev
+          try { ev = normalizeEvent(raw) } catch (error) { failCore(error); return }
           if (ev.sessionId) capturedSessionId = ev.sessionId
           if (ev.type === 'assistant' && raw.message && raw.message.usage) {
             lastMsgUsage = raw.message.usage
@@ -377,10 +399,18 @@ function runTurn({
             // message.usage 里(2.1.222 真机核对),兜底走 usage.iterations 末元素(同一形状)。
             const last = lastMsgUsage || (ev.usage && Array.isArray(ev.usage.iterations) ? ev.usage.iterations[ev.usage.iterations.length - 1] : null)
             if (last) ev.contextTokens = (last.input_tokens || 0) + (last.cache_read_input_tokens || 0) + (last.cache_creation_input_tokens || 0)
-            lastResult = ev; armCloseGrace() // answer in → bound the wait for 'close'
           }
+          if (onDurableEvent) await persistEvent(ev)
+          if (ev.type === 'result') { lastResult = ev; armCloseGrace() } // answer in → bound the wait for 'close'
           if (onEvent) { try { onEvent(ev) } catch { /* renderer must not kill the turn */ } }
         }
+      }
+      child.stdout.on('data', (chunk) => {
+        if (!onDurableEvent) { processChunk(chunk).catch(failDurableEvent); return }
+        child.stdout.pause?.()
+        durableWork = durableWork.then(() => processChunk(chunk)).catch(failDurableEvent).finally(() => {
+          if (!durableFailed && !settled) child.stdout.resume?.()
+        })
       })
 
       child.stderr.on('data', (c) => { stderr += c.toString('utf8') })
@@ -395,12 +425,17 @@ function runTurn({
         reject(err)
       }))
 
-      child.on('close', (code) => finish(() => {
+      const completeClose = (code) => finish(() => {
         if (code !== 0 && !lastResult && !aborted) {
           return reject(new Error(`claude exited ${code}: ${stderr.trim().slice(0, 800) || '(no stderr)'}`))
         }
-        resolve({ sessionId: capturedSessionId, result: lastResult, code, aborted })
-      }))
+        resolveRun({ sessionId: capturedSessionId, result: lastResult, code, aborted })
+      })
+      child.on('close', (code) => {
+        childCloseObserved = true
+        if (onDurableEvent) durableWork.then(() => { if (!durableFailed) completeClose(code) })
+        else completeClose(code)
+      })
     }
   })
 }
@@ -465,4 +500,4 @@ function probeVersion(bin = 'claude') {
   })
 }
 
-module.exports = { runTurn, buildEnv, normalizeEvent, probeVersion, supportsFlag, BASE_SKILL_ALLOWS }
+module.exports = { runTurn, isClosedRunnerResult, buildEnv, normalizeEvent, probeVersion, supportsFlag, BASE_SKILL_ALLOWS }

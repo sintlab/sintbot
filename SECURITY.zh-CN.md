@@ -2,19 +2,8 @@
 
 [English](./SECURITY.md) · 简体中文
 
-## 报告漏洞
+不要在公开 issue 中报告安全漏洞。请用 GitHub 的 [私密漏洞报告](https://github.com/sintlab/sintbot/security/advisories/new)，或发邮件到 support@sintbot.com。说明影响版本、复现步骤和影响面，不附密钥或私有项目数据。
 
-请**不要**在公开 issue 里报安全问题。用 GitHub 的 [私密漏洞报告](https://github.com/sintlab/sintbot/security/advisories/new),或发邮件到 support@sintbot.com。
+1.3.0 关注的范围包括：绕过已配置的 Codex 权限、把任务路由到错误的群或项目、回复泄漏凭据、接受不匹配二进制，以及重放外部结果未知的效果。完全访问权限本来就允许修改文件和执行命令，不等于限制在项目目录内。
 
-请附上:影响的版本、复现步骤、你判断的影响面。我们会尽快回复。
-
-## 范围
-
-特别关心的几类:
-
-- 群消息或网页内容绕过群的权限档位执行命令(不含「完全访问」档位本来就允许的事);
-- 控制台鉴权绕过(局域网密码、公网飞书登录、一次性接管链接);
-- 出站消息泄漏配置里的密钥;
-- 符号链接等手段绕出项目根目录。
-
-SintBot 的权限模型与已知边界(例如 Bash 没有操作系统级的目录隔离)见 [docs/security.md](./docs/zh-CN/security.md)。
+本版支持 macOS、一个飞书群与 Codex，采用前台启动；控制台和自动后台服务不在支持范围。调查失败时保留已有收据，操作见[安装与恢复指南](./docs/zh-CN/install.md)。

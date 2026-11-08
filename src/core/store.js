@@ -20,15 +20,15 @@ function atomicWriteJSON(file, obj, opts = {}) {
   // the default umask — would silently widen it back to 0644 on every save.
   let mode = null
   try { mode = fs.statSync(file).mode & 0o777 } catch { mode = opts.mode == null ? null : opts.mode } // 新文件:有 opts.mode 就用它,否则随 umask
-  const fd = fs.openSync(tmp, 'w')
   try {
-    fs.writeSync(fd, data)
-    fs.fsyncSync(fd)
-    if (mode != null) fs.fchmodSync(fd, mode)
-  } finally {
-    fs.closeSync(fd)
-  }
-  try {
+    const fd = fs.openSync(tmp, 'w')
+    try {
+      fs.writeSync(fd, data)
+      fs.fsyncSync(fd)
+      if (mode != null) fs.fchmodSync(fd, mode)
+    } finally {
+      fs.closeSync(fd)
+    }
     fs.renameSync(tmp, file)
   } catch (e) {
     try { fs.unlinkSync(tmp) } catch { /* best-effort cleanup */ }
@@ -89,6 +89,35 @@ class StateStore {
 
   getSession(chatId) { return this._group(chatId).sessionId || null }
   setSession(chatId, sid) { this._group(chatId).sessionId = sid; this._save() }
+  // C2 writeback: persist a new snapshot before exposing the session in this
+  // process. Mark an aborted session in the same replacement when requested;
+  // omitted/false tainted leaves the existing flag as the legacy setter does.
+  // The legacy setter keeps its existing behavior for other callers.
+  setSessionAtomic(chatId, sid, { tainted, sessionStats } = {}) {
+    if (sessionStats !== undefined && (!sessionStats ||
+        typeof sessionStats !== 'object' || Array.isArray(sessionStats) ||
+        sessionStats.sessionId !== sid ||
+        ['turns', 'in', 'out'].some(key =>
+          !Number.isFinite(sessionStats[key]) || sessionStats[key] < 0) ||
+        (sessionStats.ctx !== undefined &&
+          (!Number.isFinite(sessionStats.ctx) || sessionStats.ctx < 0)) ||
+        (sessionStats.cum !== undefined && (!sessionStats.cum ||
+          typeof sessionStats.cum !== 'object' || Array.isArray(sessionStats.cum) ||
+          ['in', 'cr', 'out'].some(key =>
+            !Number.isFinite(sessionStats.cum[key]) || sessionStats.cum[key] < 0))))) {
+      throw new TypeError('session statistics must match the session being written')
+    }
+    const groups = this.data.groups || {}
+    const group = { ...(groups[chatId] || {}), sessionId: sid }
+    if (tainted === true) group.tainted = true
+    if (sessionStats !== undefined) group.sessionStats = {
+      ...sessionStats,
+      ...(sessionStats.cum === undefined ? {} : { cum: { ...sessionStats.cum } }),
+    }
+    const next = { ...this.data, groups: { ...groups, [chatId]: group } }
+    atomicWriteJSON(this.file, next, { mode: 0o600 })
+    this.data = next
+  }
   // 清会话连带清「被掐断」标记:标记属于那段会话,会话没了它就没有意义。
   clearSession(chatId) { const g = this._group(chatId); delete g.sessionId; delete g.tainted; this._save() }
 
@@ -107,6 +136,21 @@ class StateStore {
   getSessionStats(chatId) { return this._group(chatId).sessionStats || null }
   putSessionStats(chatId, s) { this._group(chatId).sessionStats = s; this._save() }
   clearSessionStats(chatId) { delete this._group(chatId).sessionStats; this._save() }
+
+  // Session writeback may be followed by a requested fresh session. Publish
+  // all three session-owned fields in one file replacement, and only replace
+  // the live snapshot after that write succeeds. A failed fsync/rename cannot
+  // make this process observe a reset that the next process will not see.
+  resetSessionAndStats(chatId) {
+    const groups = this.data.groups || {}
+    const group = { ...(groups[chatId] || {}) }
+    delete group.sessionId
+    delete group.tainted
+    delete group.sessionStats
+    const next = { ...this.data, groups: { ...groups, [chatId]: group } }
+    atomicWriteJSON(this.file, next, { mode: 0o600 })
+    this.data = next
+  }
 
   getProvider(chatId) { return this._group(chatId).provider || null }
   // ⚠ 人主动切模型(/model · 控制台)连带作废「额度临时切换」记录:人说了算,引擎之后不再自作主张切回。

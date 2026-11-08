@@ -1,12 +1,11 @@
-## What and why / 改了什么、为什么
+## What changed and why / 修改与原因
 
+## Validation / 验证
 
-## Checklist / 自查
+- [ ] Public release smoke tests pass / 公开发行烟测通过
+- [ ] Changed entry wiring was executed in a real process / 改入口后实际运行进程
+- [ ] English and Chinese documentation agree / 双语文档一致
+- [ ] Package contains only approved runtime files, documentation and notices / 安装包只含核定运行文件、文档与声明
+- [ ] No secrets, personal data or production logs / 无密钥、个人数据或生产日志
 
-- [ ] `npm test` passes / 全量单测通过
-- [ ] Changed `bin/sbot.js` wiring? Started the process once for real / 改了 bin 接线就真起一次进程
-- [ ] Changed the console? Clicked through it in a browser / 改了控制台就在浏览器里点一遍
-- [ ] Changed a doc that exists in both languages? Updated both / 中英两份文档一起改
-- [ ] No secrets, personal data or internal paths in code, docs or messages / 代码、文档、消息里没有密钥、个人信息或内部路径
-
-See [CONTRIBUTING.md](../CONTRIBUTING.md) for the conventions. / 约定见 [CONTRIBUTING.zh-CN.md](../CONTRIBUTING.zh-CN.md)。
+See [CONTRIBUTING.md](../CONTRIBUTING.md) / [开发约定](../CONTRIBUTING.zh-CN.md).

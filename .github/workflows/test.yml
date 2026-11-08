@@ -9,8 +9,8 @@ permissions:
   contents: read
 
 jobs:
-  unit:
-    runs-on: ubuntu-latest
+  public-release-smoke:
+    runs-on: macos-latest
     strategy:
       fail-fast: false
       matrix:
@@ -20,5 +20,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
-      - run: npm ci
-      - run: npm test
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: node --test tests/public-release-smoke.test.js

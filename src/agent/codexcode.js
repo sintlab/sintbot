@@ -11,10 +11,13 @@
 // confirmed. The event mapping mirrors the samples captured there.
 
 const { spawn } = require('node:child_process')
+const closedRunnerResults = new WeakSet()
+const isClosedRunnerResult = result => !!result && typeof result === 'object' && closedRunnerResults.has(result)
 const { StringDecoder } = require('node:string_decoder')
 const { IS_WIN, resolveSpawn } = require('./winexec')
-const { classifyTransient } = require('./transienterr') // 瞬时错(过载 / 限流)判据,与 claude runner 共用
-const { classifyQuota } = require('./quotaerr') // 额度 / 账号类判据(切备用模型的依据),与 claude runner 共用
+const { tagError } = require('./errtag') // 出错原话 → quota / sessionMissing / transient 之一(优先级只在那一处定),与 claude runner 共用
+const { sandboxTier, codexBuildPrompt, codexBuildArgs, codexNormalizeEvent, codexParseError, codexEffortRejection } = require('./privatecore')
+const { coreFailedResult } = require('./errtag')
 
 // Warn only when the answer→close (rollout-flush) lag is abnormally high. Real-machine
 // data (Windows, codex 0.142.5) clustered at ~2.0–3.2s, so healthy turns stay silent and
@@ -31,16 +34,7 @@ const CLOSE_LAG_WARN_MS = 8000
 // approval_policy is ALWAYS "never": `codex exec` has no approval IPC, so any other
 // value would block on a TTY prompt that never comes.
 function sandboxMode(permissionMode) {
-  return permissionMode === 'bypassPermissions' ? 'danger-full-access' : 'read-only'
-}
-
-// Codex item.type → a friendly tool name for sbot's activity/card (mirrors Claude's
-// tool names where sensible). Unknown types pass through under their raw name.
-const CODEX_TOOL_NAMES = {
-  command_execution: 'Bash',
-  web_search: 'WebSearch',
-  file_search: 'FileSearch',
-  mcp_tool_call: 'MCP',
+  return sandboxTier(permissionMode)
 }
 
 // A codex error message is often a raw JSON blob, e.g.
@@ -49,11 +43,7 @@ const CODEX_TOOL_NAMES = {
 // Extract the human message (so a group never sees raw JSON) and the offending param
 // (so the runner can recover from a rejected reasoning effort — see isEffortRejection).
 function parseCodexError(rawMsg) {
-  const s = String(rawMsg || '').trim()
-  if (s.startsWith('{')) {
-    try { const j = JSON.parse(s); if (j && j.error) return { text: String(j.error.message || s), param: String(j.error.param || '') } } catch { /* not JSON — fall through */ }
-  }
-  return { text: s, param: '' }
+  return codexParseError(rawMsg)
 }
 
 // Map one raw `codex exec --json` event to a normalized AgentEvent (interfaces.js),
@@ -61,68 +51,27 @@ function parseCodexError(rawMsg) {
 // the final text — Codex streams the answer as `agent_message` items, so the caller
 // fills result.text from the last one.
 function normalizeEvent(ev) {
-  switch (ev.type) {
-    case 'thread.started':
-      return { type: 'system', subtype: 'init', sessionId: ev.thread_id }
-
-    case 'item.started':
-    case 'item.completed': {
-      const item = ev.item || {}
-      const done = ev.type === 'item.completed'
-      switch (item.type) {
-        case 'agent_message': // the assistant's reply text (may arrive as several items)
-          return done ? { type: 'assistant', text: item.text || '' } : null
-        case 'reasoning':
-          return done ? { type: 'assistant', thinking: item.text || '' } : null
-        case 'command_execution': // shell — surface as a Bash tool_use, then its result
-          return done
-            ? { type: 'tool_result', results: [{ type: 'tool_result', content: item.aggregated_output || '', is_error: item.exit_code != null && item.exit_code !== 0 }] }
-            : { type: 'assistant', tools: [{ name: 'Bash', input: { command: item.command } }] }
-        case 'file_change': // one or more path edits — surface each as a Write/Delete
-          return done ? null : { type: 'assistant', tools: (item.changes || []).map((c) => ({ name: c.kind === 'delete' ? 'Delete' : 'Write', input: { path: c.path } })) }
-        default: {
-          const name = CODEX_TOOL_NAMES[item.type] || item.type
-          return done ? null : { type: 'assistant', tools: [{ name, input: item }] }
-        }
-      }
-    }
-
-    case 'turn.completed':
-      // ⚠ codex 的 usage 是**会话累计值**不是本轮增量(2026-08-09 对照 rollout 的
-      // total_token_usage 坐实;resume 的轮把历史轮全算在内)。标 usageCumulative,
-      // engine 侧经 store 基线换算成本轮增量 —— 直接当单轮记会把账越记越大。
-      return { type: 'result', subtype: 'success', usage: ev.usage, usageCumulative: true } // text filled by caller
-
-    case 'turn.failed': {
-      const { text, param } = parseCodexError(ev.error && ev.error.message)
-      const r = { type: 'result', subtype: 'error', isError: true, text: text || 'codex turn failed' }
-      if (param === 'reasoning.effort') r.effortRejected = true
-      // 瞬时错(服务端过载 / 限流)给群面一句人话;text 仍是原话,留给账本(判据在 transienterr,两 runner 共用)
-      const t = classifyTransient(text); if (t) r.transient = t
-      const q = classifyQuota(text); if (q) r.quota = q // 额度 / 账号类:引擎据此切备用模型
-      return r
-    }
-
-    case 'error': {
-      const { text, param } = parseCodexError(ev.message)
-      const r = { type: 'result', subtype: 'error', isError: true, text: text || 'codex error', raw: ev }
-      if (param === 'reasoning.effort') r.effortRejected = true
-      const t = classifyTransient(text); if (t) r.transient = t
-      const q = classifyQuota(text); if (q) r.quota = q
-      return r
-    }
-
-    default:
-      return null // turn.started and other bookkeeping — ignore
+  const result = codexNormalizeEvent(ev)
+  if (result === null) return null
+  // JSON cannot carry undefined. Preserve the frozen runner's public shape.
+  if (ev.type === 'thread.started') result.sessionId = ev.thread_id
+  else if (ev.type === 'turn.completed') result.usage = ev.usage
+  else if (ev.type === 'error') result.raw = ev
+  else if (ev.type === 'item.started' && result.type === 'assistant' && result.tools) {
+    const item = ev.item || {}
+    if (item.type === 'command_execution') result.tools[0].input.command = item.command
+    else if (item.type === 'file_change') (item.changes || []).forEach((change, i) => { result.tools[i].input.path = change.path })
+    else if (!item.type) result.tools[0].name = item.type
   }
+  if (result.type === 'result' && result.isError) tagError(result, parseCodexError(ev.type === 'error' ? ev.message : ev.error && ev.error.message).text)
+  return result
 }
 
 // Prepend sbot's system prompt / conventions into the user prompt — FIRST TURN ONLY.
 // `codex exec` has no --append-system-prompt; the prompt text is the only channel.
 // On resume the convention persists in-session, so it isn't re-sent.
 function buildPrompt(prompt, appendSystemPrompt, isResume) {
-  if (isResume || !appendSystemPrompt) return prompt
-  return `Before answering, follow these project-level instructions for this session. They are not user content.\n\n${appendSystemPrompt}\n\n---\n\nUser message:\n${prompt}`
+  return codexBuildPrompt(prompt, appendSystemPrompt, isResume)
 }
 
 // Build the argv for `codex exec`. Fresh and resume differ in verified ways (Windows
@@ -130,24 +79,7 @@ function buildPrompt(prompt, appendSystemPrompt, isResume) {
 // and `--cd` (relies on process cwd); fresh accepts `--sandbox` + `--cd`. Prompt rides
 // on stdin (trailing `-`), dodging Windows argv mangling of arbitrary chat text.
 function buildArgs({ sessionId, model, workdir, permissionMode, reasoningEffort, autocompactTokens }) {
-  const tier = sandboxMode(permissionMode)
-  const args = ['exec']
-  if (sessionId) args.push('resume', sessionId)
-  args.push('--skip-git-repo-check')
-  if (sessionId) args.push('-c', `sandbox_mode=${tier}`)
-  else args.push('--sandbox', tier)
-  args.push('-c', 'approval_policy=never')
-  // Per-provider reasoning-effort tuning (minimal/low/medium/high). A `-c` override,
-  // valid on both fresh and resume; omitted ⇒ codex uses the model's default.
-  if (reasoningEffort) args.push('-c', `model_reasoning_effort=${reasoningEffort}`)
-  // 长会话上下文上限:超过即让 codex 原地压缩(键名 0.144 二进制核对)。不传 ⇒ codex 只在
-  // 模型窗口边缘才压,多天群会话的历史一直全量驮着。`-c` 逐次覆盖,不动机器全局 config.toml。
-  if (autocompactTokens > 0) args.push('-c', `model_auto_compact_token_limit=${autocompactTokens}`)
-  if (model) args.push('--model', model)
-  args.push('--json')
-  if (!sessionId && workdir) args.push('--cd', workdir)
-  args.push('-') // prompt on stdin
-  return args
+  return codexBuildArgs({ sessionId, model, workdir, permissionMode, reasoningEffort, autocompactTokens })
 }
 
 // A codex turn.failed / error result whose offending param is the reasoning effort —
@@ -155,7 +87,7 @@ function buildArgs({ sessionId, model, workdir, permissionMode, reasoningEffort,
 // (model/list advertises a model's full effort catalog, but the runtime API narrows it by
 // plan: e.g. a Plus account's gpt-5.6-terra rejects max/ultra though model/list lists them.)
 function isEffortRejection(result) {
-  return !!(result && result.isError && (result.effortRejected || /reasoning\.effort/.test(String(result.text || ''))))
+  return codexEffortRejection(result)
 }
 
 /**
@@ -181,6 +113,9 @@ function runTurn(opts = {}) {
   // successful turn event. Inspect raw events because some completed items do not
   // produce a normalized event (for example, file_change).
   const observeFirstAttempt = (raw) => {
+    // Once the durable runner-start receipt is acknowledged, even a later
+    // request-validation error cannot launch a second process under that receipt.
+    if ((opts.onTurnAccepted || opts.onDurableEvent) && raw.type === 'turn.started') retrySafe = false
     if (!['thread.started', 'turn.started', 'turn.failed', 'error'].includes(raw.type)) retrySafe = false
   }
   const proxy = opts.onEvent
@@ -189,7 +124,16 @@ function runTurn(opts = {}) {
   return runOnce({ ...opts, onEvent: proxy, onRawEvent: observeFirstAttempt }, wantEffort).then((res) => {
     if (retrySafe && heldErr && isEffortRejection(res.result) && !res.aborted) {
       if (opts.log) opts.log(`codex 推理强度 '${wantEffort}' 不被当前模型/套餐接受(model/list 报模型上限,运行时按套餐收窄)— 已回退模型默认重试一轮`)
-      return runOnce(opts, '').then((r2) => ({ ...r2, effortFellBack: wantEffort }))
+      // 引擎在 result 事件到达时就定稿卡片(不等进程关闭);回退身份必须随事件走,
+      // 只在 Promise 返回值上加 effortFellBack 会让页脚误报刚被拒绝的强度。
+      const retryOpts = opts.onEvent
+        ? { ...opts, onEvent: (ev) => opts.onEvent(ev && ev.type === 'result' ? { ...ev, effortFellBack: wantEffort } : ev) }
+        : opts
+      return runOnce(retryOpts, '').then((r2) => {
+        const retried = { ...r2, result: r2.result ? { ...r2.result, effortFellBack: wantEffort } : r2.result, effortFellBack: wantEffort }
+        if (isClosedRunnerResult(r2)) closedRunnerResults.add(retried)
+        return retried
+      })
     }
     // Not recoverable: the resolved result carries the (readable) error; the engine's
     // post-await finalizeTurn fallback reports it (attempt 1 never emitted it via onEvent).
@@ -215,7 +159,10 @@ function runOnce(opts, effort) {
     appendSystemPrompt,
     extraEnv,
     onEvent,
+    onDurableEvent,
     onRawEvent,
+    onTurnAccepted,
+    onSpawnFailed,
     signal,
     softStopGraceMs = 10000,
     log = () => {}, // daemon logger — warns when the answer→close (rollout-flush) lag is high
@@ -224,6 +171,9 @@ function runOnce(opts, effort) {
   } = opts || {}
   return new Promise((resolve, reject) => {
     if (!prompt) return reject(new Error('runTurn: prompt required'))
+    if (onTurnAccepted !== undefined && typeof onTurnAccepted !== 'function') return reject(new TypeError('onTurnAccepted must be a function'))
+    if (onDurableEvent !== undefined && typeof onDurableEvent !== 'function') return reject(new TypeError('onDurableEvent must be a function'))
+    if (onSpawnFailed !== undefined && typeof onSpawnFailed !== 'function') return reject(new TypeError('onSpawnFailed must be a function'))
 
     const env = { ...process.env }
     delete env.CLAUDECODE // don't let a nested Claude Code session confuse the child
@@ -261,6 +211,12 @@ function runOnce(opts, effort) {
     // safe: force-releasing before the rollout is durable breaks the next resume. Logged on
     // close so a real-machine run surfaces it; not fired on abort (rollout is forfeited then).
     let answerAtMs = 0
+    const durableStart = typeof onTurnAccepted === 'function'
+    let acceptedStart = false
+    let acceptanceFailed = false
+    const heldEvents = []
+    let durableWork = Promise.resolve()
+    let durableFailed = false
 
     // /stop and the wall-clock cap abort via this signal. On Windows the codex.exe under
     // the cmd.exe shim can SURVIVE a tree-kill and keep the inherited stdout pipe open, so
@@ -270,8 +226,14 @@ function runOnce(opts, effort) {
     // (sbot's never-hang invariant) even if a grandchild clings to the pipe.
     let aborted = false
     let settled = false
+    let childCloseObserved = false
+    let childOutputObserved = false
     let graceTimer = null
     const done = (fn) => { if (settled) return; settled = true; if (graceTimer) clearTimeout(graceTimer); if (signal) signal.removeEventListener('abort', onAbort); fn() }
+    const resolveRun = result => {
+      if (childCloseObserved) closedRunnerResults.add(result)
+      resolve(result)
+    }
     const killChild = () => {
       if (IS_WIN && child.pid) {
         try { spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore', windowsHide: true }) } catch {}
@@ -279,7 +241,8 @@ function runOnce(opts, effort) {
         return
       }
       try { child.kill('SIGTERM') } catch { /* already gone */ }
-      setTimeout(() => { try { child.kill('SIGKILL') } catch {} }, softStopGraceMs)
+      const reapTimer = setTimeout(() => { try { child.kill('SIGKILL') } catch {} }, softStopGraceMs)
+      reapTimer.unref?.()
     }
     // Resolve on the process 'close' — NOT on `turn.completed`. Codex finalizes its session
     // rollout on CLEAN EXIT (writes then commits the file), so hard-killing a still-running
@@ -294,15 +257,65 @@ function runOnce(opts, effort) {
     const onAbort = () => {
       aborted = true
       killChild()
-      graceTimer = setTimeout(() => done(() => resolve({ sessionId: capturedSessionId, result: lastResult, code: null, aborted: true })), softStopGraceMs)
+      graceTimer = setTimeout(() => {
+        const complete = () => done(() => resolveRun({ sessionId: capturedSessionId, result: lastResult, code: null, aborted: true }))
+        if (onDurableEvent) durableWork.then(complete, failDurableEvent)
+        else complete()
+      }, softStopGraceMs)
     }
     if (signal) {
       if (signal.aborted) onAbort()
       else signal.addEventListener('abort', onAbort, { once: true })
     }
 
+    // 这段回调不在任何 Promise 链里,抛错会直接带走整个进程 ⇒ 核心失败只结束当前轮。
+    // 已经拿到结果时不杀进程:codex 要干净退出才会提交可续接的会话文件。
+    // 强杀后这个新 thread id 没有可续接的文件,所以交回传入的旧 id(语义同下面的崩溃退出)。
+    let coreFailed = false
+    const failCore = (error) => {
+      if (onDurableEvent) { failDurableEvent(error); return }
+      if (durableStart && !acceptedStart) { failTurnAcceptance(error); return }
+      coreFailed = true
+      buf = ''
+      log(`binary core failed in codex stream: ${error && error.message}`)
+      if (lastResult) return
+      capturedSessionId = sessionId || null
+      lastResult = coreFailedResult(capturedSessionId)
+      if (onEvent) { try { onEvent(lastResult) } catch { /* renderer must not kill the turn */ } }
+      killChild()
+    }
+    const failTurnAcceptance = (error) => {
+      if (acceptanceFailed || settled) return
+      acceptanceFailed = true
+      buf = ''
+      heldEvents.length = 0
+      killChild()
+      done(() => reject(error))
+    }
+    const failDurableEvent = (error) => {
+      if (durableFailed || settled) return
+      durableFailed = true
+      buf = ''
+      heldEvents.length = 0
+      killChild()
+      done(() => reject(error))
+    }
+    const emitEvent = (ev) => { if (onEvent) { try { onEvent(ev) } catch { /* renderer must not kill the turn */ } } }
+    const deliverEvent = async (ev) => {
+      if (onDurableEvent) {
+        let timer
+        try {
+          await Promise.race([
+            Promise.resolve().then(() => onDurableEvent(ev)),
+            new Promise((_, fail) => { timer = setTimeout(() => fail(new Error('Codex durable event hook timed out')), 10000) }),
+          ])
+        } finally { clearTimeout(timer) }
+      }
+      if (!durableFailed && !settled) emitEvent(ev)
+    }
     const stdoutDecoder = new StringDecoder('utf8') // 一个汉字可能被拆在两个分块里,逐块 toString 会变成乱码
-    child.stdout.on('data', (chunk) => {
+    const processChunk = async (chunk) => {
+      if (coreFailed || acceptanceFailed || durableFailed || ((durableStart || onDurableEvent) && (aborted || settled))) return
       buf += stdoutDecoder.write(chunk) // Node reads bytes → UTF-8, no PowerShell GBK pipe issue
       let nl
       while ((nl = buf.indexOf('\n')) >= 0) {
@@ -313,26 +326,85 @@ function runOnce(opts, effort) {
         try { raw = JSON.parse(line) } catch { continue } // skip non-JSON noise
         if (onRawEvent) { try { onRawEvent(raw) } catch { /* observer must not kill the turn */ } }
         if (raw.type === 'thread.started' && raw.thread_id) capturedSessionId = raw.thread_id
-        const ev = normalizeEvent(raw)
+        if (durableStart && !acceptedStart) {
+          if (raw.type === 'turn.started') {
+            try {
+              const answer = onTurnAccepted({
+                channel: 'codex-exec',
+                sessionId: capturedSessionId,
+                turnId: typeof raw.turn_id === 'string' ? raw.turn_id : typeof raw.turn?.id === 'string' ? raw.turn.id : null,
+              })
+              if (answer && typeof answer.then === 'function') throw new TypeError('onTurnAccepted must complete synchronously')
+              acceptedStart = true
+              for (const held of heldEvents) {
+                if (onDurableEvent) {
+                  const event = normalizeEvent(held.raw)
+                  if (event) await deliverEvent(event)
+                } else emitEvent(held)
+              }
+              heldEvents.length = 0
+            } catch (error) { failTurnAcceptance(error); return }
+          } else if (!['thread.started', 'turn.failed', 'error'].includes(raw.type)) {
+            failTurnAcceptance(new Error('Codex emitted turn effects before turn.started'))
+            return
+          }
+        }
+        // The pre-start thread identity is control data. Delay its event
+        // normalization until the synchronous acceptance proof succeeds.
+        if (onDurableEvent && durableStart && !acceptedStart) {
+          heldEvents.push({ raw })
+          continue
+        }
+        let ev
+        try { ev = normalizeEvent(raw) } catch (error) { failCore(error); return }
         if (!ev) continue
         if (ev.type === 'assistant' && ev.text) lastAgentText = ev.text // last agent_message = final answer
         if (ev.type === 'result') { if (ev.subtype !== 'error' && !ev.text) ev.text = lastAgentText; lastResult = ev; if (!answerAtMs) answerAtMs = now() }
-        if (onEvent) { try { onEvent(ev) } catch { /* renderer must not kill the turn */ } }
+        if (durableStart && !acceptedStart) heldEvents.push(ev)
+        else if (onDurableEvent) await deliverEvent(ev)
+        else emitEvent(ev)
       }
+    }
+    child.stdout.on('data', (chunk) => {
+      childOutputObserved = true
+      if (!onDurableEvent) { processChunk(chunk).catch(failDurableEvent); return }
+      child.stdout.pause?.()
+      durableWork = durableWork.then(() => processChunk(chunk)).catch(failDurableEvent).finally(() => {
+        if (!durableFailed && !settled) child.stdout.resume?.()
+      })
     })
 
-    child.stderr.on('data', (c) => { stderr += c.toString('utf8') })
+    child.stderr.on('data', (c) => { childOutputObserved = true; stderr += c.toString('utf8') })
 
     child.on('error', (err) => done(() => {
       // 人话进群、原话进日志、code 给引擎发告警 —— 与 claude runner 同口径
       if (err.code === 'ENOENT') {
+        // Node emits this only when spawning the child failed. The callback
+        // is a narrow host witness, not a model error classifier: a PID,
+        // accepted turn, output, abort, or earlier settlement disqualifies it.
+        if (onSpawnFailed && child.pid == null && !acceptedStart &&
+            !childOutputObserved && !aborted && !acceptanceFailed && !durableFailed) {
+          try {
+            const acknowledged = onSpawnFailed({ backend: 'codex-exec',
+              code: 'ENOENT', pid: null })
+            if (acknowledged !== true) throw new Error('Codex spawn-failure witness was not confirmed synchronously')
+          } catch (witnessError) { reject(witnessError); return }
+        }
         log(`cannot find agent binary '${bin}' (and no fallback copy) — is Codex CLI installed? (npm i -g @openai/codex)`)
         return reject(Object.assign(new Error('模型程序在这台机器上找不到了,需要管理员处理'), { code: 'AGENT_BIN_MISSING' }))
       }
       reject(err)
     }))
 
-    child.on('close', (code) => {
+    const completeClose = (code) => {
+      if (onDurableEvent && code !== 0 && !lastResult && !aborted) {
+        done(() => reject(new Error(`codex exited ${code} before a durable result`)))
+        return
+      }
+      if (durableStart && !acceptedStart && !aborted && !acceptanceFailed) {
+        done(() => reject(new Error('Codex exited before turn.started acceptance')))
+        return
+      }
       // Watch the answer→close (rollout-flush) lag. Healthy = ~2–3s (real-machine verified),
       // so stay silent then and only warn on a regression — early notice before the engine's
       // 20s hardReleaseMs backstop would force-release and forfeit the rollout. Not on abort
@@ -348,14 +420,20 @@ function runOnce(opts, effort) {
         // 退出码放文案头,排障时一眼分得清是进程崩了还是服务端拒了。引擎零改动。
         if (code !== 0 && !lastResult && !aborted) {
           // 取尾不取头:致命的那行通常在最后,前面可能是一大段 WARN;截了头判据会漏、原话进群零告警(审查提醒)
-          lastResult = normalizeEvent({ type: 'error', message: `codex exited ${code}: ${stderr.trim().slice(-800) || '(no stderr)'}` })
+          try { lastResult = normalizeEvent({ type: 'error', message: `codex exited ${code}: ${stderr.trim().slice(-800) || '(no stderr)'}` }) }
+          catch (error) { log(`binary core failed on codex exit: ${error && error.message}`); lastResult = coreFailedResult(sessionId || null) }
           // 崩着退出时 codex 多半还没提交可续接的会话文件 ⇒ 不把本轮刚拿到的新 thread id 交回去:引擎会照常落盘,
           // 下一轮 resume 它就报「no rollout found」,而引擎对这种失败没有自愈路(只有空轮 / 被掐断的会话会换新会话)。
           // 续接的轮仍交回传入的旧 id(它的文件本来就在)。与此前 reject 路「不落盘」同一语义。
           capturedSessionId = sessionId || null
         }
-        resolve({ sessionId: capturedSessionId, result: lastResult, code, aborted })
+        resolveRun({ sessionId: capturedSessionId, result: lastResult, code, aborted })
       })
+    }
+    child.on('close', (code) => {
+      childCloseObserved = true
+      if (onDurableEvent) durableWork.then(() => { if (!durableFailed) completeClose(code) })
+      else completeClose(code)
     })
   })
 }
@@ -372,4 +450,4 @@ function probeVersion(bin = 'codex') {
   })
 }
 
-module.exports = { runTurn, runOnce, probeVersion, normalizeEvent, parseCodexError, isEffortRejection, sandboxMode, buildArgs, buildPrompt }
+module.exports = { runTurn, runOnce, isClosedRunnerResult, probeVersion, normalizeEvent, parseCodexError, isEffortRejection, sandboxMode, buildArgs, buildPrompt }

@@ -1,179 +1,41 @@
-<p align="center">
-  <a href="https://sintbot.com"><picture><source srcset="https://raw.githubusercontent.com/sintlab/sintbot/main/docs/assets/hero.svg" type="image/svg+xml"><img src="https://raw.githubusercontent.com/sintlab/sintbot/main/docs/assets/banner.png" alt="SintBot — the group-project AI daemon, running on your own machine" width="880"></picture></a>
-</p>
+# SintBot
 
-<p align="center"><b>Say it in the group. Any model, one memory. On your own machine.</b></p>
+[简体中文](./README.zh-CN.md) · [Install](./docs/install.md) · [Website](https://sintbot.com)
 
-<p align="center">
-  <a href="https://www.npmjs.com/package/sintbot"><img src="https://img.shields.io/npm/v/sintbot?style=flat-square&color=d68f44" alt="npm version"></a>
-  <a href="https://github.com/sintlab/sintbot/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/sintlab/sintbot/test.yml?branch=main&style=flat-square&label=tests" alt="tests"></a>
-  <img src="https://img.shields.io/node/v/sintbot?style=flat-square" alt="node version">
-  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Shield-blue?style=flat-square" alt="PolyForm Shield license"></a>
-</p>
+SintBot runs a coding agent on your Mac from a Feishu group. Bind **one group to one local project**, send a request, and receive progress and the final reply in that group.
 
-<p align="center">
-  <a href="https://sintbot.com">Website</a> ·
-  <a href="./README.zh-CN.md">简体中文</a> ·
-  <a href="./docs/install.md">Install guide</a> ·
-  <a href="https://github.com/sintlab/sintbot/releases">Releases</a>
-</p>
+## Version 1.3.0
 
----
+This first built-in-core release supports **macOS, Node.js 22 or newer, one Feishu group and Codex message turns**. You need a working local Codex installation and login, plus a Feishu custom app. Model usage follows your Codex account's terms and limits.
 
-SintBot is a self-hosted daemon that puts a coding agent in your team's group chat. You bind a group to a project directory, and then anyone in that group can hand it work. It reads and changes code, designs, runs scripts and reports back, all on your own machine.
+The application runs in the foreground. Keep its terminal open; stop it with Ctrl-C and wait for shutdown to finish. This release does not install an automatic background service.
 
-Each turn runs the official **Claude Code** or **Codex** CLI headless, so tools, MCP servers, skills and project memory behave just as they do in your terminal. Each group chooses its model: Claude, GPT, DeepSeek, GLM, MiniMax, Kimi, or one you host yourself.
+Multiple groups, Claude and other model routes, Slack, WeCom, international Lark, the management console, scheduled tasks, terminal chat, busy-turn steering and whiteboards are outside this release's supported scope. Existing installations using those features should keep their current version. Support will expand in subsequent releases.
 
-Full source, docs and tests are public and downloadable under the [PolyForm Shield License 1.0.0](./LICENSE).
+## Install and connect
 
-## How it works
-
-<p align="center"><img src="https://raw.githubusercontent.com/sintlab/sintbot/main/docs/assets/how-it-works.svg" alt="Group (Slack, Feishu or WeCom) → SintBot on your machine → Claude Code or Codex in the project directory → the model chosen for that group; progress and results flow back to the group" width="880"></p>
-
-- **One group, one project.** Each group gets its own project directory, session, queue, permissions and scheduled tasks.
-- **Same agent, any brain.** Switch models with `/model` in the chat. The project's `CLAUDE.md`, `AGENTS.md` and memory carry over to whichever agent runs next.
-- **Stays on your machine.** Projects, sessions, memory and logs live on your disk and never pass through a SintBot server. Prompts and the code the model reads still go to the provider you chose.
-- **No public IP.** Every platform uses an outbound long connection (Socket Mode on Slack). One daemon can serve Slack, Feishu and WeCom at the same time.
-
-## Quick start
-
-**1. Install** on macOS or Linux:
+Follow the [installation guide](./docs/install.md) to install the exact version into a separate directory, configure one group, initialize a new receipt journal and start the bot. The installer leaves existing installations and services in place.
 
 ```bash
-curl -fsSL https://sintbot.com/install.sh | bash
+curl -fsSL https://sintbot.com/install.sh -o /tmp/sintbot-install.sh
+bash /tmp/sintbot-install.sh --dry-run
+bash /tmp/sintbot-install.sh
 ```
 
-The script checks for Node.js 22+, installs or upgrades sintbot, sets up a model with a live trial turn and offers to install the background service, then opens the console at http://127.0.0.1:4600. It asks before Homebrew Node changes and background-service setup, and never uses `sudo`. Read [install.sh](./install.sh) first, or add `--dry-run` to preview the plan.
+The installer installs the package only. It does not authenticate Codex, collect credentials, connect the group or start a service. An [AI-assisted installation guide](./docs/AI-ASSISTED-INSTALL.md) covers the same steps.
 
-Installing and setting up SintBot with an AI assistant? Follow the [AI-assisted install and first-use guide](./docs/AI-ASSISTED-INSTALL.md); it covers the target-machine terminal, first console setup and a safe first task.
+## First task
 
-To install by hand instead:
+Start with a read-only request in your configured group, for example: “Read the first line of this project's README and reply with that line.” Check the answer against the local file, stop the foreground process cleanly, then start it again. A successful package install alone does not verify the group connection or a model turn.
 
-```bash
-npm i -g sintbot
-sintbot setup             # set up a model, with a live trial turn
-sintbot service install   # restarted on crash, started at login; the console stays at http://127.0.0.1:4600
-```
+## Data and recovery
 
-**2. Connect a chat platform in the console.** Create a bot, add it to a group and enter its credentials under Settings; each platform has a step-by-step guide there and here: [Slack](./docs/platforms/slack.md) · [Feishu](./docs/platforms/feishu.md) · [WeCom](./docs/platforms/wecom.md). Then bind the group to a project folder under Groups.
+Project files, configuration and persistent receipts remain on your Mac. Feishu receives messages and replies, and Codex sends model input to its configured provider. Read-only is the recommended initial permission level; granting full access allows the agent to change files and execute commands.
 
-**3. @ the bot in your group.** Switch models and watch live activity in the same console.
-
-### Pick a model: no Claude subscription needed
-
-The wizard checks what this machine is logged in to and recommends in this order:
-
-| You have | Use | What to do |
-|---|---|---|
-| A Claude subscription (Pro / Max) | Claude | run `claude auth login` before the wizard |
-| A ChatGPT account | GPT, via Codex | `npm i -g @openai/codex`, then `codex login` |
-| Neither | **DeepSeek** (recommended) | sign up at [platform.deepseek.com](https://platform.deepseek.com), top up, create an API key and paste it into the wizard; it runs a trial turn on the spot |
-
-The other presets are Zhipu GLM, MiniMax and Volcano Ark. GLM and MiniMax also have international sites (Z.ai, minimax.io); the wizard finds out which site your key belongs to by trying it. Kimi and any other Anthropic-compatible endpoint can be added as custom endpoints in the console.
-
-Without a Claude subscription, Claude Code is only the agent framework and needs no login. The only features you lose are GPT groups and image generation, both of which borrow Codex. In mainland China, see the [Chinese README](./README.zh-CN.md#在中国大陆).
-
-## What you get
-
-| Area | What it does |
-|---|---|
-| **In the group** | Streaming progress: Slack shows its native "Working…" status and a Stop button; Feishu cards update in place. Messages that arrive mid-turn are merged into the next turn. |
-| **Commands** | `/help` · `/status` · `/model <name>` · `/stop` · `/skip` · `/new` · `/hud` · `/issue`. On Slack, use a `!` prefix because Slack consumes messages that start with `/`. |
-| **Permissions** | Set per group, read-only by default. Thirteen secret and PII patterns are masked before a message reaches the group. |
-| **Scheduled tasks** | Cron, aliases such as `daily`, or plain "every day at 09:00". A task can wake the agent, post a reminder or run a script. |
-| **Design** | Distill a style from a site, a project folder or an image you like, or start from sixteen built-in styles. The result is a per-project `DESIGN.md` the agent must read, and every hand-off is checked against it. Iterate by annotating Feishu whiteboards. |
-| **Images** | Generated with the machine's Codex subscription, so no API key is needed. Edit an existing image, repaint a masked region, or produce a transparent background. |
-| **Previews & browser** | HTML prototypes are served on your LAN for the group to see. When the bot's browser hits a login or captcha, a group member takes over through a one-time link. |
-| **Console** | One local page for every group: a "Needs you" list (failed turns with their reason, takeover requests, open feedback), projects, models, permissions, design library, live activity and release history. Available in English or Chinese. |
-| **Operations** | Turns are capped at 30 minutes, and at most two run at once. Turns interrupted by a restart are redone automatically. Includes `sintbot doctor`, an ops alert group and quota warnings. |
-
-## Everyday commands
-
-```bash
-sintbot doctor                    # health check: config, CLIs, models, platforms, groups
-sintbot service status | logs     # is the service up, and what is it doing
-sintbot agent run "…"             # a read-only trial turn in the current directory
-sintbot ui                        # open the console
-sintbot chat -C <project-dir>     # simulate group messages in the terminal, no chat platform needed
-sintbot help                      # all commands
-```
-
-Configuration lives in `~/.sbot/config.json`. See [docs/config.md](./docs/config.md) for the fields, or the annotated [sbot.config.example.json](./sbot.config.example.json). The package installs two equivalent commands, `sintbot` and `sbot`.
-
-## Status
-
-| Area | Status |
-|---|---|
-| **macOS** | Verified. Real-machine testing covered the main flows on Slack and Feishu: messaging, streaming progress, model switching and scheduled tasks. |
-| **Linux** | Experimental. The systemd unit is covered by unit tests but has not yet been installed on real hardware. |
-| **Windows** | Not verified. Install manually; `sintbot service install` prints the NSSM and pm2 commands to run. |
-| **WeCom** | The newest integration, with the least real-world use. |
-| **Slack** | The native Stop button, `!status` and the thread buttons are covered by tests but have had little real-world use. |
-| **Kimi** | Not a preset and not yet tested. Add it in the console as a custom endpoint (Models → Add model → Custom); if you try it, please [report how it went](https://github.com/sintlab/sintbot/issues). |
-
-"Feishu" here means the China edition (open.feishu.cn). The international Lark (larksuite.com) runs on a separate open platform and is not supported yet. The bot's built-in messages and `sintbot doctor` are in Chinese; the installer, the setup wizard and the console also speak English.
-
-## Security
-
-- The bot **executes commands** in the bound project directory. Permissions are set per group: read-only by default, with "full access" for groups you trust. File tools are confined to the project directory; shell commands are not sandboxed. See [docs/security.md](./docs/security.md).
-- The console listens on this machine only. Before opening it to your LAN, run `sintbot ui --set-password`.
-- Personal Claude or ChatGPT subscriptions may not permit multi-user groups; check the provider's terms before team use.
-
-## FAQ
-
-<details>
-<summary><b>Do I need a Claude subscription?</b></summary>
-
-No. If the wizard finds no Claude or Codex login, it recommends DeepSeek and runs a trial turn as soon as you paste the API key. Claude Code is still the agent framework; it just needs no login.
-</details>
-
-<details>
-<summary><b>Can I use it in mainland China?</b></summary>
-
-Yes. Use Feishu as the chat platform and DeepSeek (or the mainland sites of Zhipu GLM, MiniMax or Kimi) as the model: they connect directly, with no proxy. A proxy is needed only for Claude, ChatGPT or Slack.
-</details>
-
-<details>
-<summary><b>Do I need a server or a public IP?</b></summary>
-
-No. SintBot runs on a computer you keep on; a Mac is the tested setup. It only makes outbound connections: Socket Mode for Slack, a WebSocket long connection for Feishu and a long connection for WeCom. The console stays local unless you open it.
-</details>
-
-<details>
-<summary><b>Does switching models lose the project's memory?</b></summary>
-
-No. A switch starts a fresh conversation, but the project's `CLAUDE.md`, `AGENTS.md` and memory directory are handed to whichever agent runs next. Long sessions are compacted automatically.
-</details>
-
-<details>
-<summary><b>How is it different from cc-bot?</b></summary>
-
-Both are free. [cc-bot](https://github.com/WaterTian/cc-bot) is a Claude Code plugin: it runs inside your own interactive session, on that session's model. SintBot is a standalone daemon: no one has to keep a terminal open, each group has its own project, model and permissions, it drives both Claude Code and Codex, and it comes with a local console.
-</details>
-
-## Documentation
-
-| Topic | Docs |
-|---|---|
-| Getting started | [Install](./docs/install.md) · [Models](./docs/models.md) · [Configuration](./docs/config.md) · [Security](./docs/security.md) · [Features](./docs/features.md) |
-| Chat platforms | [Slack](./docs/platforms/slack.md) · [Feishu](./docs/platforms/feishu.md) · [WeCom](./docs/platforms/wecom.md) |
-| Features | [Whiteboard](./docs/BOARD.md) · [Previews](./docs/PREVIEW.md) · [Browser](./docs/BROWSER.md) · [Icons](./docs/ICONS.md) · [Codex runner](./docs/CODEX-RUNNER.md) · [Public console access](./docs/PUBLIC-ACCESS.md) |
-| Project | [Architecture (DESIGN.md)](./DESIGN.md) · [Contributing](./CONTRIBUTING.md) · [Changelog](./CHANGELOG.en.json) |
-
-## Feedback
-
-Please report bugs and request features in [GitHub Issues](https://github.com/sintlab/sintbot/issues). Include the following, with secrets redacted:
-
-- `sintbot version`
-- your OS
-- your chat platform
-- the output of `sintbot doctor`
-
-Report security issues privately through [GitHub Security Advisories](https://github.com/sintlab/sintbot/security/advisories/new); see [SECURITY.md](./SECURITY.md).
+If startup reports unresolved receipts or uncertain external effects, preserve the state and investigate. Do not delete the journal, clear receipts or resend the task merely to get past startup: the prior request may already have executed. Existing multi-group state is not automatically migrated by 1.3.0.
 
 ## License
 
-Full source, docs and tests are public and downloadable under the [PolyForm Shield License 1.0.0](./LICENSE) © WaterTian. The license text governs.
+SintBot is distributed under [PolyForm Shield 1.0.0](./LICENSE). The package includes a built-in core. Use of the software is covered by the included license. Dependency notices are in [THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md).
 
-- You may use, modify and run it for yourself, your team or your company.
-- You may not use it to offer a product that competes with SintBot, paid or free.
+Author: **WaterTian**.

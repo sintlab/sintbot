@@ -145,13 +145,14 @@ function turnLane(raw) {
 function terminalLane(raw) {
   fields(raw, ['finalized', 'outcome'], 'terminal lane',
     { optional: ['finalEventId', 'pendingEffectIds', 'batchReceiptIds',
-      'replyTargetReceiptId'] })
+      'replyTargetReceiptId', 'steerReceiptIds'] })
   const finalized = bool(raw.finalized, 'terminal finalized')
   if (!finalized) {
     if (raw.outcome !== null || Object.hasOwn(raw, 'finalEventId') ||
         Object.hasOwn(raw, 'pendingEffectIds') ||
         Object.hasOwn(raw, 'batchReceiptIds') ||
-        Object.hasOwn(raw, 'replyTargetReceiptId')) throw new TypeError('unfinalized terminal outcome invalid')
+        Object.hasOwn(raw, 'replyTargetReceiptId') ||
+        Object.hasOwn(raw, 'steerReceiptIds')) throw new TypeError('unfinalized terminal outcome invalid')
     return { finalized, outcome: null }
   }
   if (!Object.hasOwn(raw, 'finalEventId') || !Object.hasOwn(raw, 'pendingEffectIds')) {
@@ -188,7 +189,31 @@ function terminalLane(raw) {
   } else if (Object.hasOwn(raw, 'replyTargetReceiptId')) {
     throw new TypeError('single receipt terminal has batch reply target')
   }
+  if (Object.hasOwn(raw, 'steerReceiptIds')) {
+    out.steerReceiptIds = unique(boundedArray(raw.steerReceiptIds, 32,
+      'steer terminal receipts').map(id => token(id, HEX_RECEIPT, 'steer receipt')), 'steer receipts')
+    if (!out.steerReceiptIds.length || out.steerReceiptIds.some(id => out.batchReceiptIds?.includes(id))) {
+      throw new TypeError('steer terminal receipts invalid')
+    }
+  }
   return out
+}
+
+function steerLane(raw) {
+  fields(raw, ['parentReceiptId', 'turnToken', 'generation', 'entries'], 'steer lane')
+  const parentReceiptId = token(raw.parentReceiptId, HEX_RECEIPT, 'steer parent')
+  const entries = boundedArray(raw.entries, 32, 'steer entries').map(entry => {
+    fields(entry, ['receiptId', 'effectId', 'status'], 'steer entry')
+    if (!['pending', 'accepted', 'landed'].includes(entry.status)) throw new TypeError('steer status invalid')
+    if (entry.receiptId === parentReceiptId) throw new TypeError('steer repeats parent')
+    return { receiptId: token(entry.receiptId, HEX_RECEIPT, 'steer receipt'),
+      effectId: token(entry.effectId, /^sbot-c2-effect-v1:[0-9]+:[A-Za-z0-9:_-]+:0$/, 'steer effect'), status: entry.status }
+  })
+  if (!entries.length) throw new TypeError('empty steer lane')
+  unique(entries.map(entry => entry.receiptId), 'steer receipts')
+  unique(entries.map(entry => entry.effectId), 'steer effects')
+  return { parentReceiptId, turnToken: integer(raw.turnToken, 'steer turn', { positive: true }),
+    generation: token(raw.generation, HEX_RECEIPT, 'steer generation'), entries }
 }
 
 function handoffLane(raw) {
@@ -296,6 +321,7 @@ function cardCleanupLane(raw) {
 
 const LANE_VALIDATORS = Object.freeze({
   queue: queueLane,
+  steer: steerLane,
   lifecycle: lifecycleLane,
   turn: turnLane,
   terminal: terminalLane,

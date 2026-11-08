@@ -132,7 +132,7 @@ function createC2LocalEffectExecutor({ journal, store, resolveTurn,
       ? ['effectId', 'success', 'type'] : ['effectId', 'type']
     if (Object.keys(effect).sort().join(',') !== required.join(',') ||
         effect.type !== descriptor.type ||
-        descriptor.type === 'verifyTurn' && effect.success !== true) {
+        descriptor.type === 'verifyTurn' && typeof effect.success !== 'boolean') {
       throw new Error('C2 local effect payload differs from durable descriptor')
     }
     const turn = resolveTurn({ chatId: descriptor.scope,
@@ -145,6 +145,17 @@ function createC2LocalEffectExecutor({ journal, store, resolveTurn,
       throw new Error('C2 local effect turn identity unavailable')
     }
     const chatId = descriptor.scope
+    if (effect.type === 'verifyTurn' && effect.success === false) {
+      const outcome = journal.snapshot().state.lanes.terminal?.[chatId]?.outcome
+      // A known quota failure says nothing about credential validity. The
+      // binary's failed verification intent is acknowledged without writing
+      // a false success or altering the previous credential-health record.
+      if (outcome?.status !== 'error' || outcome.quotaError !== true ||
+          outcome.sideEffects !== false) {
+        throw new Error('C2 local effect payload differs: failed verification lacks a supported quota outcome')
+      }
+      return true
+    }
     if (effect.type === 'clearTainted') {
       store.clearTainted(chatId)
       const disk = readJson(store.file)

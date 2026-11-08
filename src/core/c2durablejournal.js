@@ -458,7 +458,8 @@ function terminalSettlementCandidate(record, authority, requireLocal) {
   const { state, receipts, effects, attempts, descriptors, notices, local,
     validateState, validateReceipts, validateRelation } = authority
   const batchRecord = Object.hasOwn(record, 'batchReceiptIds')
-  if (Object.keys(record).sort().join(',') !==
+  const steerRecord = Object.hasOwn(record, 'steerReceiptIds')
+  if (Object.keys(record).filter(key => key !== 'steerReceiptIds').sort().join(',') !==
       (batchRecord
         ? 'batchReceiptIds,chatId,cursor,effectId,kind,receiptId,settledAt,status,turnToken'
         : 'chatId,cursor,effectId,kind,receiptId,settledAt,status,turnToken') ||
@@ -513,7 +514,14 @@ function terminalSettlementCandidate(record, authority, requireLocal) {
         requireLocal && !local.has(record.effectId)) {
     throw new Error('C2 terminal settlement effect attempt invalid')
   }
-  const candidate = completedBatch(receipts, receiptIds, record.settledAt)
+  const steered = lane.steerReceiptIds || []
+  if (steerRecord !== !!lane.steerReceiptIds || steerRecord && !isDeepStrictEqual(record.steerReceiptIds, steered) ||
+      steered.some(id => receiptIds.includes(id) || notices.has(id) ||
+        receipts.pending.find(item => item.id === id)?.chatId !== record.chatId ||
+        ![...descriptors.values()].some(effect => effect.domain === 'steer' && effect.type === 'callSteer' &&
+          effect.scope === record.chatId && effect.turnToken === record.turnToken && effect.receiptId === id &&
+          effects.get(effect.effectId) === 'acked'))) throw new Error('terminal steer settlement invalid')
+  const candidate = completedBatch(receipts, [...receiptIds, ...steered], record.settledAt)
   validateSnapshots({ state, receipts: candidate }, validateState, validateReceipts,
     validateRelation)
   validateReceiptProgress(receipts, candidate)
@@ -823,10 +831,9 @@ class C2DurableJournal {
   // after this settlement and terminal prune.
   settleTerminalEffect(value) {
     if (this.#blocked) throw new Error('C2 journal needs reopen after write failure')
-    noticeFields(value, value?.batchReceiptIds === undefined
-      ? ['effectId', 'receiptId', 'chatId', 'turnToken', 'status', 'settledAt']
-      : ['effectId', 'receiptId', 'chatId', 'turnToken', 'status', 'settledAt',
-        'batchReceiptIds'])
+    noticeFields(value, ['effectId', 'receiptId', 'chatId', 'turnToken', 'status', 'settledAt',
+      ...(value?.batchReceiptIds === undefined ? [] : ['batchReceiptIds']),
+      ...(value?.steerReceiptIds === undefined ? [] : ['steerReceiptIds'])])
     const record = { kind: 'terminalSettlement', cursor: this.#cursor, ...value }
     terminalSettlementCandidate(record, this.#settlementAuthority(), true)
     this.#append(record)
@@ -1235,14 +1242,23 @@ class C2DurableJournal {
         const item = exactJson(raw)
         if (!item || typeof item !== 'object' || Array.isArray(item) ||
             !['chatId,receiptId,settledAt,turnToken',
-              'batchReceiptIds,chatId,receiptId,settledAt,turnToken']
+              'batchReceiptIds,chatId,receiptId,settledAt,turnToken',
+              'chatId,receiptId,settledAt,steerReceiptIds,turnToken',
+              'batchReceiptIds,chatId,receiptId,settledAt,steerReceiptIds,turnToken']
               .includes(Object.keys(item).sort().join(','))) {
           throw new Error('invalid C2 checkpoint terminal settlement')
         }
         noticeIdentity(item.receiptId, item.chatId)
         noticeTime(item.settledAt)
         const descriptor = effectDescriptors.get(effectId)
-        const settledIds = item.batchReceiptIds || [item.receiptId]
+        if (item.steerReceiptIds !== undefined &&
+            (!Array.isArray(item.steerReceiptIds) || !item.steerReceiptIds.length || item.steerReceiptIds.length > 32 ||
+              item.steerReceiptIds.some(id => !RECEIPT_ID.test(id) ||
+                ![...effectDescriptors.values()].some(effect => effect.domain === 'steer' &&
+                  effect.type === 'callSteer' && effect.scope === item.chatId &&
+                  effect.turnToken === item.turnToken && effect.receiptId === id &&
+                  effects.get(effect.effectId) === 'acked')))) throw new Error('invalid C2 checkpoint steer settlement')
+        const settledIds = [...(item.batchReceiptIds || [item.receiptId]), ...(item.steerReceiptIds || [])]
         if (!Array.isArray(settledIds) || !settledIds.length ||
             new Set(settledIds).size !== settledIds.length ||
             !settledIds.includes(item.receiptId) ||
@@ -1428,7 +1444,8 @@ class C2DurableJournal {
       this.#terminalSettlements.set(record.effectId, { receiptId: record.receiptId,
         chatId: record.chatId, turnToken: record.turnToken, settledAt: record.settledAt,
         ...(record.batchReceiptIds === undefined ? {} : {
-          batchReceiptIds: [...record.batchReceiptIds] }) })
+          batchReceiptIds: [...record.batchReceiptIds] }),
+        ...(record.steerReceiptIds === undefined ? {} : { steerReceiptIds: [...record.steerReceiptIds] }) })
       return
     }
     if (record.kind === 'stopAckSettlement') {

@@ -29,6 +29,21 @@ const { IS_WIN, resolveSpawn } = require('./winexec')
 const { tagError } = require('./errtag') // 出错原话 → quota / sessionMissing / transient 之一(优先级只在那一处定),与 codex runner 共用
 const closedRunnerResults = new WeakSet()
 const isClosedRunnerResult = result => !!result && typeof result === 'object' && closedRunnerResults.has(result)
+const PRE_INIT_HOOK_EVENTS = new Set(['hook_started', 'hook_response'])
+const DURABLE_EVENT_TYPES = new Set(['system', 'assistant', 'user', 'result', 'tool_result'])
+// Tool output is completion evidence only, never answer text.
+function durableToolResults(ev) {
+  const results = Array.isArray(ev.results) ? ev.results : []
+  return results.filter(item => item && item.type === 'tool_result').map(item => {
+    const content = typeof item.content === 'string' ? item.content
+      : Array.isArray(item.content) ? item.content
+        .filter(part => part && part.type === 'text' && typeof part.text === 'string')
+        .map(part => part.text).join('\n')
+        : ''
+    return { type: 'tool_result', ...(ev.sessionId ? { sessionId: ev.sessionId } : {}),
+      results: [{ type: 'tool_result', content, is_error: item.is_error === true }] }
+  })
+}
 
 // Build the child env from a resolved provider. `baseUrlOverride` (when given)
 // replaces provider.baseUrl for ANTHROPIC_BASE_URL — used to point `claude` at
@@ -351,6 +366,9 @@ function runTurn({
           let raw
           try { raw = JSON.parse(line) } catch { continue } // skip non-JSON noise
           if (onTurnAccepted && !turnAccepted) {
+            // Locally configured session hooks report their own lifecycle before
+            // init. They are not model output; skip them and keep waiting.
+            if (raw.type === 'system' && PRE_INIT_HOOK_EVENTS.has(raw.subtype)) continue
             if (raw.type !== 'system' || raw.subtype !== 'init' || typeof raw.session_id !== 'string' || !raw.session_id) {
               failTurnAcceptance(new Error('Claude turn emitted an event before start confirmation'))
               return
@@ -400,7 +418,13 @@ function runTurn({
             const last = lastMsgUsage || (ev.usage && Array.isArray(ev.usage.iterations) ? ev.usage.iterations[ev.usage.iterations.length - 1] : null)
             if (last) ev.contextTokens = (last.input_tokens || 0) + (last.cache_read_input_tokens || 0) + (last.cache_creation_input_tokens || 0)
           }
-          if (onDurableEvent) await persistEvent(ev)
+          // Only transcript events reach the durable projection. Informational
+          // stream additions (for example rate_limit_event) carry no answer.
+          // Claude reports several tool results per event, with array content
+          // and an optional error flag; persist each in the shared shape.
+          if (onDurableEvent && ev.type === 'tool_result') {
+            for (const durable of durableToolResults(ev)) await persistEvent(durable)
+          } else if (onDurableEvent && DURABLE_EVENT_TYPES.has(ev.type)) await persistEvent(ev)
           if (ev.type === 'result') { lastResult = ev; armCloseGrace() } // answer in → bound the wait for 'close'
           if (onEvent) { try { onEvent(ev) } catch { /* renderer must not kill the turn */ } }
         }

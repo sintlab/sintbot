@@ -121,6 +121,17 @@ class C2PayloadHandles {
     return job
   }
 
+  takeSteer(id, chatId, effectId) {
+    const snapshot = authority(this.#journal)
+    const entry = snapshot.state.lanes.steer?.[chatId]?.entries.find(item => item.receiptId === id)
+    const receipt = pending(snapshot, id)
+    const job = this.#jobs.get(id)
+    if (this.blocked || !job || receipt?.chatId !== chatId || entry?.effectId !== effectId ||
+        entry.status !== 'pending' || queued(snapshot, id, chatId)) throw new Error('steer payload authority invalid')
+    this.#jobs.delete(id)
+    return job
+  }
+
   takeHandoff(id) {
     receiptId(id)
     if (this.blocked) throw new Error('C2 payload handles closed pending startup recovery')

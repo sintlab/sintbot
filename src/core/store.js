@@ -152,6 +152,18 @@ class StateStore {
     this.data = next
   }
 
+  // Model/project change: drop the session, its stats and any runtime model
+  // override in one file replacement, so the new configuration is followed
+  // and no session from the previous backend can be resumed.
+  resetGroupSession(chatId) {
+    const groups = this.data.groups || {}
+    const group = { ...(groups[chatId] || {}) }
+    for (const key of ['sessionId', 'tainted', 'sessionStats', 'provider', 'failover']) delete group[key]
+    const next = { ...this.data, groups: { ...groups, [chatId]: group } }
+    atomicWriteJSON(this.file, next, { mode: 0o600 })
+    this.data = next
+  }
+
   getProvider(chatId) { return this._group(chatId).provider || null }
   // ⚠ 人主动切模型(/model · 控制台)连带作废「额度临时切换」记录:人说了算,引擎之后不再自作主张切回。
   setProvider(chatId, name) { const g = this._group(chatId); g.provider = name; delete g.failover; this._save() }

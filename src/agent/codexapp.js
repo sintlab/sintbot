@@ -142,6 +142,18 @@ function runTurn(opts = {}) {
     })
     const deactivate = () => { activeTurnId = null } // 完成/中止后立即拒绝晚到的补充。
     const control = {
+      async steerDurable({ msgId, text }) {
+        const turnId = activeTurnId
+        if (!turnId || completed || aborted) return false
+        try {
+          await request('turn/steer', { threadId: capturedSessionId, expectedTurnId: turnId,
+            clientUserMessageId: msgId, input: [{ type: 'text', text }] })
+          return true
+        } catch (error) {
+          if (error?.codexRpcRejected === true) return false
+          throw error
+        }
+      },
       async steer({ msgId, text }) {
         const turnId = activeTurnId
         if (!turnId || completed || aborted) return false
@@ -321,7 +333,7 @@ function runTurn(opts = {}) {
       }
       if (raw.id != null) {
         const p = requests.get(raw.id)
-        if (p) { requests.delete(raw.id); raw.error ? p.fail(new Error(raw.error.message || 'Codex RPC error')) : p.ok(raw.result) }
+        if (p) { requests.delete(raw.id); raw.error ? p.fail(Object.assign(new Error(raw.error.message || 'Codex RPC error'), { codexRpcRejected: [-32600, -32601, -32602].includes(raw.error.code) })) : p.ok(raw.result) }
         return
       }
       if (onTurnAccepted && pendingTurnStart && !acceptedTurnId) {
@@ -348,7 +360,7 @@ function runTurn(opts = {}) {
         }
       } else if (action === 4) {
         const item = params.item
-        if (appLandedAction(item && item.type, raw.method === 'item/completed', !!(item && item.clientId), !!(item && landed.has(item.clientId)))) {
+        if (params.turnId === activeTurnId && params.threadId === capturedSessionId && appLandedAction(item && item.type, raw.method === 'item/completed', !!(item && item.clientId), !!(item && landed.has(item.clientId)))) {
           landed.add(item.clientId)
           if (onSteerLanded) { try { onSteerLanded(item.clientId) } catch {} }
         }

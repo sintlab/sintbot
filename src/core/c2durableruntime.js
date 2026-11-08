@@ -320,6 +320,107 @@ class C2DurableRuntime {
   // A visible busy receipt remains pending after its queue acknowledgement.
   // The effect descriptor and target identity are durable before any send;
   // only the same process may turn one attempted call into an ACK.
+  prepareSteer({ receiptId, chatId, parentReceiptId, turnToken, generation, payloadHandles } = {}) {
+    const before = this.#completionCapacity()
+    const witness = this.#activeRuns.get(chatId)
+    const receipt = before.receipts.pending.find(item => item.id === receiptId)
+    const job = payloadHandles?.requireQueued(receiptId)
+    if (!RECEIPT_ID.test(receiptId || '') || !GENERATION.test(generation || '') ||
+        receipt?.chatId !== chatId || receipt.source !== 'message' || receipt.quiet ||
+        job?.msg?._c2ReceiptId !== receiptId || witness?.receiptId !== parentReceiptId ||
+        witness.turnToken !== turnToken || this.#journal.effectStatus(witness.dispatchEffectId) !== 'acked' ||
+        this.#journal.lookupRegistration(callbackRegistrationId({ receiptId: parentReceiptId,
+          generation, domain: 'atomicHandoff', kind: 'runnerAccepted' }))?.generation !== generation) {
+      throw new Error('C2 steer lacks accepted live parent and queued receipt')
+    }
+    const id = `sbot-c2-steer-v1:${receiptId}:${generation}:prepare`
+    try {
+      const result = this.#coordinator.transition({ id, domain: 'steer', scope: chatId,
+        payload: { type: 'prepare', receiptId, parentReceiptId, turnToken, generation },
+        validate: candidate => {
+          const effect = candidate.effects[0]
+          if (candidate.effects.length !== 1 || effect.type !== 'callSteer' ||
+              effect.receiptId !== receiptId || effect.turnToken !== turnToken ||
+              candidate.effectDescriptors[0].receiptId !== receiptId) throw new Error('C2 steer decision invalid')
+        } })
+      return { effectId: result.effects[0].effectId, receiptId, chatId,
+        parentReceiptId, turnToken, generation }
+    } catch (error) { this.close(); throw error }
+  }
+
+  commitSteerObservation({ receiptId, chatId, parentReceiptId, turnToken, generation, type } = {}) {
+    const before = this.#completionCapacity()
+    const entry = before.state.lanes.steer?.[chatId]?.entries.find(item => item.receiptId === receiptId)
+    const lane = before.state.lanes.steer?.[chatId]
+    if (!entry || lane.parentReceiptId !== parentReceiptId || lane.turnToken !== turnToken ||
+        lane.generation !== generation || !['accepted', 'rejected', 'landed'].includes(type) ||
+        this.#journal.effectStatus(entry.effectId) !== 'acked') throw new Error('C2 steer observation lacks confirmed RPC')
+    if (entry.status === 'landed' && type === 'landed') return false
+    try {
+      this.#coordinator.transition({ id: `sbot-c2-steer-v1:${receiptId}:${generation}:${type}`,
+        domain: 'steer', scope: chatId,
+        payload: { type, receiptId, parentReceiptId, turnToken, generation } })
+      return true
+    } catch (error) { this.close(); throw error }
+  }
+
+  async executeSteer(identity, { invoke, assertWriterLock } = {}) {
+    this.#completionCapacity()
+    const { effectId, receiptId, chatId, parentReceiptId, turnToken, generation } = identity || {}
+    const descriptor = this.#journal.effectDescriptor(effectId)
+    if (descriptor?.domain !== 'steer' || descriptor.type !== 'callSteer' ||
+        descriptor.scope !== chatId || descriptor.receiptId !== receiptId ||
+        descriptor.turnToken !== turnToken || this.#journal.effectStatus(effectId) !== 'pending' ||
+        typeof invoke !== 'function' || typeof assertWriterLock !== 'function' ||
+        assertWriterLock.constructor?.name === 'AsyncFunction' || assertWriterLock() !== true) {
+      throw new Error('C2 steer attempt lacks exact RPC authority')
+    }
+    const attemptedAt = this.#now()
+    try {
+      this.#journal.beginEffectAttempt({ effectId, attemptedAt })
+      let accepted, known = false
+      try {
+        accepted = await invoke()
+        known = typeof accepted === 'boolean' && this.#effectAuthorityReady && assertWriterLock() === true
+      } catch { /* A transport failure may already have delivered the message. */ }
+      this.#journal.recordEffectOutcome({ effectId, status: known ? 'acked' : 'unknown',
+        resolvedAt: Math.max(attemptedAt, this.#now()) })
+      if (!known) throw new Error('C2 steer outcome unknown; replay forbidden')
+      this.commitSteerObservation({ receiptId, chatId, parentReceiptId, turnToken, generation,
+        type: accepted ? 'accepted' : 'rejected' })
+      return accepted
+    } catch (error) { this.close(); throw error }
+  }
+
+  cancelClosedSteer({ chatId, parentReceiptId, turnToken, generation, assertWriterLock } = {}) {
+    const before = this.#completionCapacity()
+    const lane = before.state.lanes.steer?.[chatId]
+    if (!lane) return []
+    const closeEvidenceId = `sbot-c2-runner-closed-v1:${parentReceiptId}:${generation}`
+    const proof = this.#journal.lookupRunnerClosed(closeEvidenceId)
+    if (typeof assertWriterLock !== 'function' || assertWriterLock.constructor?.name === 'AsyncFunction' ||
+        assertWriterLock() !== true || proof?.chatId !== chatId || proof.receiptId !== parentReceiptId ||
+        proof.generation !== generation || proof.turnToken !== turnToken ||
+        lane.entries.some(entry => this.#journal.effectStatus(entry.effectId) !== 'acked')) {
+      throw new Error('C2 steer cancellation lacks exact closed RPC authority')
+    }
+    const ids = lane.entries.map(entry => entry.receiptId)
+    const settledAt = this.#now()
+    const receipts = { pending: before.receipts.pending.filter(item => !ids.includes(item.id)),
+      completed: [...before.receipts.completed, ...ids.map(id => ({ id, settledAt }))] }
+    try {
+      this.#coordinator.transition({ id: `sbot-c2-steer-cancel-v1:${parentReceiptId}:${generation}`,
+        domain: 'steer', scope: chatId, payload: { type: 'cancelAll', parentReceiptId,
+          turnToken, generation, runnerClosed: true, closeEvidenceId }, receipts,
+        validate: result => {
+          if (!isDeepStrictEqual(result.decision.cancelledReceiptIds, ids) || result.effects.length) {
+            throw new Error('C2 steer cancellation result invalid')
+          }
+        } })
+      return ids
+    } catch (error) { this.close(); throw error }
+  }
+
   prepareQueueNotice({ receiptId, chatId, payloadHandles } = {}) {
     const before = this.#completionCapacity()
     if (!RECEIPT_ID.test(receiptId || '') ||
@@ -2220,7 +2321,9 @@ class C2DurableRuntime {
     try {
       const result = this.#journal.settleTerminalEffect({ effectId, receiptId,
         chatId, turnToken, status: 'acked', settledAt,
-        ...(batchReceiptIds ? { batchReceiptIds: [...batchReceiptIds] } : {}) })
+        ...(batchReceiptIds ? { batchReceiptIds: [...batchReceiptIds] } : {}),
+        ...(before.state.lanes.terminal?.[chatId]?.steerReceiptIds ? {
+          steerReceiptIds: [...before.state.lanes.terminal[chatId].steerReceiptIds] } : {}) })
       pruneConfirmedTerminal({ journal: this.#journal,
         coordinator: this.#coordinator, scope: chatId })
       this.#terminalAwaitingSettlement.delete(chatId)

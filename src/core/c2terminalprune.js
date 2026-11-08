@@ -66,7 +66,8 @@ function pruneConfirmedTerminal({ journal, coordinator, scope } = {}) {
         settlement?.turnToken !== descriptor.turnToken ||
         completed?.settledAt !== settlement?.settledAt ||
         !isDeepStrictEqual(settlement?.batchReceiptIds, lane.batchReceiptIds) ||
-        (lane.batchReceiptIds || [descriptor.receiptId]).some(id =>
+        !isDeepStrictEqual(settlement?.steerReceiptIds, lane.steerReceiptIds) ||
+        [...(lane.batchReceiptIds || [descriptor.receiptId]), ...(lane.steerReceiptIds || [])].some(id =>
           !durable.receipts.completed.some(item =>
             item.id === id && item.settledAt === settlement?.settledAt)) ||
         !proof || !/^[0-9a-f]{32}$/.test(proof.generation || '') ||

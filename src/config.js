@@ -83,6 +83,17 @@ function loadConfig(explicit) {
     }
   }
 
+  return normalizeConfig(user, p)
+}
+
+// The console validates proposed JSON before replacing the live file. Keep
+// normalization identical to disk loading without mutating the proposed object
+// or changing the live redaction registry during validation.
+function normalizeConfig(raw, p = null, { registerSecrets = true } = {}) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new TypeError('Configuration must be a JSON object')
+  }
+  const user = JSON.parse(JSON.stringify(raw))
   const cfg = {
     agent: { ...DEFAULTS.agent, ...(user.agent || {}) },
     timezone: normalizeTz(user.timezone || DEFAULTS.timezone), // 写错回退默认,不漂到主机时区
@@ -172,7 +183,7 @@ function loadConfig(explicit) {
   // 把配置里凭据的**值**登记给出站脱敏(src/core/redact.js 按值替换):每个 provider 的 apiKey、
   // provider env 里名字带 TOKEN / KEY / SECRET / PASSWORD 的值、飞书 appSecret。形状模式认不出的
   // 凭据(UUID 形的火山 key、裸十六进制的 appSecret)靠这条兜住;热重载走的也是这里 ⇒ 换 key 即换名单。
-  setKnownSecrets(collectSecretValues(cfg))
+  if (registerSecrets) setKnownSecrets(collectSecretValues(cfg))
 
   return cfg
 }
@@ -281,4 +292,4 @@ function chatPlatform(cfg, chatId) {
   return live.length === 1 ? live[0] : null
 }
 
-module.exports = { loadConfig, findConfigPath, defaultConfigPath, DEFAULTS, applyProxyEnv, deriveNoProxy, resolveSecret, platformsConfigured, inferChatPlatform, normalizeGroupPlatforms, chatPlatform, PLATFORMS }
+module.exports = { loadConfig, normalizeConfig, findConfigPath, defaultConfigPath, DEFAULTS, applyProxyEnv, deriveNoProxy, resolveSecret, platformsConfigured, inferChatPlatform, normalizeGroupPlatforms, chatPlatform, PLATFORMS }

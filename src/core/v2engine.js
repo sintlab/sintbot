@@ -14,13 +14,59 @@ const { terminalReplyText } = require('./c2terminaleffectbridge')
 const { createC2TurnProjection } = require('./c2turnprojection')
 const { prepareC2RunnerInput } = require('./c2runnerinput')
 const { continueC2Successor } = require('./c2successorbridge')
+const { rejectC2Input } = require('./c2inputrejection')
 const NO_REPLY = 'NO_REPLY'
 const SYSTEM_APPENDIX = systemAppendix(NO_REPLY)
 const V2_NORMAL_ROUTE_MISSING = Object.freeze(['complete durable v2 authority'])
+const DURABLE_V2_COMMANDS = new Set(['/help', '/status', '/model', '/new', '/hud', '/issue'])
+function fmtWan(n) {
+  n = Number(n) || 0
+  if (n >= 100_000_000) return `${(n / 100_000_000).toFixed(1).replace(/\.0$/, '')}亿`
+  if (n >= 10_000) return `${(n / 10_000).toFixed(1).replace(/\.0$/, '')}万`
+  return String(n)
+}
+function humanDuration(ms) {
+  const seconds = Math.max(0, Math.round(ms / 1000))
+  if (seconds < 60) return `${seconds} 秒`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes} 分 ${seconds % 60} 秒`
+  return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`
+}
 const T = {
   queued: n => n > 1 ? `⏳ 已排队 — 当前任务结束后与前面 ${n - 1} 条一并处理` : '⏳ 已排队 — 当前任务结束后处理',
   stopped: '已停止',
   noActiveTask: '没有正在运行的任务',
+  unsupportedCommand: '这个命令暂不支持。要停止当前任务请发 /stop，其他需求直接用文字说明。',
+  unsupportedCommandWithModel: '这个命令暂不支持，发 /help 查看可用命令；其他需求直接用文字说明。',
+  help: steer => ['【可用命令】',
+    '/status 本群状态：模型、项目、是否在忙',
+    '/model 查看模型；/model 名字 切换（会开始新的一段对话）',
+    '/new 开始新的一段对话',
+    '/stop 停止当前任务，连同排队的一起取消',
+    '/hud 额度与本段对话的用量',
+    '/issue 一句话 记下问题反馈',
+    steer ? '直接发文字就是派任务；任务进行中再发的消息会补充进当前任务。'
+      : '直接发文字就是派任务；任务进行中再发的消息会排队，等这一轮结束再处理。'].join('\n'),
+  status: ({ model, project, state, queue, session }) => ['【本群状态】', `· 模型：${model}`,
+    `· 项目：${project}`, `· 状态：${state}`, `· 排队：${queue}`, `· 对话：${session}`].join('\n'),
+  freshSession: '✅ 已开始新的一段对话，之前聊的内容不再带着',
+  newBusy: '⚠ 手头还有任务在跑 —— 等它跑完，或先发 /stop 再发 /new',
+  quotaShow: (name, value) => `${name} 额度：${value}`,
+  quotaMiss: name => `${name} 额度暂时没查到，稍后再试`,
+  quotaNone: name => `模型「${name}」不支持查额度`,
+  sessionLine: (turns, ctx, inTotal) => `【对话】第 ${turns} 轮 · ${ctx ? `上下文约 ${fmtWan(ctx)} token` : `累计处理约 ${fmtWan(inTotal)} token`}`,
+  noSession: '【对话】本段对话还没开始',
+  issueUsage: '用法：/issue 后面跟一句话，说清哪里不对劲\n例：/issue 刚才发的图它没理我',
+  issueLogged: id => `📝 已记下 #${id}`,
+  issueFailed: '⚠ 没记下来 —— 麻烦再说一次，或直接在群里说',
+  modelInfo: (current, list, example) => `【当前模型】${current}\n【可用】${list}\n换模型：发「/model 名字」，例如 /model ${example}\n⚠ 换完是新的一段对话，之前聊的内容不再带着`,
+  modelUnknown: (want, names) => `⚠ 没有「${want}」这个模型\n【可用】${names}\n发「/model 名字」换，名字要一模一样`,
+  modelSame: current => `本群已经在用 ${current}，没有变化`,
+  modelBusy: '⚠ 手头还有任务在跑，现在换会打断它 —— 等它跑完再换，或先发 /stop',
+  modelSwitched: current => `✅ 已切到 ${current}\n⚠ 新的一段对话从这里开始，之前聊的内容不再带着`,
+  modelSwitchFailed: '⚠ 没换成 —— 请管理员到控制台看一下',
+  stopPending: '正在停止当前任务，这条消息没有处理，请稍后重发。',
+  stopUnavailable: '当前任务正在收尾，暂时无法停止。',
   stoppedWithQueue: n => `已停止 — 连同排队的 ${n} 条一并取消`,
   cardFooter: ({ ms, tokens }) => {
     const parts = [`耗时 ${Math.max(0, Math.round(ms / 1000))} 秒`]
@@ -29,6 +75,32 @@ const T = {
     return parts.join(' · ')
   },
 }
+// /stop with no stoppable turn is user input refused before any receipt; the
+// running turn, if any, keeps its own durable path untouched.
+function durableV2StopUnavailable(rt) {
+  const idle = !rt?.v2NormalRouteActive || !rt.v2RunningJobs?.length
+  return rejectC2Input('C2 v2 /stop is unsupported or closed', idle
+    ? { reason: 'stop-idle', notice: T.noActiveTask }
+    : { reason: 'stop-unavailable', notice: T.stopUnavailable })
+}
+
+// The binary owns quota/error and side-effect classification. This host route
+// only admits the supported, closed Codex subscription failure; it never
+// retries a runner or turns that failure into a successful outcome.
+function supportedV2QuotaFailure(payload, runnerResult) {
+  if (!payload || payload.source !== 'result' || payload.aborted ||
+      payload.sessionMissing || payload.transientNetwork || payload.freshRetried ||
+      payload.resumedSessionCurrent || runnerResult?.aborted !== false ||
+      runnerResult?.result?.quota?.kind !== 'quota' ||
+      typeof payload.bufferText !== 'string' || payload.bufferText.trim() ||
+      typeof payload.answerText !== 'string' || payload.answerText.trim()) return false
+  const terminal = { ...payload, type: 'finalize' }
+  delete terminal.receiptId; delete terminal.turnToken; delete terminal.quiet
+  const outcome = engineTerminalStep({ finalized: false, outcome: null }, terminal).state.outcome
+  return outcome.status === 'error' && outcome.quotaError === true &&
+    outcome.sideEffects === false
+}
+
 function ordinaryV2Cohort(snapshot, jobs, binding, chatId, receiptId) {
   if (!Array.isArray(jobs) || !jobs.length ||
       jobs.some(job => !job || job.msg?.batch || job.msg?.synthetic ||
@@ -71,7 +143,10 @@ class Engine {
     const { store, log = () => {}, durableV2Runtime, durableV2Payloads,
       durableV2StartTurn, durableV2ApplyLocalEffect, durableV2VerifyRunnerClosed,
       durableV2AssertWriterLock, durableV2Journal,
-      durableV2NormalRoute = true, durableV2StreamFrames = false } = options
+      durableV2NormalRoute = true, durableV2StreamFrames = false,
+      durableV2AcquireCapacity = null, durableV2SealCapacity = null,
+      durableV2SwitchProvider = null, durableV2UsageProbe = null, durableV2Issues = null,
+      durableV2Version = '' } = options
     const sync = f => typeof f === 'function' && f.constructor?.name !== 'AsyncFunction'
     if (!cfg || !cfg.agent || !cfg.groups || !cfg.providers ||
         options.receiptJournal || options.unifiedStepHost ||
@@ -91,13 +166,20 @@ class Engine {
         typeof store?.getSession !== 'function' ||
         typeof store?.getSessionStats !== 'function' ||
         typeof store?.setSessionAtomic !== 'function' ||
-        durableV2NormalRoute !== true || typeof durableV2StreamFrames !== 'boolean') {
+        durableV2NormalRoute !== true || typeof durableV2StreamFrames !== 'boolean' ||
+        durableV2AcquireCapacity !== null && typeof durableV2AcquireCapacity !== 'function' ||
+        durableV2SealCapacity !== null && !sync(durableV2SealCapacity) ||
+        durableV2SwitchProvider !== null && !sync(durableV2SwitchProvider) ||
+        durableV2UsageProbe !== null && typeof durableV2UsageProbe !== 'function' ||
+        durableV2Issues !== null && typeof durableV2Issues?.add !== 'function' ||
+        typeof durableV2Version !== 'string') {
       throw new TypeError('dedicated Engine requires complete durable v2 authority')
     }
     Object.assign(this, { cfg, store, log, durableV2Runtime, durableV2Payloads,
       durableV2StartTurn, durableV2ApplyLocalEffect, durableV2VerifyRunnerClosed,
       durableV2AssertWriterLock, durableV2Journal, durableV2NormalRoute,
-      durableV2StreamFrames })
+      durableV2StreamFrames, durableV2AcquireCapacity, durableV2SealCapacity,
+      durableV2SwitchProvider, durableV2UsageProbe, durableV2Issues, durableV2Version })
     this.projectMemory = options.projectMemory || null
     this.repoInfo = options.repoInfo || null
     this.tz = normalizeTz(cfg.timezone)
@@ -108,6 +190,7 @@ class Engine {
     this.durableV2Runtime.close()
     let aborted = 0
     for (const rt of this.rts.values()) {
+      rt.v2AdmissionController?.abort()
       if (rt.v2Controller) {
         try { rt.v2Controller.abort() } catch {}
         aborted++
@@ -243,6 +326,106 @@ _resolveProvider(chatId, group) {
     return { name, provider: this.cfg.providers[name] }
   }
 
+// Chat commands are answered before any receipt, like /stop with nothing to
+// stop: nothing enters the journal and each returns its single reply as an
+// input rejection. Commands that reset a session need the group idle and its
+// journal settled, and share the console's configuration writer.
+_durableV2GroupBusy(chatId) {
+    const rt = this.rts.get(chatId)
+    const pending = this.durableV2Runtime.snapshot().receipts?.pending?.some(item => item.chatId === chatId)
+    return !!(rt?.v2NormalRouteActive || rt?.v2AdmissionPending || rt?.v2Controller ||
+      rt?.v2QueueReceiptIds?.length || pending)
+  }
+
+async _durableV2Command(msg, cmd, rest) {
+    const reject = (reason, notice) =>
+      rejectC2Input('C2 v2 chat command answered before receipt', { reason, notice })
+    const group = this._resolveGroup(msg.chatId)
+    if (!group || group.paused) return reject('unsupported-command', T.unsupportedCommandWithModel)
+    const { name, provider } = this._resolveProvider(msg.chatId, group)
+    const label = (n, p) => p?.model ? `${n} · ${p.model}` : n
+    if (cmd === '/model') return this._durableV2ModelCommand(msg, rest, group)
+    if (cmd === '/help') {
+      return reject('help', T.help(provider?.runner === 'codex' && group.codexSteer !== false))
+    }
+    if (cmd === '/status') {
+      const rt = this.rts.get(msg.chatId)
+      const queued = this.durableV2Runtime.snapshot().state?.lanes?.queue?.[msg.chatId]?.queue?.length || 0
+      const state = rt?.v2NormalRouteActive
+        ? `运行中（已跑 ${humanDuration(Date.now() - (rt.v2StartedAt || Date.now()))}）`
+        : rt?.v2AdmissionPending ? '消息已登记，等待并发名额' : '空闲'
+      const project = String(group.workdir || '').split(/[\\/]/).filter(Boolean).pop() || '（未设）'
+      return reject('status', T.status({ model: label(name, provider), project, state, queue: queued,
+        session: this.store.getSession(msg.chatId) ? '进行中（记着上下文）' : '未开始' }))
+    }
+    if (cmd === '/new') {
+      if (this._durableV2GroupBusy(msg.chatId)) return reject('new-busy', T.newBusy)
+      let locked = false
+      try { locked = this.durableV2AssertWriterLock() === true } catch {}
+      if (!locked) throw new Error('C2 v2 /new lost single-writer lock')
+      this.store.resetSessionAndStats(msg.chatId)
+      this.log(`/new: ${msg.chatId} (by ${msg.senderName || 'unknown'})`)
+      return reject('new-session', T.freshSession)
+    }
+    if (cmd === '/hud') {
+      const lines = []
+      if (this.durableV2UsageProbe && provider) {
+        let usage = null
+        try { usage = await this.durableV2UsageProbe(name, provider) } catch {}
+        const value = typeof usage === 'string' ? usage : usage?.value || null
+        const supported = typeof usage === 'string' ? !!usage : !!usage && usage.supported !== false
+        lines.push(value ? T.quotaShow(name, value) : supported ? T.quotaMiss(name) : T.quotaNone(name))
+      }
+      const stats = this.store.getSessionStats(msg.chatId)
+      const session = this.store.getSession(msg.chatId)
+      lines.push(stats?.sessionId && stats.sessionId === session
+        ? T.sessionLine(stats.turns, stats.ctx || 0, stats.in || 0) : T.noSession)
+      return reject('hud', lines.join('\n'))
+    }
+    if (cmd === '/issue') {
+      if (!rest) return reject('issue-usage', T.issueUsage)
+      let record = null
+      try {
+        record = this.durableV2Issues?.add({ chatId: msg.chatId, group: group.name || '',
+          sender: msg.senderName || msg.userId || '', text: rest,
+          version: this.durableV2Version || '', turn: null }) || null
+      } catch (error) { this.log(`issue add failed: ${error?.message || String(error)}`) }
+      return record ? reject('issue-logged', T.issueLogged(record.id)) : reject('issue-failed', T.issueFailed)
+    }
+    return reject('unsupported-command', T.unsupportedCommandWithModel)
+  }
+
+// /model lists models, or switches through the console's configuration
+// writer. Switching needs this group idle and settled, and always starts a
+// fresh session.
+_durableV2ModelCommand(msg, want, group) {
+    const reject = (reason, notice) =>
+      rejectC2Input('C2 v2 model command answered before receipt', { reason, notice })
+    const label = (name, provider) => provider?.model ? `${name} · ${provider.model}` : name
+    const available = Object.entries(this.cfg.providers || {})
+      .filter(([, provider]) => provider && !provider.hidden &&
+        ['claude', 'codex'].includes(provider.runner))
+    const { name: currentName, provider: currentProvider } = this._resolveProvider(msg.chatId, group)
+    const current = label(currentName, currentProvider)
+    const list = available.map(([name, provider]) => label(name, provider)).join(' / ')
+    if (!want) {
+      const example = available.find(([name]) => name !== currentName)?.[0] || currentName
+      return reject('model-info', T.modelInfo(current, list, example))
+    }
+    const hit = available.find(([name]) => name.toLowerCase() === want.toLowerCase())
+    if (!hit) return reject('model-unknown', T.modelUnknown(want, available.map(([name]) => name).join(' / ')))
+    if (hit[0] === currentName) return reject('model-same', T.modelSame(current))
+    if (this._durableV2GroupBusy(msg.chatId)) return reject('model-busy', T.modelBusy)
+    try {
+      this.durableV2SwitchProvider(msg.chatId, hit[0])
+    } catch (error) {
+      this.log(`/model switch failed for ${msg.chatId} → ${hit[0]}: ${error?.message || String(error)}`)
+      return reject('model-failed', /settled/.test(error?.message || '') ? T.modelBusy : T.modelSwitchFailed)
+    }
+    this.log(`/model: ${msg.chatId} ${currentName} → ${hit[0]} (by ${msg.senderName || 'unknown'})`)
+    return reject('model-switched', T.modelSwitched(label(hit[0], this.cfg.providers[hit[0]])))
+  }
+
 async runDurableV2Message(msg, platform) {
     if (msg?.text?.trim() === '/stop') {
       return this.runDurableV2Stop(msg, platform)
@@ -254,13 +437,16 @@ async runDurableV2Message(msg, platform) {
       throw error
     }
     const authority = this.durableV2Runtime
+    const waiting = this.rts.get(msg?.chatId)
+    while (waiting?.v2QueueNoticePromise) await waiting.v2QueueNoticePromise
+    if (waiting?.v2StreamChain) await waiting.v2StreamChain
+    if (waiting?.v2CardBinding?.opened) await waiting.v2CardBinding.path.flushForTerminal()
     if (!authority || authority.blocked ||
         !msg || typeof msg !== 'object' || msg.synthetic || msg.cron ||
         msg.polled || msg.wantsAck || msg.resetSessionAfter || msg.quiet ||
         msg.batch ||
         msg.receiptSource && msg.receiptSource !== 'message' ||
         typeof msg.text !== 'string' || !msg.text.trim() ||
-        msg.text.trim().startsWith('/') ||
         typeof msg.chatId !== 'string' || !msg.chatId ||
         typeof msg.msgId !== 'string' ||
         !/^om_[A-Za-z0-9_-]{1,124}$/.test(msg.msgId) ||
@@ -270,11 +456,21 @@ async runDurableV2Message(msg, platform) {
         typeof platform.createStreamingCard !== 'function') {
       throw new Error('C2 v2 ordinary Feishu message is unsupported or closed')
     }
+    // An unmigrated chat command is user input, not an authority fault. It is
+    // refused before admission with no receipt; the service decides delivery.
+    const command = /^(\/[a-z]+)(?:\s+([\s\S]*))?$/.exec(msg.text.trim())
+    if (command && this.durableV2SwitchProvider && DURABLE_V2_COMMANDS.has(command[1])) {
+      throw await this._durableV2Command(msg, command[1], (command[2] || '').trim())
+    }
+    if (msg.text.trim().startsWith('/')) {
+      throw rejectC2Input('C2 v2 ordinary Feishu message is unsupported or closed',
+        { reason: 'unsupported-command', notice: this.durableV2SwitchProvider
+          ? T.unsupportedCommandWithModel : T.unsupportedCommand })
+    }
     const group = this._resolveGroup(msg.chatId)
     const { provider } = group ? this._resolveProvider(msg.chatId, group) : {}
     if (!group || group.paused || group.platform && group.platform !== 'feishu' ||
-        !provider || !['claude', 'codex'].includes(provider.runner) ||
-        provider.runner === 'codex' && group.codexSteer !== false) {
+        !provider || !['claude', 'codex'].includes(provider.runner)) {
       throw new Error('C2 v2 ordinary group control is not migrated')
     }
     let locked = false
@@ -295,14 +491,41 @@ async runDurableV2Message(msg, platform) {
         ingressClosed: duplicate.ingressClosed }
     }
     if (rt.v2StopControl || before.state.lanes.stopIntent?.[msg.chatId]) {
-      throw new Error('C2 v2 ordinary route is waiting for stop acknowledgement')
+      throw rejectC2Input('C2 v2 ordinary route is waiting for stop acknowledgement',
+        { reason: 'stop-pending', notice: T.stopPending })
     }
     const lane = before.state?.lanes
     const queue = lane?.queue?.[msg.chatId]?.queue
+    if (rt.v2AdmissionPending) {
+      if (!Array.isArray(queue) || !queue.length || rt.v2RunningJobs ||
+          lane?.turn?.[msg.chatId]?.active != null ||
+          lane?.handoff?.[msg.chatId]?.phase === 'running') {
+        authority.close()
+        throw new Error('C2 capacity wait differs from durable queued authority')
+      }
+      this.durableV2Payloads.auditOrdinaryQueue(msg.chatId, rt.v2QueueReceiptIds || [])
+      const queued = this.stageDurableV2Message(msg, platform)
+      // Preserve even the overflow source receipt, then seal rather than drop
+      // an acknowledged platform message or run an unbounded in-memory queue.
+      if (queue.length >= 3) {
+        authority.close()
+        throw new Error('C2 capacity wait queue exceeded its bound; receipts preserved')
+      }
+      return { receiptId: queued.receiptId, queued: true, staged: queued.staged,
+        waitingForCapacity: true, ingressClosed: !!authority.blocked }
+    }
     const busy = lane?.turn?.[msg.chatId]?.active != null ||
       lane?.handoff?.[msg.chatId]?.phase === 'running' ||
       Array.isArray(queue) && queue.length > 0 ||
       rt.v2RunningJobs || rt.v2QueueReceiptIds?.length
+    if (busy && provider.runner === 'codex' && group.codexSteer !== false &&
+        rt.v2SteerControl && rt.v2NormalRouteActive && !rt.v2RunnerStopVerified &&
+        !rt.v2TerminalStarted && !rt.v2StreamQuiescing && rt.v2Controller &&
+        !rt.v2Controller.signal.aborted && !rt.v2SteerClosing) {
+      this.durableV2Payloads.auditOrdinaryQueue(msg.chatId, rt.v2QueueReceiptIds || [])
+      const queued = this.stageDurableV2Message(msg, platform)
+      return this._runDurableV2Steer(rt, queued.receiptId)
+    }
     if (busy && rt.v2NormalRouteActive &&
         lane?.turn?.[msg.chatId]?.active === rt.v2TurnToken &&
         lane?.handoff?.[msg.chatId]?.phase === 'running' &&
@@ -370,13 +593,50 @@ async runDurableV2Message(msg, platform) {
       authority.close()
       throw new Error('C2 v2 ordinary receipt admission changed')
     }
-    const dispatched = this.commitDurableV2InitialDispatch({ chatId: msg.chatId,
-      receiptId: accepted.receiptId })
-    const effectId = dispatched.effectsPending?.[0]
-    const identity = { chatId: msg.chatId, receiptId: accepted.receiptId,
-      turnToken: dispatched.turnToken, effectId }
     rt.v2NormalRouteActive = true
-    const execution = this._drainDurableV2NormalChain(identity)
+    const execute = async () => {
+      let release = null
+      try {
+        let receiptId = accepted.receiptId
+        if (this.durableV2AcquireCapacity) {
+          const controller = new AbortController()
+          rt.v2AdmissionController = controller
+          rt.v2AdmissionPending = true
+          try {
+            release = await this.durableV2AcquireCapacity({ signal: controller.signal })
+          } catch (error) {
+            if (controller.signal.aborted && !rt.v2DispatchEffect &&
+                error?.code === 'C2_CAPACITY_WAIT_CANCELLED') {
+              return { receiptId, status: 'interruptedBeforeDispatch',
+                queued: true, ingressClosed: true }
+            }
+            throw error
+          }
+          if (typeof release !== 'function' || controller.signal.aborted ||
+              authority.blocked || this.durableV2AssertWriterLock() !== true) {
+            throw new Error('C2 capacity permit lost before durable dispatch')
+          }
+          rt.v2AdmissionPending = false
+          const queued = authority.snapshot().state.lanes.queue?.[msg.chatId]?.queue
+          this.durableV2Payloads.auditOrdinaryQueue(msg.chatId, rt.v2QueueReceiptIds || [])
+          receiptId = v2QueueSelection(queued).anchor
+        }
+        const dispatched = this.commitDurableV2InitialDispatch({ chatId: msg.chatId, receiptId })
+        return await this._drainDurableV2NormalChain({ chatId: msg.chatId, receiptId,
+          turnToken: dispatched.turnToken, effectId: dispatched.effectsPending?.[0] })
+      } catch (error) {
+        // Seal shared grants before releasing this turn's permit. Waiting
+        // siblings must not dispatch in the microtask before the service sees
+        // this rejection and begins its process-wide stop.
+        this.durableV2SealCapacity?.(error)
+        throw error
+      } finally {
+        rt.v2AdmissionPending = false
+        rt.v2AdmissionController = null
+        release?.()
+      }
+    }
+    const execution = execute()
     rt.v2NormalRoutePromise = execution.then(() => true, () => {
       rt.v2NormalRouteFailure = true
       return false
@@ -387,6 +647,54 @@ async runDurableV2Message(msg, platform) {
       rt.v2NormalRouteActive = false
       rt.v2NormalRoutePromise = null
     }
+  }
+
+async _runDurableV2Steer(rt, receiptId) {
+    const authority = this.durableV2Runtime
+    const chatId = rt.chatId
+    const job = this.durableV2Payloads.requireQueued(receiptId)
+    const identity = authority.prepareSteer({ receiptId, chatId,
+      parentReceiptId: rt.v2DispatchEffect.receiptIds.at(-1),
+      turnToken: rt.v2TurnToken, generation: rt.v2RunnerGeneration,
+      payloadHandles: this.durableV2Payloads })
+    this.durableV2Payloads.takeSteer(receiptId, chatId, identity.effectId)
+    rt.v2QueueReceiptIds = authority.scopeState('queue', chatId).queue
+      .map(item => item.id.slice('receipt:job:'.length))
+    const entry = { identity, job, landed: false, accepted: false }
+    rt.v2SteerEntries.set(receiptId, entry)
+    const control = rt.v2SteerControl
+    const work = (async () => {
+      const text = `[${fmtStamp(job.msg.createTimeMs || Date.now(), this.tz)} ${job.msg.senderName || job.msg.userId || 'user'}] [群里新消息：关联当前任务就立即调整；独立任务先完成当前任务再处理，并分别回应] ${job.msg.text.trim()}`
+      const accepted = await authority.executeSteer(identity, {
+        assertWriterLock: this.durableV2AssertWriterLock,
+        invoke: () => control.steerDurable({ msgId: job.msg.msgId, text }) })
+      entry.accepted = accepted
+      if (accepted) {
+        if (entry.landed) authority.commitSteerObservation({ ...identity, type: 'landed' })
+        return { receiptId, steered: true, accepted: true, landed: entry.landed, staged: true }
+      }
+      if (entry.landed) throw new Error('C2 rejected steer also landed; outcome inconsistent')
+      rt.v2SteerEntries.delete(receiptId)
+      this.durableV2Payloads.attach(receiptId, job)
+      rt.v2QueueReceiptIds = authority.scopeState('queue', chatId).queue
+        .map(item => item.id.slice('receipt:job:'.length))
+      // A prior readiness-wait queue notice is already acknowledged.
+      const priorNotice = [...authority.snapshot().effects].some(([id, status]) =>
+        status === 'acked' && this.durableV2Journal.effectDescriptor(id)?.type === 'queueNotice' &&
+        this.durableV2Journal.effectDescriptor(id)?.receiptId === receiptId)
+      if (!priorNotice) {
+        const notice = authority.prepareQueueNotice({ receiptId, chatId, payloadHandles: this.durableV2Payloads })
+        await authority.executeQueueNotice({ ...notice, payloadHandles: this.durableV2Payloads,
+          assertWriterLock: this.durableV2AssertWriterLock,
+          perform: ({ target }) => job.platform.replyOnce(target, T.queued(notice.visibleQueue)),
+          confirm: response => response?.code === 0 && /^om_[A-Za-z0-9_-]{1,124}$/.test(response?.data?.message_id || '') })
+      }
+      return { receiptId, queued: true, staged: true, accepted: false }
+    })()
+    rt.v2QueueNoticePromise = work
+    try { return await work }
+    catch (error) { authority.close(); rt.v2Controller?.abort(); this.durableV2SealCapacity?.(error); throw error }
+    finally { if (rt.v2QueueNoticePromise === work) rt.v2QueueNoticePromise = null }
   }
 
 async runDurableV2Stop(msg, platform) {
@@ -401,12 +709,14 @@ async runDurableV2Stop(msg, platform) {
         !/^om_[A-Za-z0-9_-]{1,124}$/.test(msg.msgId) ||
         msg.replyCtx?.chatId !== chatId ||
         msg.replyCtx?.messageId !== msg.msgId ||
-        typeof platform?.replyOnce !== 'function' ||
-        !rt?.v2NormalRouteActive || !rt.v2RunningJobs?.length ||
+        typeof platform?.replyOnce !== 'function') {
+      throw new Error('C2 v2 /stop is unsupported or closed')
+    }
+    if (!rt?.v2NormalRouteActive || !rt.v2RunningJobs?.length ||
         !rt.v2Controller || rt.v2TerminalStarted ||
         rt.v2CancelControl || rt.v2StopControl || rt.v2StreamQuiescing ||
         rt.v2TimeoutProof) {
-      throw new Error('C2 v2 /stop is unsupported or closed')
+      throw durableV2StopUnavailable(rt)
     }
     const group = this._resolveGroup(chatId)
     if (!group || group.paused || group.platform && group.platform !== 'feishu') {
@@ -424,7 +734,7 @@ async runDurableV2Stop(msg, platform) {
         rt.v2StreamQuiescing || rt.v2TimeoutProof ||
         rt.v2RunnerGeneration !== requestedGeneration ||
         rt.v2TurnToken !== requestedTurnToken) {
-      throw new Error('C2 v2 /stop is unsupported or closed')
+      throw durableV2StopUnavailable(rt)
     }
     const before = authority.snapshot()
     const controlReceipt = { source: 'message', chatId, sourceId: msg.msgId,
@@ -701,7 +1011,8 @@ async _drainDurableV2NormalChain(initial) {
       delete terminal.quiet
       const outcome = engineTerminalStep({ finalized: false, outcome: null },
         terminal).state.outcome
-      if (['error', 'empty', 'stopped'].includes(outcome.status)) {
+      const quotaFailure = supportedV2QuotaFailure(payload, rt.v2RunnerResult)
+      if (['error', 'empty', 'stopped'].includes(outcome.status) && !quotaFailure) {
         const classified = this.classifyDurableV2UnresolvedTurn({ ...identity,
           payload })
         const error = new Error('C2 v2 ordinary result requires fault recovery')
@@ -710,9 +1021,9 @@ async _drainDurableV2NormalChain(initial) {
         throw error
       }
       if (payload.source !== 'result' || payload.sessionMissing ||
-          payload.hasQuota || payload.transientNetwork || payload.freshRetried ||
+          (payload.hasQuota && !quotaFailure) || payload.transientNetwork || payload.freshRetried ||
           payload.resumedSessionCurrent ||
-          !['ok', 'no-reply'].includes(outcome.status)) {
+          (!['ok', 'no-reply'].includes(outcome.status) && !quotaFailure)) {
         authority.close()
         const error = new Error('C2 v2 ordinary result needs a retry or notice decision')
         error.code = 'C2_V2_UNRESOLVED_TURN'
@@ -730,7 +1041,7 @@ async _drainDurableV2NormalChain(initial) {
       for (const settledReceiptId of completed.settledReceiptIds ||
         [identity.receiptId]) {
         settled.push({ receiptId: settledReceiptId,
-          status: silent ? 'silent' : 'answered',
+          status: quotaFailure ? 'error' : silent ? 'silent' : 'answered',
           terminalEffectId: completed.terminalEffectId })
       }
       if (authority.blocked) {
@@ -956,8 +1267,53 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
       if (!provider || (provider.baseUrl && !provider.apiKey)) {
         throw new Error('C2 v2 runner provider unavailable')
       }
-      if (provider.runner === 'codex' && job.group.codexSteer !== false) {
-        throw new Error('C2 v2 follow-up control has no durable authority')
+      rt.v2SteerControl = null
+      rt.v2SteerEntries = new Map()
+      rt.v2SteerClosing = false
+      rt.v2SteerLandedChain = Promise.resolve()
+      const steerIdentity = { chatId, parentReceiptId: receiptId, turnToken, generation }
+      const steerAlive = () => rt.v2RunnerGeneration === generation && !rt.v2SteerClosing &&
+        !controller?.signal.aborted && !rt.v2TerminalStarted
+      const onSteerReady = control => {
+        if (!steerAlive()) return
+        if (typeof control?.steerDurable !== 'function') {
+          authority.close(); controller?.abort(); return
+        }
+        rt.v2SteerControl = control
+        // Receipts arriving before control readiness already have a durable
+        // queue notice. Pull only those still queued in this generation.
+        const drain = async () => {
+          if (rt.v2QueueNoticePromise) await rt.v2QueueNoticePromise
+          await rt.v2StreamChain
+          if (rt.v2CardBinding?.opened) await rt.v2CardBinding.path.flushForTerminal()
+          for (const id of [...(rt.v2QueueReceiptIds || [])]) {
+            if (!steerAlive()) break
+            if (!rt.v2QueueReceiptIds?.includes(id)) continue
+            await this._runDurableV2Steer(rt, id)
+          }
+        }
+        rt.v2SteerDrain = drain().catch(error => {
+          authority.close(); controller?.abort(); throw error
+        })
+        rt.v2SteerDrain.catch(() => {})
+      }
+      const onSteerLanded = msgId => {
+        if (!steerAlive()) return
+        const entry = [...rt.v2SteerEntries.values()].find(value => value.job.msg.msgId === msgId)
+        if (!entry || entry.landed) return
+        // Keep the trusted observation in process while the RPC ACK is still
+        // pending. A crash here remains unknown; it never authorizes replay.
+        entry.landed = true
+        if (!entry.accepted) return
+        const observation = rt.v2SteerLandedChain.then(async () => {
+          while (rt.v2QueueNoticePromise) await rt.v2QueueNoticePromise
+          await rt.v2StreamChain
+          if (rt.v2CardBinding?.opened) await rt.v2CardBinding.path.flushForTerminal()
+          if (rt.v2RunnerGeneration !== generation) return
+          authority.commitSteerObservation({ ...steerIdentity, receiptId: entry.identity.receiptId, type: 'landed' })
+        })
+        rt.v2SteerLandedChain = observation
+        observation.catch(() => { authority.close(); controller?.abort() })
       }
       const prompt = this._prepareRunnerPrompt({ msg: job.msg, group: job.group,
         platform: job.platform, providerName: name, provider, rt,
@@ -1042,6 +1398,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
           return ack
         },
         onSpawnFailed: value => capability.onSpawnFailed(value),
+        onSteerReady, onSteerLanded,
         log: this.log })
       let started
       try { started = this.durableV2StartTurn(input) }
@@ -1062,10 +1419,19 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
       let result
       try {
         result = await running
+        rt.v2SteerClosing = true
+        rt.v2SteerControl = null
+        if (rt.v2SteerDrain) await rt.v2SteerDrain
         if (rt.v2QueueNoticePromise) await rt.v2QueueNoticePromise
         await rt.v2RunnerStopPromise
         await streamChain
+        await rt.v2SteerLandedChain
         if (streamFailure) throw streamFailure
+        const steer = authority.scopeState('steer', chatId)
+        if (!rt.v2CancelControl && !rt.v2StopControl && !rt.v2TimeoutProof &&
+            steer?.entries.some(entry => entry.status !== 'landed')) {
+          throw new Error('C2 accepted steer lacks userMessage landing; replay forbidden')
+        }
         if (rt.v2CardBinding?.opened && !rt.v2StreamQuiescing) {
           await rt.v2CardBinding.path.flushForTerminal()
         }
@@ -1114,6 +1480,10 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
           aborted: settledResult.aborted, assertWriterLock: this.durableV2AssertWriterLock,
           store: this.store })
         rt.v2SessionCloseEventId = session.eventId
+        if (rt.v2CancelControl || rt.v2StopControl || rt.v2TimeoutProof) {
+          authority.cancelClosedSteer({ chatId, parentReceiptId: receiptId, turnToken,
+            generation, assertWriterLock: this.durableV2AssertWriterLock })
+        }
       }
       rt.v2RunnerResult = settledResult // process-local only; no reply until terminal effect
       rt.v2TerminalProjection = projected
@@ -1168,6 +1538,7 @@ async completeDurableV2CardTurn({ chatId, receiptId, turnToken, effectId,
     const generation = rt?.v2RunnerGeneration
     const projected = rt?.v2TerminalProjection
     const resultText = projected?.payload?.resultText
+    const quotaFailure = supportedV2QuotaFailure(payload, rt?.v2RunnerResult)
     if (!/^[0-9a-f]{32}$/.test(receiptId || '') ||
         !Number.isSafeInteger(turnToken) || turnToken <= 0 ||
         typeof effectId !== 'string' || !effectId ||
@@ -1199,11 +1570,11 @@ async completeDurableV2CardTurn({ chatId, receiptId, turnToken, effectId,
           (!isDeepStrictEqual(payload.batchReceiptIds, cohort.receiptIds) ||
             payload.replyTargetReceiptId !== receiptId)) ||
         !isDeepStrictEqual(payload, projected.payload) ||
-        // The isolated bridge currently implements only a successful final
-        // answer. An abort, provider error, quota or lost-session result needs
-        // its own durable retry/failover/notice decision before any card call.
-        payload.source !== 'result' || payload.aborted || payload.isError ||
-        payload.sessionMissing || payload.hasQuota || payload.transientNetwork ||
+        // Only successful answers and binary-classified, side-effect-free
+        // quota failures use this no-retry terminal bridge. Unknown failures
+        // and lost-session outcomes still need a separate recovery decision.
+        payload.source !== 'result' || payload.aborted || (payload.isError && !quotaFailure) ||
+        payload.sessionMissing || (payload.hasQuota && !quotaFailure) || payload.transientNetwork ||
         payload.freshRetried || payload.resumedSessionCurrent ||
         (replyText !== undefined && replyText !== terminalReplyText(projected.payload)) ||
         rt.v2TerminalStarted) {
@@ -1226,7 +1597,9 @@ async completeDurableV2CardTurn({ chatId, receiptId, turnToken, effectId,
         replyCtx: job.msg.replyCtx, receiptId, chatId, turnToken, generation,
         verifyGeneration, applyLocalEffect: this.durableV2ApplyLocalEffect,
         assertWriterLock: this.durableV2AssertWriterLock,
-        redactText: text => redact(text, { pii: job.group?.redactPii !== false }),
+        redactText: text => redact(quotaFailure
+          ? 'Codex 订阅额度已用完，本次任务未完成。请恢复额度后重新发送；本次请求不会自动重试。'
+          : text, { pii: job.group?.redactPii !== false }),
         sendPlainReply: typeof job.platform.replyOnce === 'function'
           ? (target, text) => job.platform.replyOnce(target.replyCtx, text)
           : null })
@@ -1455,8 +1828,9 @@ requestDurableV2Stop(chatId) {
         return true
       } catch (error) { authority?.close(); this.log(error.message); return false }
     }
-    if (rt.v2RunningJobs?.length === 1 &&
-        rt.v2RunningJobs[0]?.msg?.msgId === msgId && !rt.v2TerminalStarted) {
+    if ((rt.v2SteerEntries?.has(receiptId) ||
+        rt.v2RunningJobs?.length === 1 && rt.v2RunningJobs[0]?.msg?.msgId === msgId) &&
+        !rt.v2TerminalStarted) {
       rt.v2CancelControl = 'recall'
       if (rt.v2Controller) { try { rt.v2Controller.abort() } catch { authority?.close() } }
       return true

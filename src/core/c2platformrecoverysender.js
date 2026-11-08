@@ -5,7 +5,7 @@ const { chatPlatform } = require('../config')
 const RECEIPT_ID = /^[0-9a-f]{32}$/
 const FEISHU_CHAT_ID = /^oc_[A-Za-z0-9_-]{1,124}$/
 const FEISHU_MESSAGE_ID = /^om_[A-Za-z0-9_-]{1,124}$/
-const NOTICE_TEXT = '上一轮因服务中断未完成，请重新发送原请求。'
+const NOTICE_TEXT = '上一轮没有完成（模型出错或服务中断），请重新发送原请求。'
 
 // A deliberately narrow recovery sender for a previously accepted Feishu
 // message. The ordinary platform.reply() can fall back to a second send after

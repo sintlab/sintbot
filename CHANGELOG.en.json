@@ -1,5 +1,36 @@
 [
   {
+    "version": "1.4.0",
+    "date": "2026-11-08",
+    "name": "Multiple groups, Claude Code and chat commands",
+    "items": [
+      {
+        "t": "One app serves several groups",
+        "d": "One Feishu app can bind 1–32 groups, each to a local project with its own records; a concurrency limit caps simultaneous tasks."
+      },
+      {
+        "t": "Codex or Claude Code per group",
+        "d": "Each group chooses its runner and model. Send /model to list or switch; a switch happens only while that group is idle and starts a new conversation."
+      },
+      {
+        "t": "Chat commands",
+        "d": "Adds /help, /status, /new, /hud and /issue for status, quota and usage, a new conversation and feedback. An unsupported command gets a one-line notice and never stops the service."
+      },
+      {
+        "t": "Reply cards update while working",
+        "d": "The card appears once the model starts answering and refreshes with progress."
+      },
+      {
+        "t": "Local console",
+        "d": "Start with --ui to see every group, stop tasks, bind new groups, switch the model or project of an idle group, and handle feedback."
+      },
+      {
+        "t": "A failure stays in its group",
+        "d": "When a turn returns a model error or no result, only that group is asked to resend, with no automatic retry; other groups keep working. Groups added to the configuration are registered at restart."
+      }
+    ]
+  },
+  {
     "version": "1.3.0",
     "date": "2026-11-08",
     "name": "Built-in core",

@@ -115,7 +115,27 @@ function validatePersistentRelation(state, receipts) {
       }
     }
   }
+  for (const [scope, steer] of Object.entries(state.lanes.steer || {})) {
+    const parent = byId.get(steer.parentReceiptId)
+    if (!parent || parent.chatId !== scope || parent.source !== 'message' || parent.quiet ||
+        state.lanes.turn?.[scope]?.active !== steer.turnToken ||
+        state.lanes.handoff?.[scope]?.phase !== 'running' ||
+        state.lanes.handoff[scope].turnToken !== steer.turnToken) throw new TypeError('steer parent authority invalid')
+    for (const entry of steer.entries) {
+      const receipt = byId.get(entry.receiptId)
+      if (!receipt || receipt.chatId !== scope || receipt.source !== 'message' || receipt.quiet ||
+          allJobIds.has(`receipt:job:${entry.receiptId}`) ||
+          state.lanes.handoff[scope].acceptedReceiptIds.includes(entry.receiptId)) {
+        throw new TypeError('steer receipt authority invalid')
+      }
+    }
+  }
   for (const [scope, terminal] of Object.entries(state.lanes.terminal || {})) {
+    for (const id of terminal.steerReceiptIds || []) {
+      if (!byId.has(id) || byId.get(id) && byId.get(id).chatId !== scope || allJobIds.has(`receipt:job:${id}`)) {
+        throw new TypeError('terminal steer receipt invalid')
+      }
+    }
     if (!terminal.finalized || !terminal.batchReceiptIds) continue
     for (const id of terminal.batchReceiptIds) {
       if (!byId.has(id)) throw new TypeError('terminal batch receipt missing')

@@ -10,16 +10,14 @@ This first built-in-core release supports **macOS, Node.js 22 or newer, one Feis
 
 The application runs in the foreground. Keep its terminal open; stop it with Ctrl-C and wait for shutdown to finish. This release does not install an automatic background service.
 
-Multiple groups, Claude and other model routes, Slack, WeCom, international Lark, the management console, scheduled tasks, terminal chat, busy-turn steering and whiteboards are outside this release's supported scope. Existing installations using those features should keep their current version. Support will expand in subsequent releases.
+Multiple groups, Claude and other model routes, Slack, WeCom, international Lark, the management console, scheduled tasks, terminal chat, busy-turn steering and whiteboards are outside this release's supported scope. Support will expand in subsequent releases.
 
 ## Install and connect
 
-Follow the [installation guide](./docs/install.md) to install the exact version into a separate directory, configure one group, initialize a new receipt journal and start the bot. The installer leaves existing installations and services in place.
+Install with one command. The installer checks the environment, installs the package and verifies the result. Then follow the [installation guide](./docs/install.md) to connect Feishu and your project.
 
 ```bash
-curl -fsSL https://sintbot.com/install.sh -o /tmp/sintbot-install.sh
-bash /tmp/sintbot-install.sh --dry-run
-bash /tmp/sintbot-install.sh
+curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
 The installer installs the package only. It does not authenticate Codex, collect credentials, connect the group or start a service. An [AI-assisted installation guide](./docs/AI-ASSISTED-INSTALL.md) covers the same steps.
@@ -32,7 +30,7 @@ Start with a read-only request in your configured group, for example: “Read th
 
 Project files, configuration and persistent receipts remain on your Mac. Feishu receives messages and replies, and Codex sends model input to its configured provider. Read-only is the recommended initial permission level; granting full access allows the agent to change files and execute commands.
 
-If startup reports unresolved receipts or uncertain external effects, preserve the state and investigate. Do not delete the journal, clear receipts or resend the task merely to get past startup: the prior request may already have executed. Existing multi-group state is not automatically migrated by 1.3.0.
+If startup reports unresolved receipts or uncertain external effects, preserve the state and investigate. Do not delete the journal, clear receipts or resend the task merely to get past startup: the prior request may already have executed.
 
 ## License
 

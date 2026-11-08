@@ -17,10 +17,11 @@ const RESET_KEYS = ['provider', 'model', 'workdir', 'codexApp']
 // model, project or backend clears its session before the new configuration
 // is written, so no later turn can resume a session from another backend.
 // It never moves a journal, settles a receipt or reconnects the platform.
-function createC2ConfigControl({ installation, getBindings, assertWriterLock,
-  store = null, activateRoute = null, probeRunner = assertRunnerExecutable,
+function createC2ConfigControl({ installation, getBindings, getHeld = () => new Map(),
+  assertWriterLock, store = null, activateRoute = null, probeRunner = assertRunnerExecutable,
   log = () => {} } = {}) {
   if (!installation?.cfg?._path || typeof getBindings !== 'function' ||
+      typeof getHeld !== 'function' ||
       typeof assertWriterLock !== 'function' ||
       store !== null && typeof store.resetGroupSession !== 'function' ||
       activateRoute !== null && typeof activateRoute !== 'function' ||
@@ -72,10 +73,18 @@ function createC2ConfigControl({ installation, getBindings, assertWriterLock,
       throw new Error('Changing global concurrency requires a service restart')
     }
     const resets = [], activations = [], changed = []
+    const heldGroups = getHeld()
     for (const route of routes) {
       const target = next.routes.find(item => item.chatId === route.chatId)
       if (route.group.platform !== target.group.platform) {
         throw new Error('Moving a group to another platform requires an explicit state migration')
+      }
+      if (heldGroups.has(route.chatId)) {
+        // Edits elsewhere proceed; the held group keeps its exact settings.
+        if (!isDeepStrictEqual(route.group, target.group)) {
+          throw new Error('This group is held after an unresolved fault; seal its incident and restart before changing it')
+        }
+        continue
       }
       if (!isDeepStrictEqual(route.group, target.group)) changed.push(route.chatId)
       if (RESET_KEYS.some(key => !isDeepStrictEqual(route.group[key], target.group[key]))) {

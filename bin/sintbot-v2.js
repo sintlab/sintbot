@@ -122,11 +122,18 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
     for (const name of ['pending-turns.json', 'engine-receipts.json']) {
       if (fs.existsSync(path.join(stateDir, name))) throw new Error('Legacy pending authority needs explicit migration')
     }
+    // A journal that cannot be opened or audited holds only its own group.
     const journals = new Map()
+    const holds = new Map()
     for (const route of routes) {
-      const journal = C2DurableJournal.open(route.file, validators)
-      assertJournalScope(journal, route.chatId, { requireSettled: preflightOnly || route.paused })
-      journals.set(route.chatId, journal)
+      try {
+        const journal = C2DurableJournal.open(route.file, validators)
+        assertJournalScope(journal, route.chatId, { requireSettled: preflightOnly || route.paused })
+        journals.set(route.chatId, journal)
+      } catch (error) {
+        if (!assertWriterLock()) throw error
+        holds.set(route.chatId, error?.message || String(error))
+      }
     }
     // All group Engines must share this exact object: separate Store caches
     // would overwrite sibling sessions when they save the same state file.
@@ -135,6 +142,13 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
       claude: require('../src/agent/claudecode').isClosedRunnerResult,
       'codex-exec': require('../src/agent/codexcode').isClosedRunnerResult,
       'codex-app': require('../src/agent/codexapp').isClosedRunnerResult,
+    }
+    // A runner that failed from its own exit event has closed; this frees its
+    // model permit but never proves the turn's outcome.
+    const closeErrorChecks = {
+      claude: require('../src/agent/claudecode').isClosedRunnerError,
+      'codex-exec': require('../src/agent/codexcode').isClosedRunnerError,
+      'codex-app': require('../src/agent/codexapp').isClosedRunnerError,
     }
     const limits = { maxEventCount: 100_000, maxJournalBytes: 64 * 1024 * 1024,
       maxCompletionEvents: 1_000, maxCompletionBytes: 8 * 1024 * 1024 }
@@ -148,7 +162,9 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
         () => process.exit(result.code))
     }
     service = createC2MultiGroupService({ routes, assertWriterLock, quarantine: combinedQuarantine,
-      closeCapacity: () => capacity.close(),
+      holds, closeCapacity: () => capacity.close(),
+      // Faults in a shared resource stop every group; others hold one group.
+      sharedFault: () => capacity.snapshot().closed ? 'model concurrency closed' : null,
       log: message => process.stderr.write(`C2 multi-group · ${message}\n`),
       onFatal: (error, result) => {
         process.stderr.write(`C2 multi-group failure: ${error?.message || String(error)}\n`)
@@ -199,10 +215,15 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
             verifyFile: path.join(stateDir, 'verify.json'), assertWriterLock,
             resolveTurn: identity => resolveC2LocalEffectTurn(engine, identity) })
           const closedResults = new WeakSet()
+          const closedErrors = new WeakSet()
           const startTurn = async input => {
             const backend = routeBackend(input.provider?.runner, input.codexApp,
               input.codexSteer, input.codexProjectDocFallback)
-            const result = await runner.runTurn(input)
+            let result
+            try { result = await runner.runTurn(input) } catch (error) {
+              if (closeErrorChecks[backend]?.(error) === true) closedErrors.add(error)
+              throw error
+            }
             if (closeChecks[backend]?.(result) === true) closedResults.add(result)
             return result
           }
@@ -210,14 +231,15 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
             store, log: message => process.stderr.write(`C2 v2 · ${message}\n`),
             durableV2Runtime: runtime, durableV2Payloads: handles,
             durableV2StartTurn: startTurn, durableV2ApplyLocalEffect: applyLocalEffect,
-            durableV2VerifyRunnerClosed: ({ result }) => !!result &&
-              typeof result === 'object' && closedResults.has(result),
+            durableV2VerifyRunnerClosed: ({ result, error }) => result
+              ? typeof result === 'object' && closedResults.has(result)
+              : !!error && typeof error === 'object' && closedErrors.has(error),
             durableV2AssertWriterLock: assertWriterLock, durableV2Journal: journal,
             durableV2AcquireCapacity: options => capacity.acquire(options),
-            // A failed model turn is closed for its group alone; every other
-            // route error still seals shared grants before the process stops.
+            // A route fault holds or recovers its group alone. Shared grants
+            // are sealed only when the process writer lease itself is gone.
             durableV2SealCapacity: error => {
-              if (error?.code !== 'C2_V2_UNRESOLVED_TURN') capacity.close(error)
+              if (assertWriterLock() !== true) capacity.close(error)
             },
             durableV2SwitchProvider: (chatId, name) => {
               if (chatId !== route.chatId) throw new Error('Model switch targets another group')
@@ -231,7 +253,8 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
       } })
     // One configuration writer for the console and the chat /model command.
     configControl = require('../src/c2configcontrol').createC2ConfigControl({
-      installation, getBindings: () => service.bindings, assertWriterLock, store,
+      installation, getBindings: () => service.bindings, getHeld: () => service.held,
+      assertWriterLock, store,
       activateRoute: route => service.addRoute(route),
       log: message => process.stderr.write(`C2 multi-group · ${message}\n`) })
     const stop = reason => { void service.stop(reason, 0).then(finish) }
@@ -243,7 +266,7 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
       ui = require('../src/c2console').createC2Console({
         configPath: cfg._path, stateDir, host: uiHost,
         getConfig: () => cfg, getBindings: () => service.bindings,
-        getCapacity: () => capacity.snapshot(),
+        getHeld: () => service.held, getCapacity: () => capacity.snapshot(),
         getConnHealth: () => liveTransport?.platform.connHealth?.() || {},
         assertWriterLock, ...configControl,
         log: message => process.stderr.write(`Console · ${message}\n`) })
@@ -261,6 +284,9 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
     process.on('exit', lock.release)
     running = true
     process.stderr.write(`SintBot Feishu ingress connected for ${started.groups} groups\n`)
+    for (const item of started.held || []) {
+      process.stderr.write(`SintBot group ${item.chatId} is held: ${item.reason}\n`)
+    }
   } catch (error) {
     ui?.close()
     const stopped = await service?.stop('startup-failed', 1)
@@ -303,6 +329,7 @@ const HELP = `SintBot macOS Feishu multi-group candidate
 Usage:
   sintbot init [--config <absolute path>] [--data-dir <absolute path>]
   sintbot start [--config <absolute path>] [--data-dir <absolute path>] [--preflight] [--ui] [--ui-host <address>] [--ui-port <port>] [--no-open]
+  sintbot incident seal --group <oc_…> [--config <absolute path>] [--data-dir <absolute path>] [--reason <text>]
   sintbot version
   sintbot help
 
@@ -311,7 +338,10 @@ Initialization is for a new installation only; existing journals are never reset
 Console shows live groups, binds groups and switches models or projects of idle groups;
 in a group, /model lists or switches models. Unsupported actions stay disabled.
 Canvas, scheduled tasks, terminal chat and other platforms are unavailable.
-Group faults stop the shared process safely; unknown effects are never replayed.
+A group whose last result cannot be proven is held alone; the other groups keep serving.
+Restart first: a journal that can recover reopens on its own. If the group is still held,
+stop the service, run incident seal for that group, then start again.
+Sealing keeps the old journal unchanged; unknown effects are never replayed.
 `
 
 async function main(argv = process.argv.slice(2)) {
@@ -326,10 +356,27 @@ async function main(argv = process.argv.slice(2)) {
     process.stdout.write(HELP)
     return
   }
-  if (!['init', 'start'].includes(sub)) {
+  if (!['init', 'start', 'incident'].includes(sub)) {
     throw new Error(`${sub} is unavailable in this release; use sintbot help`)
   }
   if (process.platform !== 'darwin') throw new Error('this release supports macOS only')
+  if (sub === 'incident') {
+    const [action, ...args] = rest
+    if (rest.some(arg => arg === '--help' || arg === '-h')) { process.stdout.write(HELP); return }
+    if (action !== 'seal') throw new Error('Usage: sintbot incident seal --group <oc_…> [--config <path>] [--data-dir <path>]')
+    const { values } = parseArgs({ args, allowPositionals: false, options: {
+      config: { type: 'string' }, 'data-dir': { type: 'string' },
+      group: { type: 'string' }, reason: { type: 'string' } } })
+    const installation = require('../src/c2install').loadInstallation(values.config,
+      { dataDir: values['data-dir'], allowAddedGroups: true })
+    const result = require('../src/c2incident').sealC2GroupIncident({ installation,
+      chatId: values.group, ...(values.reason !== undefined ? { reason: values.reason } : {}),
+      version: require('../package.json').version })
+    process.stdout.write(`Sealed the group's previous journal unchanged in ${result.incident}.\n` +
+      `${result.refusedSources} unsettled message(s) will not be processed again. ` +
+      'Start the service to reopen the group with a new journal.\n')
+    return
+  }
   if (sub === 'init') {
     const { values } = parseArgs({ args: rest, allowPositionals: false,
       options: { config: { type: 'string' }, 'data-dir': { type: 'string' } } })

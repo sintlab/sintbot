@@ -1,4 +1,4 @@
-# Install SintBot 1.4.0
+# Install SintBot 1.4.1
 
 English · [简体中文](./zh-CN/install.md)
 
@@ -10,7 +10,7 @@ You need a Mac, Node.js 22 or newer, and projects stored on that Mac. Install an
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-The installer checks the environment, installs `sintbot@1.4.0` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.0`. No sudo is needed.
+The installer checks the environment, installs `sintbot@1.4.1` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.1`. No sudo is needed.
 
 To preview, append `-s -- --dry-run`. To choose another location, set `SINTBOT_INSTALL_DIR` and adjust the executable paths below.
 
@@ -98,11 +98,11 @@ Any text message is a task. Replies arrive in a card that appears once the model
 | `/hud` | Quota of the current model and usage of this conversation |
 | `/issue text` | Log feedback; review and close it in the console overview |
 
-Messages sent while a task runs are added to that task in Codex groups (`codexSteer: true`) and queued in Claude Code groups. If a turn returns a model error or no result, only that group is asked to resend; there is no automatic retry and other groups are unaffected.
+Messages sent while a task runs are added to that task in Codex groups (`codexSteer: true`) and queued in Claude Code groups. If a turn returns a model error or no result, only that group is asked to resend; there is no automatic retry. If a group's last result cannot be confirmed, such as a reply whose delivery is unknown, only that group is paused and answers new messages with a short notice; other groups keep working. Nothing is replayed or retried.
 
 ## 6. Console
 
-With `--ui`, open `http://127.0.0.1:4600` on this Mac. The console shows each group, stops tasks, binds new groups, and switches the model or project folder of an idle group. For LAN access, set a console password in its settings first, then enable LAN access.
+With `--ui`, open `http://127.0.0.1:4600` on this Mac. The console shows each group (a paused group shows Needs attention), stops tasks, binds new groups, and switches the model or project folder of an idle group. For LAN access, set a console password in its settings first, then enable LAN access.
 
 You can also add a group without the console: add it to the configuration, stop the service and run `start` again; the new group is registered automatically. Bound groups cannot be removed or renamed by editing the configuration.
 
@@ -114,6 +114,12 @@ Press Ctrl-C and wait for exit. With the Feishu variables set, run:
 "$HOME/.local/share/sintbot/bin/sintbot" start --config "$HOME/.sbot/config.json" --ui
 ```
 
-If startup reports an unsettled receipt or a result is uncertain, keep the journals and check what actually happened; never delete journals or resend to get around it. Run only one connected process per Feishu app. This release does not register a background service.
+If a group stays paused, first restart: a group whose records can recover reopens on its own and is told once to resend. If it is still paused, check what actually happened in that group, then stop the service and seal the group's incident:
+
+```bash
+"$HOME/.local/share/sintbot/bin/sintbot" incident seal --config "$HOME/.sbot/config.json" --group oc_PAUSED_GROUP_ID
+```
+
+Sealing keeps the old journal unchanged under `incidents/` in the data directory and gives the group a new journal; messages left unfinished before the seal are never processed again. Start the service again to reopen the group. A preflight fails while any group would stay paused. Never delete journals or resend to get around a paused group. Run only one connected process per Feishu app. This release does not register a background service.
 
 [Illustrated website guide](https://sintbot.com/guide/install/) · [AI-assisted installation](./AI-ASSISTED-INSTALL.md)

@@ -4,6 +4,8 @@ const { isC2InputRejection, answerC2InputRejection, rejectC2Input } = require('.
 const { coordinateC2GlobalFault } = require('./core/c2globalfault')
 
 const RECOVERING_NOTICE = '上一个任务出错，正在收尾，这条消息没有处理，请稍后重发。'
+const HELD_NOTICE = '本群上一个任务结果不明，已暂停处理，等待人工确认；其他群不受影响。'
+const reasonOf = error => String(error?.message || error || 'unknown').slice(0, 300)
 
 // Turns a group binding still holds: a running turn, a non-idle handoff or a
 // busy lifecycle. Scoped to one group's own journal.
@@ -23,12 +25,20 @@ function activeTurns(snapshot) {
   return turns.sort((a, b) => a.chatId.localeCompare(b.chatId))
 }
 
+const runtimesOf = binding => binding?.engine?.rts instanceof Map ? [...binding.engine.rts.values()] : []
+
 // Process-local organization only. Each binding owns a distinct durable
 // authority; the transport and writer lease belong to this single process.
+// A fault that only one group's journal can explain holds that group: its
+// sealed binding stays as evidence, nothing is replayed or retried, and every
+// other group keeps serving. Only a shared resource (writer lease, transport,
+// model capacity) stops the process. `holds` lists groups whose journal could
+// not be opened before the service was created.
 function createC2MultiGroupService({ routes, assertWriterLock,
   createTransport, createBinding, onFatal = () => {}, closeCapacity = () => {},
   quarantine = null, stopTimeoutMs = 2_000, drainTimeoutMs = 12_000,
-  createRecoveryAuthority = null, log = () => {} } = {}) {
+  createRecoveryAuthority = null, holds = new Map(), sharedFault = () => null,
+  now = Date.now, log = () => {} } = {}) {
   if (!Array.isArray(routes) || !routes.length ||
       new Set(routes.map(route => route.chatId)).size !== routes.length ||
       routes.some(route => !route || typeof route.chatId !== 'string' ||
@@ -36,7 +46,9 @@ function createC2MultiGroupService({ routes, assertWriterLock,
       typeof assertWriterLock !== 'function' ||
       typeof createTransport !== 'function' || typeof createBinding !== 'function' ||
       typeof onFatal !== 'function' || typeof closeCapacity !== 'function' ||
-      typeof log !== 'function' ||
+      typeof log !== 'function' || typeof sharedFault !== 'function' ||
+      typeof now !== 'function' || !(holds instanceof Map) ||
+      [...holds.keys()].some(chatId => !routes.some(route => route.chatId === chatId)) ||
       createRecoveryAuthority !== null && typeof createRecoveryAuthority !== 'function' ||
       !Number.isSafeInteger(stopTimeoutMs) || stopTimeoutMs < 1 ||
       !Number.isSafeInteger(drainTimeoutMs) || drainTimeoutMs < 1) {
@@ -44,6 +56,8 @@ function createC2MultiGroupService({ routes, assertWriterLock,
   }
   const configured = new Map(routes.map(route => [route.chatId, route]))
   const bindings = new Map()
+  // chatId -> { reason, source: 'startup' | 'runtime', since, binding }
+  const suspended = new Map()
   let transport = null
   let started = false
   let starting = false
@@ -92,7 +106,8 @@ function createC2MultiGroupService({ routes, assertWriterLock,
         () => transport.stopPlatform(), stopTimeoutMs) === true
       const drained = (await Promise.all([...bindings.values()].map(binding =>
         bounded(() => binding.engine.drainDurableV2(drainTimeoutMs), drainTimeoutMs + 100))))
-        .every(value => value === true)
+        .every(value => value === true) && [...suspended.values()].every(entry =>
+        runtimesOf(entry.binding).every(rt => !rt.v2Controller))
       return Object.freeze({ reason, code: code === 0 && startupStopped && platformStopped && drained ? 0 : 1,
         startupStopped, platformStopped, drained })
     })()
@@ -104,6 +119,22 @@ function createC2MultiGroupService({ routes, assertWriterLock,
     const result = await stop('C2 multi-group ingress failed', 1)
     await onFatal(error, result)
     return result
+  }
+  // Seal one group in place. Its binding and journal are kept unchanged as
+  // evidence; a later restart reopens it only through the normal recovery
+  // gate, or after its incident has been sealed by the operator.
+  function suspend(chatId, error, { source, binding = null }) {
+    if (suspended.has(chatId)) return suspended.get(chatId)
+    const entry = Object.freeze({ reason: reasonOf(error), source, since: now(), binding })
+    suspended.set(chatId, entry)
+    for (const sealed of new Set([binding, bindings.get(chatId)])) {
+      if (!sealed) continue
+      try { sealed.gate.stop() } catch {}
+      try { sealed.engine.shutdown() } catch {}
+    }
+    bindings.delete(chatId)
+    log(`group ${chatId}: held (${entry.reason}); other groups keep serving`)
+    return entry
   }
   function allowed(chatId) {
     const route = configured.get(chatId)
@@ -155,6 +186,34 @@ function createC2MultiGroupService({ routes, assertWriterLock,
     work.then(() => recovering.delete(chatId), () => recovering.delete(chatId))
     return work
   }
+  // One group's route, recall or ingress failed. Close the failed turn when
+  // its journal proves every effect; otherwise hold the group alone. Returns
+  // 'recovered', 'held', 'fatal' (process stop begun) or 'stopping'.
+  async function groupFault(chatId, binding, error) {
+    const shared = () => !writerHeld() ? 'writer lock lost' : sharedFault()
+    if (shared()) { await fatal(error); return 'fatal' }
+    if (!started || stopPromise) return 'stopping'
+    if (suspended.has(chatId)) return 'held'
+    const current = bindings.get(chatId)
+    if (!binding || current !== binding && !failedBindings.has(binding)) {
+      // An error from a binding this service never published is not attributable.
+      await fatal(error); return 'fatal'
+    }
+    if (!createRecoveryAuthority) { await fatal(error); return 'fatal' }
+    try {
+      await recoverGroup(chatId, binding, error)
+    } catch (failure) {
+      log(`group ${chatId}: failed turn could not be closed: ${reasonOf(failure)}`)
+      if (shared()) { await fatal(failure); return 'fatal' }
+      if (!started || stopPromise) return 'stopping'
+      suspend(chatId, failure, { source: 'runtime', binding })
+    }
+    return suspended.has(chatId) ? 'held' : 'recovered'
+  }
+  function heldReply(msg, sourceAdapter) {
+    return answerC2InputRejection({ error: rejectC2Input('C2 group held',
+      { reason: 'group-held', notice: HELD_NOTICE }), msg, platform: sourceAdapter, log })
+  }
   // Open one more group on the live transport: a newly added route or one
   // paused since startup. It runs the same recovery gate as startup; only a
   // fully opened binding is published. Failure leaves the group unserved.
@@ -162,13 +221,16 @@ function createC2MultiGroupService({ routes, assertWriterLock,
     if (!route || typeof route.chatId !== 'string' || typeof route.file !== 'string') {
       return Promise.reject(new TypeError('C2 online route needs an explicit group and journal'))
     }
+    if (suspended.has(route.chatId)) {
+      return Promise.reject(new Error('This group is held after an unresolved fault; seal its incident and restart'))
+    }
     if (bindings.has(route.chatId)) return Promise.resolve(bindings.get(route.chatId))
     if (activating.has(route.chatId)) return activating.get(route.chatId)
     const opening = (async () => {
       if (!started || starting || stopPromise) throw new Error('C2 service is not serving')
       held()
       const binding = await createBinding({ route, transport })
-      if (!started || stopPromise || !writerHeld() ||
+      if (!started || stopPromise || !writerHeld() || suspended.has(route.chatId) ||
           !binding || !binding.gate || !binding.engine || binding.gate.blocked) {
         binding?.gate?.stop?.()
         binding?.engine?.shutdown?.()
@@ -184,6 +246,12 @@ function createC2MultiGroupService({ routes, assertWriterLock,
     return opening
   }
   function routeMessage(msg, sourceAdapter) {
+    const route = configured.get(msg?.chatId)
+    if (route && route.paused !== true && suspended.has(msg.chatId)) {
+      // A held group admits nothing; a replay of a sealed source stays silent.
+      if (quarantine?.rejects(msg)) return { quarantined: true }
+      if (started && !stopPromise) return heldReply(msg, sourceAdapter)
+    }
     // Foreign/paused group events are not faults and never get a receipt.
     if (!allowed(msg?.chatId)) return { ignored: true, reason: 'unconfigured-or-paused' }
     if (quarantine?.rejects(msg)) return { quarantined: true }
@@ -192,32 +260,46 @@ function createC2MultiGroupService({ routes, assertWriterLock,
       return answerC2InputRejection({ error: rejectC2Input('C2 group recovering',
         { reason: 'group-recovering', notice: RECOVERING_NOTICE }), msg, platform: sourceAdapter, log })
     }
+    let binding
     try {
       held()
-      const binding = bindings.get(msg.chatId)
-      if (!started || starting || stopPromise || !binding || binding.gate.blocked) {
+      binding = bindings.get(msg.chatId)
+      if (!started || starting || stopPromise || !binding) {
         throw new Error('C2 group ingress authority closed')
+      }
+      if (binding.gate.blocked) {
+        // A turn still running under a closed authority delivers its own
+        // rejection; until then this message, which has no receipt, is
+        // refused. An idle closed group is closed as its own fault here.
+        if (runtimesOf(binding).some(rt => rt.v2NormalRouteActive)) {
+          return answerC2InputRejection({ error: rejectC2Input('C2 group closing',
+            { reason: 'group-recovering', notice: RECOVERING_NOTICE }), msg, platform: sourceAdapter, log })
+        }
+        return groupFault(msg.chatId, binding, new Error('C2 group ingress authority closed'))
+          .then(async outcome => {
+            if (outcome === 'held') return heldReply(msg, sourceAdapter)
+            if (outcome === 'recovered') {
+              return answerC2InputRejection({ error: rejectC2Input('C2 group recovered',
+                { reason: 'group-recovering', notice: RECOVERING_NOTICE }), msg, platform: sourceAdapter, log })
+            }
+            throw new Error('C2 group ingress authority closed')
+          })
       }
       const running = binding.engine.runDurableV2Message(msg, sourceAdapter)
       return Promise.resolve(running).catch(async error => {
         // A refused command or premature /stop wrote nothing durable. Answer it
-        // once and keep every group serving; any other error stays fatal.
+        // once and keep every group serving.
         if (isC2InputRejection(error) && started && !stopPromise &&
             !binding.gate.blocked && writerHeld()) {
           log(`group ${msg.chatId}: refused input before receipt (${error.reason})`)
           return answerC2InputRejection({ error, msg, platform: sourceAdapter, log })
         }
-        // A closed model turn that failed (error or empty result) is closed for
-        // this group alone. Other errors from that same superseded binding are
-        // part of the same fault and wait for its recovery.
-        if (createRecoveryAuthority && started && !stopPromise &&
-            (failedBindings.has(binding) ||
-              error?.code === 'C2_V2_UNRESOLVED_TURN' && bindings.get(msg.chatId) === binding)) {
-          const recovered = await recoverGroup(msg.chatId, binding, error).then(() => true, failure => {
-            log(`group ${msg.chatId}: failed turn could not be closed: ${failure?.message || String(failure)}`)
-            return false
-          })
-          if (recovered) return { recovered: true, reason: 'group-fault-closed' }
+        // Any other route error belongs to this group alone unless a shared
+        // resource failed. Errors from a superseded binding join its fault.
+        if (started && !stopPromise) {
+          const outcome = await groupFault(msg.chatId, binding, error)
+          if (outcome === 'recovered') return { recovered: true, reason: 'group-fault-closed' }
+          if (outcome === 'held') return { held: true, reason: 'group-held' }
         }
         await fatal(error)
         throw error
@@ -236,15 +318,22 @@ function createC2MultiGroupService({ routes, assertWriterLock,
     }
   }
   function recall(event) {
+    if (suspended.has(event?.chatId)) return { ignored: true, reason: 'group-held' }
     if (!allowed(event?.chatId)) return { ignored: true }
+    let binding
     try {
       held()
-      const binding = bindings.get(event.chatId)
+      binding = bindings.get(event.chatId)
       if (!started || stopPromise || !binding) return { ignored: true, reason: 'ingress-closed' }
       const handled = binding.engine.handleRecall?.(event) === true
       if (binding.runtime?.blocked) throw new Error('Recall closed its durable authority')
       return handled ? { handled: true } : { ignored: true, reason: 'unsupported-or-inactive-recall' }
-    } catch (error) { return fatal(error) }
+    } catch (error) {
+      if (!binding || !writerHeld() || !started || stopPromise) return fatal(error)
+      return groupFault(event.chatId, binding, error).then(outcome =>
+        outcome === 'recovered' || outcome === 'held'
+          ? { ignored: true, reason: `group-${outcome}` } : fatal(error))
+    }
   }
   async function start({ preflightOnly = false } = {}) {
     if (started || starting || stopPromise) throw new Error('C2 service already started or stopped')
@@ -260,9 +349,19 @@ function createC2MultiGroupService({ routes, assertWriterLock,
           typeof transport.stopPlatform !== 'function') {
         throw new TypeError('C2 transport lacks a single start/stop boundary')
       }
+      for (const [chatId, reason] of holds) suspend(chatId, reason, { source: 'startup' })
       for (const route of routes) {
-        if (route.paused) continue // Its settled journal is audited before start.
-        const binding = await createBinding({ route, transport })
+        if (route.paused || suspended.has(route.chatId)) continue // Paused journals are audited before start.
+        let binding
+        try {
+          binding = await createBinding({ route, transport })
+        } catch (error) {
+          held()
+          if (stopPromise) throw new Error('C2 service stopped during group recovery')
+          // This group's journal could not be recovered; it alone stays closed.
+          suspend(route.chatId, error, { source: 'startup' })
+          continue
+        }
         held()
         if (stopPromise) {
           binding?.gate?.stop?.()
@@ -273,11 +372,19 @@ function createC2MultiGroupService({ routes, assertWriterLock,
         if (!binding || !binding.gate || !binding.engine || binding.gate.blocked) {
           binding?.gate?.stop?.()
           binding?.engine?.shutdown?.()
-          throw new Error('C2 group binding did not open its durable authority')
+          suspend(route.chatId, 'C2 group binding did not open its durable authority', { source: 'startup' })
+          continue
         }
         bindings.set(route.chatId, binding)
       }
       held()
+      const heldList = [...suspended].map(([chatId, entry]) => `${chatId}: ${entry.reason}`)
+      if (preflightOnly && heldList.length) {
+        throw new Error(`Startup preflight would hold ${heldList.length} group(s): ${heldList.join('; ')}`)
+      }
+      if (heldList.length && !bindings.size) {
+        throw new Error(`Every active group is held: ${heldList.join('; ')}`)
+      }
       if (preflightOnly) {
         finishStartup()
         await stop('preflight', 0)
@@ -291,14 +398,21 @@ function createC2MultiGroupService({ routes, assertWriterLock,
         onCardAction: unsupported('card action'), onBoardUpdated: unsupported('board update') })
       held()
       if (stopPromise) throw new Error('C2 service stopped during connection')
-      return { groups: bindings.size, connected: true }
+      return { groups: bindings.size, connected: true, ...(suspended.size ? { held: heldGroups() } : {}) }
     } catch (error) {
       finishStartup()
       await stop('startup-failed', 1)
       throw error
     } finally { starting = false; finishStartup() }
   }
-  return { start, stop, routeMessage, addRoute, get bindings() { return new Map(bindings) } }
+  function heldGroups() {
+    return [...suspended].map(([chatId, entry]) => Object.freeze({ chatId,
+      reason: entry.reason, source: entry.source, since: entry.since }))
+  }
+  return { start, stop, routeMessage, addRoute, heldGroups,
+    get bindings() { return new Map(bindings) },
+    get held() { return new Map([...suspended].map(([chatId, entry]) =>
+      [chatId, { reason: entry.reason, source: entry.source, since: entry.since }])) } }
 }
 
 module.exports = { createC2MultiGroupService }

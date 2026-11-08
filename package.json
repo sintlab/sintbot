@@ -1,6 +1,6 @@
 {
   "name": "sintbot",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "private": false,
   "description": "Drive your Mac projects from Feishu groups with Codex or Claude Code, using a built-in agent core.",
   "bin": {
@@ -58,6 +58,7 @@
     "src/agent/winexec.js",
     "src/c2configcontrol.js",
     "src/c2console.js",
+    "src/c2incident.js",
     "src/c2install.js",
     "src/c2migration.js",
     "src/c2multigroupcapacity.js",

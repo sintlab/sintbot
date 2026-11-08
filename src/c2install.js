@@ -201,7 +201,7 @@ function assertJournalScope(journal, chatId, { requireSettled = false } = {}) {
       Object.values(snap.state.lanes.queue || {}).some(lane => lane.queue.length) ||
       Object.values(snap.state.lanes.session || {}).some(lane => lane.settled !== true) ||
       ['terminal', 'stopIntent', 'cardCleanup', 'steer'].some(domain => Object.keys(snap.state.lanes[domain] || {}).length))) {
-    throw new Error('Paused group journal has unresolved work; preserve it and explicitly review recovery')
+    throw new Error('Group journal has unresolved work; preserve it and explicitly review recovery')
   }
   return snap
 }

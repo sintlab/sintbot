@@ -1,4 +1,4 @@
-# 安装 SintBot 1.4.0
+# 安装 SintBot 1.4.1
 
 [English](../install.md) · 简体中文
 
@@ -10,7 +10,7 @@
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-安装器会自动检查环境，把 `sintbot@1.4.0` 装到 `~/.local/share/sintbot`，并验证程序入口、内置核心和飞书模块。看到 `Installed and verified SintBot 1.4.0` 就可以继续。不需要 sudo。
+安装器会自动检查环境，把 `sintbot@1.4.1` 装到 `~/.local/share/sintbot`，并验证程序入口、内置核心和飞书模块。看到 `Installed and verified SintBot 1.4.1` 就可以继续。不需要 sudo。
 
 可选预览：在命令末尾加 `-s -- --dry-run`。要自定义安装位置，设置 `SINTBOT_INSTALL_DIR` 环境变量，并同步修改后面的可执行文件路径。
 
@@ -98,11 +98,11 @@ SINTBOT="$HOME/.local/share/sintbot/bin/sintbot"
 | `/hud` | 当前模型的额度与本段对话的用量 |
 | `/issue 一句话` | 记下问题反馈，在控制台概览里查看和标记处理 |
 
-任务进行中再发的消息：Codex 群（`codexSteer: true`）会补充进当前任务，Claude Code 群会排队，等这一轮结束再处理。某一轮模型报错或没有结果时，只在本群提示重新发送，不会自动重试，也不影响其他群。
+任务进行中再发的消息：Codex 群（`codexSteer: true`）会补充进当前任务，Claude Code 群会排队，等这一轮结束再处理。某一轮模型报错或没有结果时，只在本群提示重新发送，不会自动重试。某个群上一轮的结果无法确认时（例如回复是否送达不明），只暂停这个群，它收到新消息会回一句说明，其他群照常；不重放、不重试。
 
 ## 6. 控制台
 
-带 `--ui` 启动后，在本机浏览器打开 `http://127.0.0.1:4600`。控制台可以查看各群状态、停止任务、绑定新群、给空闲的群切换模型或项目目录。要从局域网访问，先在控制台的设置里设访问密码，再开启局域网访问。
+带 `--ui` 启动后，在本机浏览器打开 `http://127.0.0.1:4600`。控制台可以查看各群状态（暂停的群显示「需要处理」）、停止任务、绑定新群、给空闲的群切换模型或项目目录。要从局域网访问，先在控制台的设置里设访问密码，再开启局域网访问。
 
 不用控制台也能加群：在配置里加上新群，停止后重新 `start` 即可，新群会自动登记。已绑定的群不能通过改配置删除或改名。
 
@@ -114,6 +114,12 @@ SINTBOT="$HOME/.local/share/sintbot/bin/sintbot"
 "$HOME/.local/share/sintbot/bin/sintbot" start --config "$HOME/.sbot/config.json" --ui
 ```
 
-如果启动提示有未结收据，或任务结果不明，保留日志并核对实际结果；不要通过删除日志或重复发送来绕过。一个飞书应用同一时间只运行一个连接进程。本版不自动注册后台服务。
+某个群一直暂停时，先重启：记录能恢复的群会自己重新开放，并提示一次重新发送。重启后仍暂停，先核对这个群实际发生了什么，再停止服务，封存这个群的事故记录：
+
+```bash
+"$HOME/.local/share/sintbot/bin/sintbot" incident seal --config "$HOME/.sbot/config.json" --group oc_暂停的群ID
+```
+
+封存会把原日志原样留在数据目录的 `incidents/` 下，并给这个群换一份新日志；封存前没处理完的消息不会再处理。再次启动服务，这个群就重新开放。有群会保持暂停时，预检会失败。不要通过删除日志或重复发送来绕过暂停。一个飞书应用同一时间只运行一个连接进程。本版不自动注册后台服务。
 
 [带图示的官网指南](https://sintbot.com/zh/guide/install/) · [AI 辅助安装](./AI-ASSISTED-INSTALL.md)

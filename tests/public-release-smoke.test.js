@@ -24,7 +24,7 @@ function run(args, options = {}) {
 
 test('installed entry reports this release and its supported commands', () => {
   const pkg = require('../package.json')
-  assert.equal(pkg.version, '1.4.0')
+  assert.equal(pkg.version, '1.4.1')
   assert.equal(pkg.bin.sintbot, 'bin/sintbot-v2.js')
   assert.equal(pkg.bin.sbot, pkg.bin.sintbot)
   const version = run([entry, '--version'])
@@ -77,7 +77,7 @@ test('the package ships its declared files and no private development sources', 
   for (const file of pkg.files) {
     assert.doesNotMatch(file, /\.(map|rs)$|(^|\/)(Cargo\.toml|tests?)\//, file)
   }
-  for (const required of ['src/c2multigroupservice.js', 'src/c2console.js', 'src/ui/console.html']) {
+  for (const required of ['src/c2multigroupservice.js', 'src/c2console.js', 'src/c2incident.js', 'src/ui/console.html']) {
     assert.ok(pkg.files.includes(required), required)
   }
 })

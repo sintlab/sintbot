@@ -29,14 +29,21 @@ function createC2V2SourceQuarantine(value, { required = false } = {}) {
 
 // Every sealed incident under <data>/incidents/*/incident.json keeps its
 // unsettled source messages out of admission for that group, on every start.
-// A malformed seal stops startup: an unreadable fence cannot be skipped.
+// A seal written by `sintbot incident seal` also lists the receipts its
+// journal had already settled, so the group's new journal never runs one of
+// those messages again. A malformed seal stops startup: an unreadable fence
+// cannot be skipped.
 const CHAT_ID = /^oc_[A-Za-z0-9_-]{1,124}$/
+const RECEIPT_ID = /^[0-9a-f]{32}$/
 function loadC2IncidentQuarantine(stateDir, { fs = require('node:fs'), path = require('node:path') } = {}) {
   if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir)) {
     throw new TypeError('C2 incident quarantine needs the installation directory')
   }
   const root = path.join(stateDir, 'incidents')
+  // Loaded here so the source quarantine above stays a standalone module.
+  const { taskId } = require('./enginecheckpoint')
   const byChat = new Map()
+  const settled = new Map()
   const fail = name => { throw new Error(`Sealed incident record is invalid: ${name}; preserve it and review`) }
   let entries = []
   try { entries = fs.readdirSync(root, { withFileTypes: true }) }
@@ -53,14 +60,26 @@ function loadC2IncidentQuarantine(stateDir, { fs = require('node:fs'), path = re
     try { record = JSON.parse(fs.readFileSync(file, 'utf8')) } catch { fail(entry.name) }
     if (record?.schema !== 'sbot-c2-incident-seal-v1' || !CHAT_ID.test(record.chatId || '') ||
         !Array.isArray(record.pending) ||
-        record.pending.some(item => !FEISHU_MESSAGE_ID.test(item?.sourceId || ''))) fail(entry.name)
+        record.pending.some(item => !FEISHU_MESSAGE_ID.test(item?.sourceId || '')) ||
+        record.completedReceiptIds !== undefined && (!Array.isArray(record.completedReceiptIds) ||
+          record.completedReceiptIds.some(id => typeof id !== 'string' || !RECEIPT_ID.test(id)))) fail(entry.name)
     const ids = byChat.get(record.chatId) || new Set()
     for (const item of record.pending) ids.add(item.sourceId)
     byChat.set(record.chatId, ids)
+    if (record.completedReceiptIds?.length) {
+      const done = settled.get(record.chatId) || new Set()
+      for (const id of record.completedReceiptIds) done.add(id)
+      settled.set(record.chatId, done)
+    }
   }
   const sourceIds = Object.freeze([...byChat.values()].flatMap(ids => [...ids]))
+  const settledBefore = message => {
+    const done = settled.get(message?.chatId)
+    if (!done || typeof message.msgId !== 'string' || !message.msgId) return false
+    return done.has(taskId({ source: 'message', chatId: message.chatId, sourceId: message.msgId }))
+  }
   return Object.freeze({ sourceIds,
-    rejects: message => !!byChat.get(message?.chatId)?.has(message?.msgId) })
+    rejects: message => !!byChat.get(message?.chatId)?.has(message?.msgId) || settledBefore(message) })
 }
 
 module.exports = { createC2V2SourceQuarantine, loadC2IncidentQuarantine }

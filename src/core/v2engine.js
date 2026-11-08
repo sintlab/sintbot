@@ -596,6 +596,7 @@ async runDurableV2Message(msg, platform) {
     rt.v2NormalRouteActive = true
     const execute = async () => {
       let release = null
+      let failed = false
       try {
         let receiptId = accepted.receiptId
         if (this.durableV2AcquireCapacity) {
@@ -628,12 +629,13 @@ async runDurableV2Message(msg, platform) {
         // Seal shared grants before releasing this turn's permit. Waiting
         // siblings must not dispatch in the microtask before the service sees
         // this rejection and begins its process-wide stop.
+        failed = true
         this.durableV2SealCapacity?.(error)
         throw error
       } finally {
         rt.v2AdmissionPending = false
         rt.v2AdmissionController = null
-        release?.()
+        if (release) this._releaseDurableV2Capacity(rt, release, failed)
       }
     }
     const execution = execute()
@@ -647,6 +649,24 @@ async runDurableV2Message(msg, platform) {
       rt.v2NormalRouteActive = false
       rt.v2NormalRoutePromise = null
     }
+  }
+
+// A failed route returns its shared model permit only once its runner is
+// proven closed or proven never started. Otherwise the permit stays taken
+// until the process exits, so a sibling group never runs beside a child that
+// may still be alive.
+_releaseDurableV2Capacity(rt, release, failed) {
+    const closed = () => !rt.v2Controller && (rt.v2RunnerStopVerified === true ||
+      rt.v2RunnerNotStarted === true)
+    const stop = rt.v2RunnerStopPromise
+    if (!failed || !rt.v2Controller && (!stop || closed())) return release()
+    const kept = () => this.log(`group ${rt.chatId}: model permit kept until restart; runner close unproven`)
+    if (!stop) return kept()
+    stop.then(() => {
+      if (!closed()) return kept()
+      // A failed binary release closes the shared capacity itself.
+      try { release() } catch (error) { this.log(`group ${rt.chatId}: model permit release failed: ${error.message}`) }
+    }, kept)
   }
 
 async _runDurableV2Steer(rt, receiptId) {
@@ -1323,6 +1343,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
       rt.v2Controller = controller
       rt.v2RunnerStopPromise = null
       rt.v2RunnerStopVerified = false
+      rt.v2RunnerNotStarted = false
       let streamChain = Promise.resolve()
       let streamFailure = null
       const enqueueFrame = event => {
@@ -1508,6 +1529,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
         rt.v2RunnerGeneration = null
         rt.v2RunningJobs = null
         rt.v2DispatchEffect = null
+        rt.v2RunnerNotStarted = true
         return { effectId, accepted: false, startFailureRecovered: true }
       }
       if (capability && !accepted) {

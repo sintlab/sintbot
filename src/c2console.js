@@ -20,9 +20,9 @@ const WRITE_PATHS = ['/api/login', '/api/logout', '/api/logout/all',
   '/api/inbox/dismiss', '/api/issues/status']
 const SUPPORTED_RUNNERS = ['claude', 'codex']
 
-function createC2ConsoleFacade({ getBindings, getCapacity, getConfig,
+function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = () => new Map(),
   assertWriterLock, validateConfig, applyConfig, beforeWrite = () => true, now = Date.now } = {}) {
-  for (const callback of [getBindings, getCapacity, getConfig, assertWriterLock,
+  for (const callback of [getBindings, getCapacity, getConfig, getHeld, assertWriterLock,
     validateConfig, applyConfig, beforeWrite, now]) {
     if (typeof callback !== 'function') throw new TypeError('C2 console needs live authority and configuration hooks')
   }
@@ -45,10 +45,12 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig,
   function getLiveState() {
     const cfg = getConfig()
     const capacity = getCapacity()
+    const heldGroups = getHeld()
     const groups = {}
     let queue = 0
     for (const [chatId, group] of Object.entries(cfg.groups || {})) {
       const binding = bindings().get(chatId)
+      const hold = heldGroups.get(chatId)
       const rt = binding?.engine?.rts.get(chatId)
       const snapshot = binding?.journal?.snapshot()
       const pending = snapshot?.receipts?.pending || []
@@ -63,14 +65,17 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig,
         waitingForCapacity: !!rt?.v2AdmissionPending,
         sinceMs: rt?.v2StartedAt ? Math.max(0, now() - rt.v2StartedAt) : 0,
         sessionId: binding?.engine?.store?.getSession(chatId) || '',
+        // A held group needs the operator: its last result is unknown.
+        ...(hold ? { held: true, heldReason: hold.reason, heldSinceMs: Math.max(0, now() - hold.since) } : {}),
       }
     }
     const activeBindingsReady = Object.entries(cfg.groups || {})
-      .filter(([, group]) => !group.paused).every(([chatId]) => bindings().has(chatId))
+      .filter(([chatId, group]) => !group.paused && !heldGroups.has(chatId))
+      .every(([chatId]) => bindings().has(chatId))
     return { running: assertWriterLock() === true && !capacity.closed && activeBindingsReady,
       uptimeMs: Math.max(0, now() - startedAt),
       concurrency: { active: capacity.active, max: capacity.maxConcurrent },
-      queue, waiting: capacity.waiting, groups }
+      queue, waiting: capacity.waiting, held: heldGroups.size, groups }
   }
   function getActivity() {
     const cfg = getConfig(), items = []

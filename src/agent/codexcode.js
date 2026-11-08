@@ -13,6 +13,11 @@
 const { spawn } = require('node:child_process')
 const closedRunnerResults = new WeakSet()
 const isClosedRunnerResult = result => !!result && typeof result === 'object' && closedRunnerResults.has(result)
+// A rejection raised from the child's own 'close' event: the process has
+// exited even though the turn has no result. It never proves the turn's outcome.
+const closedRunnerErrors = new WeakSet()
+const isClosedRunnerError = error => !!error && typeof error === 'object' && closedRunnerErrors.has(error)
+const closedError = error => { closedRunnerErrors.add(error); return error }
 const { StringDecoder } = require('node:string_decoder')
 const { IS_WIN, resolveSpawn } = require('./winexec')
 const { tagError } = require('./errtag') // 出错原话 → quota / sessionMissing / transient 之一(优先级只在那一处定),与 claude runner 共用
@@ -398,11 +403,11 @@ function runOnce(opts, effort) {
 
     const completeClose = (code) => {
       if (onDurableEvent && code !== 0 && !lastResult && !aborted) {
-        done(() => reject(new Error(`codex exited ${code} before a durable result`)))
+        done(() => reject(closedError(new Error(`codex exited ${code} before a durable result`))))
         return
       }
       if (durableStart && !acceptedStart && !aborted && !acceptanceFailed) {
-        done(() => reject(new Error('Codex exited before turn.started acceptance')))
+        done(() => reject(closedError(new Error('Codex exited before turn.started acceptance'))))
         return
       }
       // Watch the answer→close (rollout-flush) lag. Healthy = ~2–3s (real-machine verified),
@@ -450,4 +455,4 @@ function probeVersion(bin = 'codex') {
   })
 }
 
-module.exports = { runTurn, runOnce, isClosedRunnerResult, probeVersion, normalizeEvent, parseCodexError, isEffortRejection, sandboxMode, buildArgs, buildPrompt }
+module.exports = { runTurn, runOnce, isClosedRunnerResult, isClosedRunnerError, probeVersion, normalizeEvent, parseCodexError, isEffortRejection, sandboxMode, buildArgs, buildPrompt }

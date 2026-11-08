@@ -29,6 +29,11 @@ const { IS_WIN, resolveSpawn } = require('./winexec')
 const { tagError } = require('./errtag') // 出错原话 → quota / sessionMissing / transient 之一(优先级只在那一处定),与 codex runner 共用
 const closedRunnerResults = new WeakSet()
 const isClosedRunnerResult = result => !!result && typeof result === 'object' && closedRunnerResults.has(result)
+// A rejection raised from the child's own 'close' event: the process has
+// exited even though the turn has no result. It never proves the turn's outcome.
+const closedRunnerErrors = new WeakSet()
+const isClosedRunnerError = error => !!error && typeof error === 'object' && closedRunnerErrors.has(error)
+const closedError = error => { closedRunnerErrors.add(error); return error }
 const PRE_INIT_HOOK_EVENTS = new Set(['hook_started', 'hook_response'])
 const DURABLE_EVENT_TYPES = new Set(['system', 'assistant', 'user', 'result', 'tool_result'])
 // Tool output is completion evidence only, never answer text.
@@ -451,7 +456,7 @@ function runTurn({
 
       const completeClose = (code) => finish(() => {
         if (code !== 0 && !lastResult && !aborted) {
-          return reject(new Error(`claude exited ${code}: ${stderr.trim().slice(0, 800) || '(no stderr)'}`))
+          return reject(closedError(new Error(`claude exited ${code}: ${stderr.trim().slice(0, 800) || '(no stderr)'}`)))
         }
         resolveRun({ sessionId: capturedSessionId, result: lastResult, code, aborted })
       })
@@ -524,4 +529,4 @@ function probeVersion(bin = 'claude') {
   })
 }
 
-module.exports = { runTurn, isClosedRunnerResult, buildEnv, normalizeEvent, probeVersion, supportsFlag, BASE_SKILL_ALLOWS }
+module.exports = { runTurn, isClosedRunnerResult, isClosedRunnerError, buildEnv, normalizeEvent, probeVersion, supportsFlag, BASE_SKILL_ALLOWS }

@@ -392,6 +392,7 @@ code{font-family:var(--mono);font-size:.95em} /* 中文说明里内嵌的命令/
 }
 .tag{font-family:var(--mono);font-size:10.5px;letter-spacing:.5px;padding:3px 8px;border-radius:5px;border:1px solid var(--tag-line,var(--line-hi));color:var(--tag-ink,var(--dim));background:var(--tag-bg,transparent);white-space:nowrap}
 .tag.busy{color:var(--ember);border-color:rgba(var(--ember-rgb),.4);box-shadow:0 0 10px rgba(var(--ember-rgb),.12) inset}
+.tag.held{color:var(--fail);border-color:rgba(var(--fail-rgb),.42);background:rgba(var(--fail-rgb),.08)}
 .tag.idle{color:var(--ok);border-color:rgba(var(--ok-rgb),.28)}
 .tag.pz{color:var(--muted);border-color:var(--line-hi);background:transparent}  /* 暂停态:中性灰,不是错误(bad 红留给真异常) */
 .card.gpaused{opacity:.55;transition:opacity .15s}  /* 暂停群卡整体降透明度示意下线;hover 提回可读 —— 配置项不禁用,暂停期间照样可调 */
@@ -1353,9 +1354,9 @@ function updateOverviewLive(){
   const a=$('#ovActive'); if(a)a.textContent=active;
   const q=$('#ovQueue'); if(q)q.textContent=live.queue||0;
   $$('#overview [data-g]').forEach(el=>{const lv=(live.groups&&live.groups[el.dataset.g])||{};
-    el.className='tag glive '+(lv.busy?'busy':'idle');
-    el.textContent=lv.queueFaulted?'待处理异常':lv.waitingForCapacity?'等待容量':lv.finalizing?'收尾中':(lv.busy?('busy '+(lv.sinceMs?Math.round(lv.sinceMs/1000)+'s':'')):'idle');
-    el.title=(S.runtimeCapabilities?(lv.queueFaulted?'服务当前未开放此群':lv.waitingForCapacity?'消息已登记，等待并发名额':lv.finalizing?'正在确认发送与结账结果':lv.busy?'运行中':'空闲'):(lv.finalizing?'答案已发送 · 进程收尾中(新消息会排队)':(lv.busy?'运行中':'空闲')))+(lv.sessionId?(' · 会话 #'+String(lv.sessionId).slice(-6)):' · 无会话');});
+    el.className='tag glive '+(lv.held?'held':lv.busy?'busy':'idle');
+    el.textContent=lv.held?'需要处理':lv.queueFaulted?'待处理异常':lv.waitingForCapacity?'等待容量':lv.finalizing?'收尾中':(lv.busy?('busy '+(lv.sinceMs?Math.round(lv.sinceMs/1000)+'s':'')):'idle');
+    el.title=lv.held?('上一个任务结果不明，此群已暂停，其他群照常。原因：'+(lv.heldReason||'未知')+'。处理：先重启服务，能自动收尾的会恢复；重启后仍需处理，再停止服务，运行 sintbot incident seal --group '+el.dataset.g+'，然后启动。'):(S.runtimeCapabilities?(lv.queueFaulted?'服务当前未开放此群':lv.waitingForCapacity?'消息已登记，等待并发名额':lv.finalizing?'正在确认发送与结账结果':lv.busy?'运行中':'空闲'):(lv.finalizing?'答案已发送 · 进程收尾中(新消息会排队)':(lv.busy?'运行中':'空闲')))+(lv.sessionId?(' · 会话 #'+String(lv.sessionId).slice(-6)):' · 无会话');});
   // Self-heal stuck 'running' rows: a done SSE frame can be lost on a reconnect gap and
   // SSE has no replay, so the row would spin forever. Per-group turns are serialized, so a
   // 'running' row whose group is no longer busy has finished (busy=false ⇔ the turn settled
@@ -4029,6 +4030,7 @@ updateThemeBtn();
 /* I18N_DICT_BEGIN —— 合并翻译片段时整块替换这两个数组,不要改此标记之外的代码
    ⚠ 正则一律 ^…$ 整串、不加 g 标志;更具体的条目必须排在泛化条之前。 */
 const I18N_EN=[
+  ["需要处理", "Needs attention"],
   ["当前可用操作", "Available controls"],
   ["当前支持多群消息、流式卡片回复、忙时跟进、停止任务、状态查看、认证管理、绑定新群，以及空闲群的模型（Codex / Claude Code）和项目目录切换。新会话、解除绑定、控制台插话、定时任务、生图、画布、预览与升级暂不可用。", "Available: group messages, streaming reply cards, busy-turn followups, stopping tasks, live status, authentication, binding new groups, and switching the model (Codex / Claude Code) or project of an idle group. New sessions, unbinding, console messages, schedules, image generation, canvas, previews and upgrades are unavailable."],
   ["可绑定新群，修改模型、项目目录、权限、数据输出和忙时跟进；该群须没有进行中的任务和未结记录。切模型或项目会开始新的一段对话。停止任务在「概览」。群里发 /model 也能切换模型。", "Bind new groups and change the model, project folder, permissions, data display and busy-turn followups of a group with no running task or unsettled record. Changing the model or project starts a new conversation. Stop tasks in Overview. Members can also switch models with /model in the group."],

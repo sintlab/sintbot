@@ -1,5 +1,24 @@
 [
   {
+    "version": "1.4.1",
+    "date": "2026-11-09",
+    "name": "A failing group stops only itself",
+    "items": [
+      {
+        "t": "One group's fault leaves the others working",
+        "d": "When a group's last task has an outcome that cannot be confirmed (for example a reply whose delivery is unknown, or a runner that exited without a result), only that group is paused; nothing is replayed or retried and the other groups keep working. A paused group answers new messages with a short notice."
+      },
+      {
+        "t": "One group no longer blocks startup",
+        "d": "If a group's records cannot be recovered, the other groups still start and the console marks that group Needs attention. The startup preflight fails and lists such groups."
+      },
+      {
+        "t": "Incident seal command",
+        "d": "Restart first; for a group that is still paused, stop the service and run sintbot incident seal --group <group ID>. The old records are kept unchanged, the group reopens with new records, and messages left unfinished before the seal are not processed again."
+      }
+    ]
+  },
+  {
     "version": "1.4.0",
     "date": "2026-11-08",
     "name": "Multiple groups, Claude Code and chat commands",

@@ -4,6 +4,11 @@
 const { spawn } = require('node:child_process')
 const closedRunnerResults = new WeakSet()
 const isClosedRunnerResult = result => !!result && typeof result === 'object' && closedRunnerResults.has(result)
+// A rejection raised from the child's own 'close' event: the process has
+// exited even though the turn has no result. It never proves the turn's outcome.
+const closedRunnerErrors = new WeakSet()
+const isClosedRunnerError = error => !!error && typeof error === 'object' && closedRunnerErrors.has(error)
+const closedError = error => { closedRunnerErrors.add(error); return error }
 const { IS_WIN, resolveSpawn } = require('./winexec')
 const { normalizeEvent, isEffortRejection } = require('./codexcode')
 const { coreFailedResult, isCoreFailure } = require('./errtag')
@@ -439,7 +444,7 @@ function runTurn(opts = {}) {
     })
     const completeClose = (code) => settle(() => {
       if (onDurableEvent && !completed && !aborted) {
-        reject(new Error(`codex app-server exited ${code} before a durable result`))
+        reject(closedError(new Error(`codex app-server exited ${code} before a durable result`)))
         return
       }
       if (!completed && !aborted) {
@@ -467,4 +472,4 @@ function runTurn(opts = {}) {
   })
 }
 
-module.exports = { runTurn, isClosedRunnerResult, usageFromTotal, itemEvent, failedTurnEvent }
+module.exports = { runTurn, isClosedRunnerResult, isClosedRunnerError, usageFromTotal, itemEvent, failedTurnEvent }

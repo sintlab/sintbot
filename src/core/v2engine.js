@@ -1754,7 +1754,8 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
       if (controller && rt.v2Controller === controller) rt.v2Controller = null
       const proofId = `sbot-c2-runner-not-started-v1:${receiptId}:${generation}`
       const eventId = `sbot-c2-runner-not-started-commit-v1:${receiptId}:${turnToken}:${generation}`
-      const provenNotStarted = !accepted && error?.code === 'AGENT_BIN_MISSING' &&
+      const provenNotStarted = !accepted &&
+        ['AGENT_BIN_MISSING', 'AGENT_THREAD_REJECTED'].includes(error?.code) &&
         this.durableV2Journal?.lookupRunnerNotStarted(proofId)?.dispatchEffectId === effectId &&
         this.durableV2Journal?.hasEvent(eventId) === true
       if (provenNotStarted) {
@@ -1764,6 +1765,33 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
             !authority.snapshot().receipts.completed.some(item => item.id === receiptId)) {
           authority.close()
           throw new Error('C2 v2 unstarted runner receipt remains unsettled')
+        }
+        // Recovery also settles messages queued behind this turn, each with its
+        // own confirmed notice. Forget their bodies and the local queue so the
+        // next message is admitted as idle, not as a busy follow-up. A queue
+        // the recovery left in place has no dispatcher here: fail closed.
+        const durableQueue = authority.snapshot().state.lanes.queue?.[chatId]?.queue || []
+        if (durableQueue.length) {
+          authority.close()
+          throw new Error('C2 v2 unstarted runner left queued receipts unsettled')
+        }
+        try {
+          for (const id of rt.v2QueueReceiptIds || []) this.durableV2Payloads.dropConfirmed(id)
+        } catch (dropError) { authority.close(); throw dropError }
+        rt.v2QueueReceiptIds = []
+        // A resume the server itself rejected leaves the saved thread unusable
+        // (missing rollout, unreadable history). As /new on this now idle and
+        // settled group: the next message starts a fresh session instead of
+        // meeting the same rejection again.
+        if (error.code === 'AGENT_THREAD_REJECTED' && this.store.getSession(chatId)) {
+          let locked = false
+          try { locked = this.durableV2AssertWriterLock?.() === true } catch {}
+          if (!locked) {
+            authority.close()
+            throw new Error('C2 v2 rejected-session reset lost single-writer lock')
+          }
+          this.store.resetSessionAndStats(chatId)
+          this.log(`group ${chatId}: Codex rejected the saved session before any turn; the next message starts a new session`)
         }
         rt.v2RunnerGeneration = null
         rt.v2RunningJobs = null

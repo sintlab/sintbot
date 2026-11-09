@@ -66,11 +66,12 @@ function runTurn(opts = {}) {
   const {
     bin = 'codex', prompt, provider = {}, model, workdir, sessionId,
     permissionMode, autocompactTokens, appendSystemPrompt, codexApp, codexProjectDocFallback, extraEnv,
-    onEvent, onDurableEvent, onSteerReady, onSteerLanded, onTurnAccepted, signal, log = () => {},
+    onEvent, onDurableEvent, onSteerReady, onSteerLanded, onTurnAccepted, onSpawnFailed, signal, log = () => {},
     softStopGraceMs = 10000, spawnFn = spawn,
   } = opts
   if (!prompt) return Promise.reject(new Error('runTurn: prompt required'))
   if (onDurableEvent !== undefined && typeof onDurableEvent !== 'function') return Promise.reject(new TypeError('onDurableEvent must be a function'))
+  if (onSpawnFailed !== undefined && typeof onSpawnFailed !== 'function') return Promise.reject(new TypeError('onSpawnFailed must be a function'))
 
   return new Promise((resolve, reject) => {
     const env = { ...process.env, ...(extraEnv || {}) }
@@ -104,6 +105,12 @@ function runTurn(opts = {}) {
     let retriedEffort = false
     let pendingTurnStart = false
     let acceptedTurnId = null
+    // Pre-turn rejection witness: the server answered initialize or the
+    // thread request with an RPC error before any turn/start was written and
+    // before any durable event. Only the child's own close completes it.
+    let turnStartWritten = false
+    let durableEmitted = false
+    let preTurnRejection = null
     const deferredTurnNotices = []
     let deferredInit = null
     const earlyCompleted = new Map()
@@ -119,6 +126,7 @@ function runTurn(opts = {}) {
     const emit = (ev) => {
       if (!ev) return
       if (!onDurableEvent) { legacyEmit(ev); return }
+      durableEmitted = true
       durableWork = durableWork.then(async () => {
         let timer
         try {
@@ -210,6 +218,37 @@ function runTurn(opts = {}) {
       killChild()
       settle(() => reject(error))
     }
+    // A durable turn whose initialize or thread request the server itself
+    // rejected never wrote turn/start and emitted nothing, so no model turn
+    // and no tool ran. Stop reading, let the child exit, and report the
+    // narrow witness only from the child's close event.
+    const canWitnessPreTurnRejection = (error) => !!onDurableEvent && !!onTurnAccepted &&
+      !!onSpawnFailed && error?.codexRpcError === true && !turnStartWritten &&
+      !pendingTurnStart && !acceptedTurnId && !activeTurnId && !durableEmitted &&
+      !aborted && !completed && !durableFailed && !settled && !childCloseObserved
+    const rejectBeforeTurn = (error) => {
+      preTurnRejection = error
+      durableFailed = true
+      completed = true
+      deactivate()
+      try { child.stdin.end() } catch {}
+      child.stdout.resume?.()
+      killChild()
+    }
+    const witnessPreTurnRejection = () => settle(() => {
+      const message = String(preTurnRejection?.message || 'Codex RPC error')
+      let acknowledged
+      try {
+        acknowledged = onSpawnFailed({ backend: 'codex-app-server', code: 'THREAD_REJECTED',
+          turnStarted: false, closed: true })
+      } catch (witnessError) { reject(closedError(witnessError)); return }
+      if (acknowledged !== true) {
+        reject(closedError(new Error('Codex pre-turn rejection witness was not confirmed synchronously')))
+        return
+      }
+      log(`codex app-server rejected the thread before any turn started: ${message.slice(0, 300)}`)
+      reject(closedError(Object.assign(new Error(message), { code: 'AGENT_THREAD_REJECTED' })))
+    })
     const onAbort = () => {
       aborted = true
       deactivate()
@@ -250,6 +289,7 @@ function runTurn(opts = {}) {
         isResume: !!sessionId, prompt, appendSystemPrompt, codexApp,
         model, providerModel: provider.model, effort, workdir: workdir || process.cwd(), permissionMode })
       pendingTurnStart = true
+      turnStartWritten = true
       let turn
       try { turn = await request(turnRequest.method, turnRequest.params) }
       finally { pendingTurnStart = false }
@@ -328,6 +368,7 @@ function runTurn(opts = {}) {
     // 这段回调不在任何 Promise 链里,抛错会直接带走整个进程 ⇒ 核心失败只结束当前轮。
     // 已完成的轮 fatal 会直接返回,结果不受影响。
     const handleLine = (raw) => {
+      if (preTurnRejection) return // the turn never started; later output is discarded
       // 对方主动发来的请求同时带 id 和 method:id 是对方的号段,可能与我们的请求相撞,绝不能当响应处理;
       // 不回应它就会一直等,这一轮挂到超时。无人值守,按协议一律拒绝。
       if (raw.id != null && raw.method) {
@@ -338,7 +379,7 @@ function runTurn(opts = {}) {
       }
       if (raw.id != null) {
         const p = requests.get(raw.id)
-        if (p) { requests.delete(raw.id); raw.error ? p.fail(Object.assign(new Error(raw.error.message || 'Codex RPC error'), { codexRpcRejected: [-32600, -32601, -32602].includes(raw.error.code) })) : p.ok(raw.result) }
+        if (p) { requests.delete(raw.id); raw.error ? p.fail(Object.assign(new Error(raw.error.message || 'Codex RPC error'), { codexRpcError: true, codexRpcRejected: [-32600, -32601, -32602].includes(raw.error.code) })) : p.ok(raw.result) }
         return
       }
       if (onTurnAccepted && pendingTurnStart && !acceptedTurnId) {
@@ -431,6 +472,7 @@ function runTurn(opts = {}) {
       }
     }
     child.stdout.on('data', (chunk) => {
+      if (preTurnRejection) return // keep the pipe flowing so the child's close is observed
       if (!onDurableEvent) { processChunk(chunk).catch(fatal); return }
       child.stdout.pause?.()
       streamWork = streamWork.then(() => processChunk(chunk)).catch(failDurableEvent).finally(() => {
@@ -456,11 +498,15 @@ function runTurn(opts = {}) {
     })
     child.on('close', (code) => {
       childCloseObserved = true
+      if (preTurnRejection) { witnessPreTurnRejection(); return }
       if (onDurableEvent) streamWork.then(() => durableWork).then(() => { if (!durableFailed) completeClose(code) }, failDurableEvent)
       else completeClose(code)
     })
     start().catch((error) => {
-      if (onDurableEvent) { failDurableEvent(error); return }
+      if (onDurableEvent) {
+        if (canWitnessPreTurnRejection(error)) { rejectBeforeTurn(error); return }
+        failDurableEvent(error); return
+      }
       if (onTurnAccepted && !acceptedTurnId && !settled) {
         aborted = true
         completed = true

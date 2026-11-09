@@ -683,9 +683,19 @@ class C2DurableRuntime {
     } catch (error) { this.close(); throw error }
 
     let phase = 'attempting'
+    // Two host witnesses prove that no model turn began: the exec child never
+    // spawned (no pid), or the App Server rejected initialize/thread before
+    // any turn/start and its child has already closed.
+    const runnerNotStartedWitness = failure => {
+      const keys = failure && typeof failure === 'object' ? Object.keys(failure).sort() : []
+      return (isDeepStrictEqual(keys, ['backend', 'code', 'pid']) &&
+          failure.backend === 'codex-exec' && failure.code === 'ENOENT' && failure.pid === null) ||
+        (isDeepStrictEqual(keys, ['backend', 'closed', 'code', 'turnStarted']) &&
+          failure.backend === 'codex-app-server' && failure.code === 'THREAD_REJECTED' &&
+          failure.turnStarted === false && failure.closed === true)
+    }
     const onSpawnFailed = (failure) => {
-      if (phase !== 'attempting' || failure?.backend !== 'codex-exec' ||
-          failure.code !== 'ENOENT' || failure.pid !== null ||
+      if (phase !== 'attempting' || !runnerNotStartedWitness(failure) ||
           !isDeepStrictEqual(witness.jobReceiptIds, [receiptId]) ||
           !isDeepStrictEqual(witness.batchReceiptIds, [receiptId]) ||
           verifyGeneration({ chatId, receiptId, turnToken, generation }) !== true ||

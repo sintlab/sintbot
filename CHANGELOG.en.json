@@ -1,5 +1,20 @@
 [
   {
+    "version": "1.4.6",
+    "date": "2026-11-09",
+    "name": "A rejected Codex resume no longer holds the group",
+    "items": [
+      {
+        "t": "Fix: a group held when Codex rejected a resume",
+        "d": "When Codex refused to continue the previous conversation before doing any work (for example a damaged Codex session history on the machine, or a conversation whose record is gone), the whole group was paused until an administrator released it. Now the group gets one \"the last turn did not finish, please send it again\" notice, keeps serving, and starts a new conversation, so resending works."
+      },
+      {
+        "t": "Fix: a queued message stalled the group after a start failure",
+        "d": "When the model could not start (program missing or resume rejected), messages queued behind it each get a resend notice; before, the next new message was treated as a busy group and the whole group was paused."
+      }
+    ]
+  },
+  {
     "version": "1.4.5",
     "date": "2026-11-09",
     "name": "Group commands, console settings and Codex sign-in",

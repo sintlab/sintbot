@@ -1,4 +1,4 @@
-# 安装 SintBot 1.4.2
+# 安装 SintBot 1.4.3
 
 [English](../install.md) · 简体中文
 
@@ -10,7 +10,7 @@
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-安装器会自动检查环境，把 `sintbot@1.4.2` 装到 `~/.local/share/sintbot`，并验证程序入口、内置核心和飞书模块。看到 `Installed and verified SintBot 1.4.2` 就可以继续。不需要 sudo。
+安装器会自动检查环境，把 `sintbot@1.4.3` 装到 `~/.local/share/sintbot`，并验证程序入口、内置核心和飞书模块。看到 `Installed and verified SintBot 1.4.3` 就可以继续。不需要 sudo。
 
 可选预览：在命令末尾加 `-s -- --dry-run`。要自定义安装位置，设置 `SINTBOT_INSTALL_DIR` 环境变量，并同步修改后面的可执行文件路径。
 
@@ -86,12 +86,12 @@ SINTBOT="$HOME/.local/share/sintbot/bin/sintbot"
 
 ## 5. 在群里使用
 
-直接发文字就是给它派任务。回复以卡片呈现，模型开始输出后就会出现并随进度刷新。
+直接发文字就是给它派任务。回复以卡片呈现：模型开始输出时出现；25 秒还没有输出也会先出现。运行中卡片显示已跑多久、正在做什么和已完成的步骤，结束后这些步骤收进「过程」折叠区。
 
 | 命令 | 作用 |
 | --- | --- |
 | `/help` | 查看可用命令 |
-| `/status` | 本群状态：模型、项目、是否在忙、排队数 |
+| `/status` | 本群状态：模型、项目、是否在忙（在忙时含步数和正在做什么）、排队数 |
 | `/model` | 查看可选模型；`/model 名字` 切换（只在本群空闲时生效，切换后开始新的一段对话） |
 | `/new` | 开始新的一段对话（只在本群空闲时生效） |
 | `/stop` | 停止当前任务，连同排队的一起取消 |

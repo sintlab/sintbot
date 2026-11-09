@@ -1,5 +1,28 @@
 [
   {
+    "version": "1.4.3",
+    "date": "2026-11-09",
+    "name": "Progress on the reply card",
+    "items": [
+      {
+        "t": "A card appears even before any output",
+        "d": "If nothing has been produced after 25 seconds, a \"Received, working on it\" card appears and the answer later replaces it in place. A turn that ends without a reply recalls that card."
+      },
+      {
+        "t": "The card shows how far the task has got",
+        "d": "While running, one line updates every 15 seconds: how long it has run and what it is doing (reading, editing or writing which file, running a command, searching the web; file names only). After 10 minutes it updates once a minute, and notes when nothing has happened for more than 2 minutes. Delivered steps such as writing files, committing or pushing, and sending files to the group are listed with ▶ at the top of the card and fold into a \"Process\" section when the turn ends."
+      },
+      {
+        "t": "/status shows progress",
+        "d": "While running it shows how many steps have run, how long ago the last activity was, and what it is doing."
+      },
+      {
+        "t": "Fix: a streamed reply could fail the whole turn",
+        "d": "Text that arrived while the previous update was still being sent used to fail the turn; it now queues behind it and keeps updating the card."
+      }
+    ]
+  },
+  {
     "version": "1.4.2",
     "date": "2026-11-09",
     "name": "Check and install new versions from the console",

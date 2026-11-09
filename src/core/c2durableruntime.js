@@ -205,6 +205,12 @@ class C2DurableRuntime {
   get blocked() { return this.#closed || this.#opening || this.#externalEffectInFlight || !this.#ingress ||
     this.#ingress.blocked || this.#journal.blocked }
 
+  // Closed or sealed for good. Unlike `blocked`, an outbound effect that is
+  // still awaiting its platform response does not count: a streaming card's
+  // next frame queues behind it instead of failing the turn.
+  get closed() { return this.#closed || !this.#ingress || this.#ingress.blocked ||
+    this.#journal.blocked }
+
   hasRecoveryPolicy({ assertWriterLock, singleNoticePerGroup } = {}) {
     return typeof assertWriterLock === 'function' &&
       this.#assertWriterLock === assertWriterLock &&

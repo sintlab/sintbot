@@ -15,6 +15,7 @@ const { createC2TurnProjection } = require('./c2turnprojection')
 const { prepareC2RunnerInput } = require('./c2runnerinput')
 const { continueC2Successor } = require('./c2successorbridge')
 const { rejectC2Input } = require('./c2inputrejection')
+const progress = require('./turnprogress')
 const NO_REPLY = 'NO_REPLY'
 const SYSTEM_APPENDIX = systemAppendix(NO_REPLY)
 const V2_NORMAL_ROUTE_MISSING = Object.freeze(['complete durable v2 authority'])
@@ -47,8 +48,10 @@ const T = {
     '/issue 一句话 记下问题反馈',
     steer ? '直接发文字就是派任务；任务进行中再发的消息会补充进当前任务。'
       : '直接发文字就是派任务；任务进行中再发的消息会排队，等这一轮结束再处理。'].join('\n'),
-  status: ({ model, project, state, queue, session }) => ['【本群状态】', `· 模型：${model}`,
-    `· 项目：${project}`, `· 状态：${state}`, `· 排队：${queue}`, `· 对话：${session}`].join('\n'),
+  status: ({ model, project, state, doing = [], queue, session }) => ['【本群状态】', `· 模型：${model}`,
+    `· 项目：${project}`, `· 状态：${state}`,
+    ...(doing.length ? [`· 最近在做：${doing.join(' · ')}`] : []),
+    `· 排队：${queue}`, `· 对话：${session}`].join('\n'),
   freshSession: '✅ 已开始新的一段对话，之前聊的内容不再带着',
   newBusy: '⚠ 手头还有任务在跑 —— 等它跑完，或先发 /stop 再发 /new',
   quotaShow: (name, value) => `${name} 额度：${value}`,
@@ -68,6 +71,7 @@ const T = {
   stopPending: '正在停止当前任务，这条消息没有处理，请稍后重发。',
   stopUnavailable: '当前任务正在收尾，暂时无法停止。',
   stoppedWithQueue: n => `已停止 — 连同排队的 ${n} 条一并取消`,
+  quotaFailure: 'Codex 订阅额度已用完，本次任务未完成。请恢复额度后重新发送；本次请求不会自动重试。',
   cardFooter: ({ ms, tokens }) => {
     const parts = [`耗时 ${Math.max(0, Math.round(ms / 1000))} 秒`]
     const tokenLabel = n => n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n)
@@ -351,11 +355,14 @@ async _durableV2Command(msg, cmd, rest) {
     if (cmd === '/status') {
       const rt = this.rts.get(msg.chatId)
       const queued = this.durableV2Runtime.snapshot().state?.lanes?.queue?.[msg.chatId]?.queue?.length || 0
-      const state = rt?.v2NormalRouteActive
-        ? `运行中（已跑 ${humanDuration(Date.now() - (rt.v2StartedAt || Date.now()))}）`
+      // "Running for long" is not "stuck": steps and the last activity tell them apart.
+      const busy = !!rt?.v2NormalRouteActive
+      const state = busy
+        ? `运行中（已跑 ${humanDuration(Date.now() - (rt.v2StartedAt || Date.now()))}${rt.v2Steps ? ` · 已执行 ${rt.v2Steps} 步` : ''}${rt.v2AliveAt ? ` · 最近动静 ${humanDuration(Date.now() - rt.v2AliveAt)}前` : ''}）`
         : rt?.v2AdmissionPending ? '消息已登记，等待并发名额' : '空闲'
       const project = String(group.workdir || '').split(/[\\/]/).filter(Boolean).pop() || '（未设）'
-      return reject('status', T.status({ model: label(name, provider), project, state, queue: queued,
+      return reject('status', T.status({ model: label(name, provider), project, state,
+        doing: busy && Array.isArray(rt.v2Doing) ? rt.v2Doing : [], queue: queued,
         session: this.store.getSession(msg.chatId) ? '进行中（记着上下文）' : '未开始' }))
     }
     if (cmd === '/new') {
@@ -1258,6 +1265,13 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
     const generation = randomBytes(16).toString('hex')
     rt.v2RunnerGeneration = generation
     rt.v2StartedAt = Date.now()
+    // Evidence that the turn is still moving, for /status and the card pulse;
+    // every turn starts from zero.
+    rt.v2Steps = 0
+    rt.v2AliveAt = 0
+    rt.v2Doing = []
+    rt.v2AutoMilestones = []
+    rt.v2CardQuotaFailure = false
     rt.v2CardBinding = null
     rt.v2StreamRequested = false
     rt.v2StreamQuiescing = false
@@ -1271,6 +1285,13 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
     let accepted = false
     let controller = null
     let capTimer = null
+    let ackTimer = null
+    let ackDue = false
+    let pulseTimer = null
+    const stopProgressTimers = () => {
+      if (ackTimer) { clearTimeout(ackTimer); ackTimer = null }
+      if (pulseTimer) { clearInterval(pulseTimer); pulseTimer = null }
+    }
     try {
       capability = authority.beginRunnerStart({ receiptId, chatId, turnToken,
         generation, verifyGeneration })
@@ -1346,19 +1367,28 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
       rt.v2RunnerNotStarted = false
       let streamChain = Promise.resolve()
       let streamFailure = null
-      const enqueueFrame = event => {
-        if (!this.durableV2StreamFrames || event.type !== 'assistant') return
-        if (!event.text || controller.signal.aborted || rt.v2CancelControl ||
-            rt.v2StreamQuiescing ||
-            authority.scopeState('stopIntent', chatId)) return
-        const buffer = projection.streamSnapshot().bufferText
-        const trimmed = buffer.trim()
-        if (!trimmed || NO_REPLY.startsWith(trimmed)) return
-        const text = buffer
+      // Card progress (same mechanism and wording as the legacy engine): deterministic
+      // milestones and "recently doing" from tool calls, an early "received" card
+      // and a pulse line. All of it is process-local card text; the card itself is
+      // still opened through the durable terminal path below.
+      const autoMs = []
+      rt.v2AutoMilestones = autoMs
+      const pushAuto = m => {
+        if (m && !autoMs.includes(m) && autoMs.length < progress.MILESTONE_MAX) autoMs.push(m)
+      }
+      const autoBlock = () => (autoMs.length ? autoMs.map(m => '▶ ' + m).join('\n') + '\n\n' : '')
+      const pulseFrom = Date.now()
+      let cardTouchedAt = 0
+      const progressClosed = () => rt.v2RunnerGeneration !== generation ||
+        rt.v2TerminalStarted || controller.signal.aborted || rt.v2CancelControl ||
+        rt.v2StreamQuiescing || !!authority.scopeState('stopIntent', chatId)
+      const enqueueCardText = text => {
         rt.v2StreamRequested = true
         streamChain = streamChain.then(async () => {
           if (rt.v2QueueNoticePromise) await rt.v2QueueNoticePromise
-          if (authority.blocked) throw new Error('C2 v2 stream authority closed')
+          // An earlier frame or pulse may still await its platform response;
+          // only a closed authority ends the stream.
+          if (authority.closed) throw new Error('C2 v2 stream authority closed')
           if (controller.signal.aborted || rt.v2CancelControl ||
               authority.scopeState('stopIntent', chatId)) return
           if (!rt.v2CardBinding) {
@@ -1368,8 +1398,10 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
               generation, verifyGeneration,
               applyLocalEffect: this.durableV2ApplyLocalEffect,
               assertWriterLock: this.durableV2AssertWriterLock,
-              redactText: value => redact(value,
-                { pii: job.group?.redactPii !== false }),
+              // An early card may end as the supported quota failure; its final
+              // text then uses the same fixed notice as an unopened card.
+              redactText: value => redact(rt.v2CardQuotaFailure === true
+                ? T.quotaFailure : value, { pii: job.group?.redactPii !== false }),
               sendPlainReply: typeof job.platform.replyOnce === 'function'
                 ? (target, value) => job.platform.replyOnce(target.replyCtx, value)
                 : null })
@@ -1384,6 +1416,82 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
           streamFailure = error
           try { controller.abort() } catch {}
         })
+      }
+      const enqueueFrame = event => {
+        if (event.type !== 'assistant') return
+        // /status and the pulse read these; a late event from an older
+        // generation must not write progress into this turn.
+        if (rt.v2RunnerGeneration === generation) {
+          rt.v2AliveAt = Date.now()
+          if (event.tools && event.tools.length) {
+            rt.v2Steps = (rt.v2Steps || 0) + event.tools.length
+            for (const tool of event.tools) {
+              progress.pushDoing(rt.v2Doing, progress.describeTool(tool.name, tool.input))
+              pushAuto(progress.autoMilestone(tool.name, tool.input))
+            }
+          }
+        }
+        if (!this.durableV2StreamFrames) return
+        if (!event.text || controller.signal.aborted || rt.v2CancelControl ||
+            rt.v2StreamQuiescing ||
+            authority.scopeState('stopIntent', chatId)) return
+        const buffer = projection.streamSnapshot().bufferText
+        const trimmed = buffer.trim()
+        if (!trimmed || NO_REPLY.startsWith(trimmed)) return
+        cardTouchedAt = Date.now()
+        enqueueCardText(autoBlock() + progress.renderMilestones(buffer))
+      }
+      const cardsVisible = this.durableV2StreamFrames && !receipt.quiet &&
+        typeof job.platform?.createStreamingCard === 'function'
+      // No visible output after ackDelayMs: open the card that would be opened
+      // anyway and fill it with "received"; the answer replaces it in place and
+      // a turn that ends silent recalls it at the terminal.
+      const ackMs = this.cfg.agent?.ackDelayMs == null ? 25_000 : Number(this.cfg.agent.ackDelayMs)
+      // No card before the runner is accepted. A runner accepted after the
+      // delay (Codex holds its events until its turn start returns) gets the
+      // card as soon as it is accepted.
+      const tryAck = () => {
+        if (!accepted) { ackDue = true; return }
+        if (progressClosed() || rt.v2CardBinding || rt.v2StreamRequested ||
+            projection.streamSnapshot().bufferText.trim()) return
+        cardTouchedAt = Date.now()
+        enqueueCardText(progress.T.ackWorking)
+      }
+      const armAck = delayMs => {
+        ackTimer = setTimeout(() => { ackTimer = null; tryAck() }, delayMs)
+        if (ackTimer.unref) ackTimer.unref()
+      }
+      if (cardsVisible && ackMs > 0) armAck(ackMs)
+      // Pulse: only rewrites the open card. Every PULSE_MS for the first
+      // PULSE_SLOW_AFTER_MS, then every PULSE_SLOW_MS; "recent activity" is only
+      // added after PULSE_STALE_MS without an assistant event.
+      const agentCfg = this.cfg.agent || {}
+      const PULSE_MS = agentCfg.cardPulseMs == null ? 15_000 : Number(agentCfg.cardPulseMs)
+      const PULSE_SLOW_MS = agentCfg.cardPulseSlowMs == null ? 60_000 : Number(agentCfg.cardPulseSlowMs)
+      const PULSE_SLOW_AFTER_MS = agentCfg.cardPulseSlowAfterMs == null ? 10 * 60 * 1000 : Number(agentCfg.cardPulseSlowAfterMs)
+      const PULSE_STALE_MS = agentCfg.cardPulseStaleMs == null ? 2 * 60 * 1000 : Number(agentCfg.cardPulseStaleMs)
+      if (cardsVisible && PULSE_MS > 0) {
+        const pulseEvery = () => (Date.now() - pulseFrom >= PULSE_SLOW_AFTER_MS
+          ? Math.max(PULSE_MS, PULSE_SLOW_MS) : PULSE_MS)
+        pulseTimer = setInterval(() => {
+          const binding = rt.v2CardBinding
+          if (progressClosed() || !binding?.opened || binding.generation !== generation) return
+          if (Date.now() - cardTouchedAt < pulseEvery()) return
+          cardTouchedAt = Date.now()
+          const sinceAlive = Date.now() - (rt.v2AliveAt || pulseFrom)
+          const stale = sinceAlive >= PULSE_STALE_MS ? progress.humanDur(sinceAlive) : ''
+          // Same gate as the stream frame: text that may still become NO_REPLY
+          // never reaches the card.
+          const buffer = projection.streamSnapshot().bufferText
+          const sofar = buffer.trim()
+          const body = autoBlock() + (sofar && !NO_REPLY.startsWith(sofar)
+            ? progress.renderMilestones(buffer) + '\n\n' : '')
+          try {
+            binding.path.update(body + progress.T.pulse(
+              progress.humanDur(Date.now() - pulseFrom), rt.v2Doing, stale))
+          } catch { /* a closed card never affects the turn */ }
+        }, PULSE_MS)
+        if (pulseTimer.unref) pulseTimer.unref()
       }
       const maxMins = Number(this.cfg.agent.maxTurnTimeMins) || 0
       const timeoutMs = maxMins > 0 ? maxMins * 60_000 : 0
@@ -1416,6 +1524,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
         onTurnAccepted: value => {
           const ack = capability.onTurnAccepted(value)
           accepted = true
+          if (ackDue) { ackDue = false; armAck(0) }
           return ack
         },
         onSpawnFailed: value => capability.onSpawnFailed(value),
@@ -1440,6 +1549,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
       let result
       try {
         result = await running
+        stopProgressTimers()
         rt.v2SteerClosing = true
         rt.v2SteerControl = null
         if (rt.v2SteerDrain) await rt.v2SteerDrain
@@ -1462,6 +1572,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
       }
       finally {
         if (capTimer) clearTimeout(capTimer)
+        stopProgressTimers()
         if (rt.v2Controller === controller) rt.v2Controller = null
       }
       if (authority.blocked && rt.v2RunnerStopVerified !== true) {
@@ -1512,6 +1623,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
       return { effectId, accepted: true, outputHeld: true }
     } catch (error) {
       if (capTimer) clearTimeout(capTimer)
+      stopProgressTimers()
       if (controller && rt.v2Controller === controller) rt.v2Controller = null
       const proofId = `sbot-c2-runner-not-started-v1:${receiptId}:${generation}`
       const eventId = `sbot-c2-runner-not-started-commit-v1:${receiptId}:${turnToken}:${generation}`
@@ -1620,7 +1732,7 @@ async completeDurableV2CardTurn({ chatId, receiptId, turnToken, effectId,
         verifyGeneration, applyLocalEffect: this.durableV2ApplyLocalEffect,
         assertWriterLock: this.durableV2AssertWriterLock,
         redactText: text => redact(quotaFailure
-          ? 'Codex 订阅额度已用完，本次任务未完成。请恢复额度后重新发送；本次请求不会自动重试。'
+          ? T.quotaFailure
           : text, { pii: job.group?.redactPii !== false }),
         sendPlainReply: typeof job.platform.replyOnce === 'function'
           ? (target, text) => job.platform.replyOnce(target.replyCtx, text)
@@ -1631,7 +1743,15 @@ async completeDurableV2CardTurn({ chatId, receiptId, turnToken, effectId,
       for (const text of updates) path.update(text)
       const footer = T.cardFooter({ ms: Math.max(0, Date.now() - rt.v2StartedAt),
         tokens: rt.v2UsageDecision?.tokens || null })
-      const completed = await path.complete({ payload, replyText, paused, footer })
+      // Milestones from tool calls first, then the model's own `>> ` lines;
+      // the card shows them in its "process" fold (display only).
+      rt.v2CardQuotaFailure = !!quotaFailure
+      const redactMilestone = value => redact(value, { pii: job.group?.redactPii !== false })
+      const milestones = [...(rt.v2AutoMilestones || []),
+        ...progress.milestonesOf(payload.bufferText)]
+        .filter((m, i, a) => a.indexOf(m) === i).map(redactMilestone)
+        .filter(m => typeof m === 'string' && m.trim())
+      const completed = await path.complete({ payload, replyText, paused, footer, milestones })
       const after = authority.snapshot()
       const queue = after.state?.lanes?.queue?.[chatId]?.queue
       let successor = null
@@ -1668,6 +1788,8 @@ async completeDurableV2CardTurn({ chatId, receiptId, turnToken, effectId,
       rt.v2TerminalProjection = null
       rt.v2UsageDecision = null
       rt.v2StartedAt = null
+      rt.v2AutoMilestones = []
+      rt.v2CardQuotaFailure = false
       rt.v2CardBinding = null
       rt.v2StreamRequested = false
       rt.v2TimeoutProof = null

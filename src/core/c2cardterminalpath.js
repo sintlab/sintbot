@@ -6,6 +6,7 @@
 // outbound executor a second time.
 const { createC2CardEffectBoundary, confirmCardOperation } = require('./c2cardeffectbridge')
 const { prepareTerminalEffectBridge, terminalReplyText } = require('./c2terminaleffectbridge')
+const { stripMilestones } = require('./turnprogress')
 
 function prepareCardTerminalPath({ runtime, payloadHandles, platform, replyCtx,
   receiptId, chatId, turnToken, generation, verifyGeneration,
@@ -130,7 +131,7 @@ function prepareCardTerminalPath({ runtime, payloadHandles, platform, replyCtx,
         return true
       } catch (error) { return fail(error) }
     },
-    async complete({ payload, replyText, paused = false, footer = '' } = {}) {
+    async complete({ payload, replyText, paused = false, footer = '', milestones = [] } = {}) {
       if (phase !== 'open' && phase !== 'plain') {
         throw new Error('C2 card terminal path is not open')
       }
@@ -143,7 +144,8 @@ function prepareCardTerminalPath({ runtime, payloadHandles, platform, replyCtx,
             typeof terminalPayload.quiet !== 'boolean' || terminalPayload.quiet !== receipt.quiet ||
             typeof terminalPayload.resultText !== 'string' ||
             typeof terminalPayload.bufferText !== 'string' ||
-            typeof footer !== 'string') {
+            typeof footer !== 'string' || !Array.isArray(milestones) ||
+            !milestones.every(item => typeof item === 'string' && item.trim())) {
           throw new TypeError('C2 card terminal payload differs from running turn')
         }
         if (card && await card.flush() !== true) {
@@ -184,8 +186,20 @@ function prepareCardTerminalPath({ runtime, payloadHandles, platform, replyCtx,
                 // is therefore not suitable for a durable final effect.
                 return sendPlainReply(target, visibleText)
               }
+              // Display only: milestone lines leave the answer and go into the
+              // card's "process" fold; an answer that was only milestones shows
+              // them as its body. The durable reply text stays exact.
+              let shownText = visibleText
+              const finishOpts = { footer }
+              if (milestones.length) {
+                const stripped = stripMilestones(visibleText)
+                if (stripped.trim()) {
+                  shownText = stripped
+                  finishOpts.milestones = [...milestones]
+                } else shownText = milestones.map(item => '▶ ' + item).join('\n')
+              }
               let calls = 0
-              const finished = await card.finish(visibleText, { footer,
+              const finished = await card.finish(shownText, { ...finishOpts,
                 terminalOperationBoundary: async operation => {
                   if (!operation || operation.kind !== 'card.update' ||
                       operation.cardId == null || typeof operation.invoke !== 'function' ||

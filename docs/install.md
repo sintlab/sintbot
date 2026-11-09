@@ -1,4 +1,4 @@
-# Install SintBot 1.4.2
+# Install SintBot 1.4.3
 
 English · [简体中文](./zh-CN/install.md)
 
@@ -10,7 +10,7 @@ You need a Mac, Node.js 22 or newer, and projects stored on that Mac. Install an
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-The installer checks the environment, installs `sintbot@1.4.2` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.2`. No sudo is needed.
+The installer checks the environment, installs `sintbot@1.4.3` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.3`. No sudo is needed.
 
 To preview, append `-s -- --dry-run`. To choose another location, set `SINTBOT_INSTALL_DIR` and adjust the executable paths below.
 
@@ -86,12 +86,12 @@ In a group, send "Read the first line of the project README and reply with only 
 
 ## 5. Use it in a group
 
-Any text message is a task. Replies arrive in a card that appears once the model starts answering and refreshes as it works.
+Any text message is a task. Replies arrive in a card that appears once the model starts answering, or after 25 seconds if it is still working without output. While the task runs, the card shows how long it has run, what it is doing and the steps already delivered; at the end those steps fold into a Process section.
 
 | Command | Effect |
 | --- | --- |
 | `/help` | List commands |
-| `/status` | Group status: model, project, busy or idle, queue |
+| `/status` | Group status: model, project, busy or idle (steps and current work while busy), queue |
 | `/model` | List models; `/model name` switches (only while the group is idle; starts a new conversation) |
 | `/new` | Start a new conversation (only while the group is idle) |
 | `/stop` | Stop the current task and cancel queued ones |

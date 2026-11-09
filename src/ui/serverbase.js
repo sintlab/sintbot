@@ -344,6 +344,15 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
   } catch { /* 回填是锦上添花,读不了就空着 */ }
   const inboxDismiss = dashboard.createDismissStore({ file: inboxDismissPath || path.join(os.homedir(), '.sbot', 'inbox-dismissed.json'), log })
   let lastHealth = null // 最近一次 buildState 的健康检查,给只算收件箱的 /api/inbox 用(那里不重跑探针)
+  // 升级排队时还有任务、排队、未结或暂停的群(只给名字,升级弹窗据此说明在等谁)
+  const upgradeWaitingGroups = () => {
+    let live = null, groupsRaw = {}
+    try { live = getLiveState ? getLiveState() : null } catch { return [] }
+    try { groupsRaw = readRaw().groups || {} } catch {}
+    return Object.entries((live && live.groups) || {})
+      .filter(([, g]) => g && (g.busy || g.finalizing || g.waitingForCapacity || g.queue > 0 || g.pending > 0 || g.held))
+      .map(([chatId, g]) => ({ name: (groupsRaw[chatId] && groupsRaw[chatId].name) || chatId.slice(-8), held: !!g.held }))
+  }
   // 「需要你处理」:从 state 各区取数(反馈本 / 预览 / 残留进程 / 健康)+ 账本 + 接管票,不再各算一遍
   const buildInboxFor = ({ issues, previews, leftovers, health }, raw) => {
     try {
@@ -839,6 +848,12 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       if (p === '/api/changelog' && req.method === 'GET') return sendJSON(res, 200, { changelog: readChangelog() })
       // 同一份版本历史的英文本(界面切英文时才拉;缺的版本前端按 version 回退中文)
       if (p === '/api/changelog-en' && req.method === 'GET') return sendJSON(res, 200, { changelog: readChangelogEn() })
+      // 升级进度:控制台的升级弹窗在升级期间每一两秒读一次。只读,只给升级状态和还有任务的群名,
+      // 不重算整份 state(那里有健康探针);服务重启的那几秒连不上,由页面当作「正在重启」处理。
+      if (p === '/api/update' && req.method === 'GET') {
+        if (!updater) return sendJSON(res, 503, { error: '版本检查暂不可用' })
+        return sendJSON(res, 200, { ...updater.status(), waitingGroups: upgradeWaitingGroups() })
+      }
       if (p === '/api/update/check' && req.method === 'POST') {
         if (!updater) return sendJSON(res, 503, { error: '版本检查暂不可用' })
         return sendJSON(res, 200, await updater.check())

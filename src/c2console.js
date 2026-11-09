@@ -10,7 +10,7 @@ const READ_PATHS = ['/api/state', '/api/events', '/api/inbox', '/api/activity',
   '/api/changelog', '/api/changelog-en', '/api/codex/models', '/api/usage',
   '/api/plugins', '/api/design/styles', '/api/design/icons', '/api/fs/listdir',
   '/api/feishu/admin-candidates', '/api/feishu/org-users', '/api/feishu/resolve-contact',
-  '/api/feishu/chats', '/api/feishu/chat-members', START_PATH, CALLBACK_PATH]
+  '/api/feishu/chats', '/api/feishu/chat-members', '/api/update', START_PATH, CALLBACK_PATH]
 const WRITE_PATHS = ['/api/login', '/api/logout', '/api/logout/all',
   '/api/ui/network', '/api/ui/public-url', '/api/ui/update-settings', '/api/feishu/admins',
   '/api/groups', '/api/groups/provider', '/api/fs/mkdir',

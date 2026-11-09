@@ -1,5 +1,32 @@
 [
   {
+    "version": "1.4.4",
+    "date": "2026-11-09",
+    "name": "Upgrade progress in the console",
+    "items": [
+      {
+        "t": "Confirm the upgrade in the page",
+        "d": "Upgrade now asks for confirmation in the page, stating the versions and that new messages wait about a minute during the switch."
+      },
+      {
+        "t": "The upgrade window shows each step",
+        "d": "Waiting for idle groups, download and install, stopping the current service, checking records and backing up, preflight, switching and starting, and waiting for every group to connect are ticked off one by one with the elapsed time; while waiting it names the groups still working."
+      },
+      {
+        "t": "Reconnects while the service restarts",
+        "d": "During the switch the page says the service is restarting and reconnects by itself; once the new version connects every group it reloads into the new console and shows the result once. A failed step and the restored version are marked."
+      },
+      {
+        "t": "Can run in the background",
+        "d": "Continue in background keeps a spinner on the top-bar icon, which reopens the progress; a notice appears when the upgrade ends."
+      },
+      {
+        "t": "Takes effect from 1.4.4",
+        "d": "The upgrade window comes from the running version: upgrading from 1.4.3 to 1.4.4 still shows the previous screen, and later upgrades show the window."
+      }
+    ]
+  },
+  {
     "version": "1.4.3",
     "date": "2026-11-09",
     "name": "Progress on the reply card",

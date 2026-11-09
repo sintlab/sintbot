@@ -1,4 +1,4 @@
-# Install SintBot 1.4.3
+# Install SintBot 1.4.4
 
 English · [简体中文](./zh-CN/install.md)
 
@@ -10,7 +10,7 @@ You need a Mac, Node.js 22 or newer, and projects stored on that Mac. Install an
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-The installer checks the environment, installs `sintbot@1.4.3` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.3`. No sudo is needed.
+The installer checks the environment, installs `sintbot@1.4.4` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.4`. No sudo is needed.
 
 To preview, append `-s -- --dry-run`. To choose another location, set `SINTBOT_INSTALL_DIR` and adjust the executable paths below.
 
@@ -104,7 +104,7 @@ Messages sent while a task runs are added to that task in Codex groups (`codexSt
 
 With `--ui`, open `http://127.0.0.1:4600` on this Mac. The console shows each group (a paused group shows Needs attention), stops tasks, binds new groups, and switches the model or project folder of an idle group. For LAN access, set a console password in its settings first, then enable LAN access.
 
-Settings → Software updates checks for new releases. In the foreground setup above it shows the upgrade steps: press Ctrl-C and wait for exit, rerun the one-line installer, then start again with the same command. If your own launchd agent starts SintBot, Upgrade now waits until every group is idle and settled, installs the new version into `~/.local/share/sintbot/releases/<version>` and switches the agent to it; if the new version does not connect every group within 90 seconds, the previous one is restored. Upgrades are not announced in groups.
+Settings → Software updates checks for new releases. In the foreground setup above it shows the upgrade steps: press Ctrl-C and wait for exit, rerun the one-line installer, then start again with the same command. If your own launchd agent starts SintBot, Upgrade now waits until every group is idle and settled, installs the new version into `~/.local/share/sintbot/releases/<version>` and switches the agent to it; if the new version does not connect every group within 90 seconds, the previous one is restored. A window shows each step, reconnects by itself while the service restarts and can be left running in the background. Upgrades are not announced in groups.
 
 You can also add a group without the console: add it to the configuration, stop the service and run `start` again; the new group is registered automatically. Bound groups cannot be removed or renamed by editing the configuration.
 

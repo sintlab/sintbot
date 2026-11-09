@@ -743,6 +743,32 @@ h2.sec{font-family:var(--sans);font-size:14px;letter-spacing:.2px;color:var(--in
 .modal-bg.show{display:flex}
 .modal{width:min(520px,92vw);background:var(--modal-bg);border:1px solid var(--line-hi);border-radius:16px;padding:26px;max-height:82vh;overflow:auto}
 .modal h3{font-family:var(--sans);font-size:15px;font-weight:600;margin:0 0 18px;letter-spacing:.4px}
+/* ── 控制台升级:确认 + 进度弹窗 ── 每一步的状态只从升级任务记录推出来,重载、断线重连后画出同一张 */
+.modal.upg h3{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.upg-sub{font-size:12px;color:var(--dim);margin:0 0 16px;display:flex;gap:10px;flex-wrap:wrap}
+.upg-bar{height:4px;border-radius:4px;background:var(--line);overflow:hidden;margin:0 0 14px;position:relative}
+.upg-bar>i{position:absolute;inset:0 auto 0 0;border-radius:4px;background:var(--ember);transition:width .5s var(--ease,ease)}
+.upg-bar.run>i::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.45),transparent);animation:upg-sheen 1.3s linear infinite}
+.upg-bar.ok>i{background:var(--ok)}.upg-bar.fail>i{background:var(--fail)}
+@keyframes upg-sheen{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+.upg-steps{list-style:none;margin:0 0 12px;padding:0;display:grid;gap:2px}
+.upg-steps li{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:9px;font-size:13px;color:var(--faint)}
+.upg-steps li.done{color:var(--ink)}
+.upg-steps li.active{color:var(--ink);background:rgba(var(--ember-rgb),.08);font-weight:600}
+.upg-steps li.fail{color:var(--fail);background:rgba(var(--fail-rgb),.08);font-weight:600}
+.upg-steps .dot{width:16px;height:16px;flex:none;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;
+  border:1.5px solid var(--line-hi);font-size:10px;line-height:1;box-sizing:border-box}
+.upg-steps li.done .dot{border-color:var(--ok);background:var(--ok);color:var(--modal-bg)}
+.upg-steps li.fail .dot{border-color:var(--fail);background:var(--fail);color:var(--modal-bg)}
+.upg-steps li.active .dot{border-color:transparent}
+.upg-steps li.active .dot .spin{width:12px;height:12px}
+.upg-mark{width:22px;height:22px;flex:none;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:12px;color:var(--modal-bg)}
+.upg-mark.ok{background:var(--ok)}.upg-mark.fail{background:var(--fail)}
+.upg-note{font-size:12.5px;line-height:1.6;color:var(--dim);padding:10px 12px;border-radius:10px;background:var(--inset-bg);margin:0 0 16px}
+.upg-note.warn{color:var(--warn)}.upg-note.fail{color:var(--fail)}
+.upg-btns{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.mark .ver-update.upgrading .update-dot{width:8px;height:8px;background:transparent;box-shadow:none;border:1.5px solid var(--spin-track);
+  border-top-color:var(--ember);animation:sp .8s linear infinite}
 /* ── 新建/编辑自定义风格(左表单 · 右实时预览)────────────────────────────────
    预览必须**一直在视野里** —— 这张表单的每一项都对应预览图的一条通道,改哪儿图上立刻变哪儿
    才是它区别于「填一份 YAML」的全部价值;所以右列 sticky,滚表单时图不走。 */
@@ -3370,7 +3396,8 @@ function openSay(chatId){
     }catch(e){ toast(e.message,'err'); go.disabled=false; const t2=$('#sayGoTxt'); if(t2) t2.textContent=old }
   };
 }
-function closeModal(){clearTimeout(nsTimer);nsTimer=null;nsSeq++;sayRefresh=null;$('#modalBg').classList.remove('show');$('#modal').className='modal';}
+function closeModal(){clearTimeout(nsTimer);nsTimer=null;nsSeq++;sayRefresh=null;$('#modalBg').classList.remove('show');$('#modal').className='modal';
+  try{upgOnClose();}catch{}} // 升级弹窗:升级照常进行,只收起
 $('#modalBg').onclick=e=>{if(e.target.id==='modalBg')closeModal();};
 
 /* ── playground ── */
@@ -3494,7 +3521,7 @@ function renderSettings(){
     :updMode==='foreground'?'前台运行不能在控制台升级：在运行 SintBot 的终端按 Ctrl-C 等待退出，重新运行一行安装命令 curl -fsSL https://sintbot.com/install.sh | bash，再用原来的启动命令启动。'
     :updMode==='dev'?'开发版不在控制台升级，请用部署脚本。':'只安装检测到的稳定版本;所有群任务与队列清空后才会安装。需要可写的全局安装目录,不会提权;后台服务会自动重启,前台运行需手动重启。';
   const updateCard=`<div class="card" style="grid-column:1/-1" id="updateCard"><div class="lbl">软件更新</div>
-    <div id="updateStatus" class="hint" style="margin:0 0 12px;color:var(--ink)">${updateText}</div>
+    <div id="updateStatus" class="hint" style="margin:0 0 12px;color:var(--ink);display:flex;align-items:center;gap:8px">${updMode==='managed'&&updateBusy?'<span class="spin"></span>':''}<span>${updateText}</span></div>
     ${upd&&upd.available?`<div class="hint" style="margin:-4px 0 12px">版本差异与发布说明：<a href="https://github.com/sintlab/sintbot/releases/tag/v${encodeURIComponent(upd.latestVersion)}" target="_blank" rel="noopener" style="color:var(--ember-soft)">查看 v${esc(upd.latestVersion)} 发布说明</a></div>`:''}
     <div class="inline" style="gap:14px;flex-wrap:wrap;margin-bottom:12px">
       <span class="dim">自动检查稳定版(启动时及每天)</span>
@@ -3503,6 +3530,8 @@ function renderSettings(){
     <div class="inline" style="gap:8px;flex-wrap:wrap">
       <button class="btn" id="updCheck" ${!upd?'disabled':''}>检查新版</button>
       ${updCanInstall?`<button class="btn primary" id="updInstall" ${!upd||!upd.available||updateBusy?'disabled':''}>现在升级</button>`:''}
+      ${updMode==='managed'&&updateJob&&(updateBusy||['failed','rolled-back'].includes(updateJob.state)||upgWatchId()===updateJob.id)
+        ?`<button class="btn" id="updProgress">${updateBusy?'查看进度':'查看上次升级'}</button>`:''}
       <button class="btn" id="updIgnore" ${!upd||!upd.available?'disabled':''}>忽略此版本</button>
     </div>
     <div class="hint" style="margin-top:10px">${updHint}</div>
@@ -3557,8 +3586,11 @@ function renderSettings(){
   $('#updCheck').onclick=async()=>{const b=$('#updCheck');b.disabled=true;b.textContent='检查中…';
     try{await api('/api/update/check','POST',{});S=await api('/api/state');await refreshInbox();renderSettings();renderOverview();toast('版本检查完成','ok');}
     catch(e){toast(e.message,'err');b.disabled=false;b.textContent='检查新版';}};
+  if($('#updProgress'))$('#updProgress').onclick=()=>upgOpen(true);
   if($('#updInstall'))$('#updInstall').onclick=async()=>{const u=S.update||{},version=u.latestVersion;if(!version)return;
     const announce=$('#updAnnounce')?$('#updAnnounce').checked:false;
+    // 后台托管:页内确认 → 进度弹窗(每一步、断线重连、完成后刷新到新版控制台)。前台 / 旧式更新器仍走下面的原生确认
+    if(u.mode==='managed'){upgConfirm(announce);return;}
     const what=u.mode==='managed'?'等所有群空闲、记录结清后装到单独的目录，再切换后台服务；切换期间约一分钟不处理新消息，新版本没连上全部群会自动换回。':`${announce?'安装完成后会向未暂停的群播报；':'本次不向群播报。'}所有群任务结束后才开始安装，后台服务会重启。`;
     if(!confirm(`将从 v${u.currentVersion} 升级到 v${version}。${what}继续?`))return;
     const b=$('#updInstall');b.disabled=true;
@@ -3927,9 +3959,209 @@ document.addEventListener('click',(e)=>{const b=e.target.closest&&e.target.close
 function renderAll(){renderOverview();renderProviders();renderGroups();renderPlayground();renderSettings();updateDaemon();updateTopFxApp();applyRuntimeCapabilities();}
 function updateTopUpdateBadge(){
   const badge=$('#topUpdateBadge');if(!badge)return;
-  badge.hidden=!(S&&S.update&&S.update.available);
+  const busy=upgManaged()&&upgIsActive(upgJob());
+  badge.hidden=!(S&&S.update&&(S.update.available||busy));
+  badge.classList.toggle('upgrading',busy);
+  const tip=busy?'正在升级，查看进度':'发现新版本，打开软件更新';
+  if(badge.title!==tip){badge.title=tip;badge.setAttribute('aria-label',tip);}
+  upgEnsureWatch();
 }
+
+/* UPGRADE_PROGRESS_BEGIN ── 控制台升级的进度弹窗 ──────────────────────────────────────────
+   点「现在升级」→ 页内确认 → 进度弹窗。升级期间每 1.5 秒读一次 GET /api/update;服务切换那几秒
+   连不上(或反代回 502)就显示「服务正在重启，页面会自动重连」,不当成错误;重启后旧令牌作废(环回
+   免密模式)则交给 checkStaleAuth 整页重载。新版本连上全部群、任务记为 done 后,这一页还是旧版前端
+   ⇒ 倒数 3 秒整页刷新,刷新后按 sessionStorage 记下的任务 id 再把结果弹出来一次。
+   每一步的状态只从任务记录(state / prefix / installed / steps)推出来,不靠页面记忆。 */
+const UPG_PHASES=[
+  ['wait','等待所有群空闲'],
+  ['install','下载并安装新版本'],
+  ['stop','停止旧服务'],
+  ['backup','核对群记录并备份数据'],
+  ['preflight','新版本预检'],
+  ['start','切换并启动新版本'],
+  ['connect','等待全部群连上'],
+];
+function upgIsActive(j){return !!(j&&['queued','installing','switching'].includes(j.state));}
+function upgVer(v){return String(v||'').trim().replace(/^v/i,'');}
+function upgStep(j,name){const s=((j&&j.steps)||[]).find(x=>x&&x.step===name);return s?(s.ok?'ok':'bad'):'';}
+// → [{key,label,state:'done'|'active'|'fail'|'todo'}]:最后一个已到达的步骤之前全算完成,下一步是
+//   进行中(任务还在跑)或失败(任务已失败 / 已换回);换回旧版本时多一行「换回 vX」。
+function upgPhases(j){
+  if(!j)return [];
+  const st=j.state, ok=n=>upgStep(j,n)==='ok';
+  const reached={
+    wait:!!(j.prefix||j.installed)||st==='installing'||st==='switching',
+    install:!!j.installed,
+    stop:ok('stop service'),
+    backup:ok('journals unchanged')&&ok('data backed up'),
+    preflight:ok('new version preflight'),
+    start:ok('service entry replaced')&&ok('start new version'),
+    connect:st==='done',
+  };
+  let last=-1;UPG_PHASES.forEach(([k],i)=>{if(reached[k])last=i;});
+  if(st==='done')last=UPG_PHASES.length-1;
+  const active=upgIsActive(j), failed=st==='failed'||st==='rolled-back';
+  const out=UPG_PHASES.map(([key,label],i)=>({key,label,
+    state:i<=last?'done':i===last+1?(active?'active':failed?'fail':'todo'):'todo'}));
+  if(upgStep(j,'rollback')){
+    const back=upgStep(j,'previous version started');
+    out.push({key:'rollback',label:`换回 v${upgVer(j.from)}`,state:back==='ok'||st==='rolled-back'?'done':back==='bad'||st==='failed'?'fail':'active'});
+  }
+  return out;
+}
+// 连不上时是不是在切换:已进入安装 / 已装好 / 已在切换(排队等空闲时服务不会自己重启)
+function upgRestarting(j){return !!(j&&(j.state==='switching'||j.state==='installing'||j.installed));}
+function upgDur(ms){const s=Math.max(0,Math.round(ms/1000));return s<60?`${s} 秒`:`${Math.floor(s/60)} 分 ${String(s%60).padStart(2,'0')} 秒`;}
+/* UPGRADE_PROGRESS_LOGIC_END */
+const upg={timer:0,tick:0,polling:false,open:false,view:'',offlineSince:0,waiting:[],reloadAt:0,toasted:''};
+const UPG_PAGE_VERSION=upgVer((document.querySelector('.mark .ver')||{}).textContent);
+function upgWatchId(){try{return sessionStorage.getItem('sbot-upgrade-watch')||'';}catch{return '';}}
+function upgSetWatch(id){try{if(id)sessionStorage.setItem('sbot-upgrade-watch',id);else sessionStorage.removeItem('sbot-upgrade-watch');}catch{}}
+// 「在后台继续」收起的任务 id:服务重启后页面会整页重载(环回免密模式换令牌),收起的弹窗不能因此又弹出来
+function upgHiddenId(){try{return sessionStorage.getItem('sbot-upgrade-hidden')||'';}catch{return '';}}
+function upgSetHidden(id){try{if(id)sessionStorage.setItem('sbot-upgrade-hidden',id);else sessionStorage.removeItem('sbot-upgrade-hidden');}catch{}}
+function upgJob(){return (S&&S.update&&S.update.job)||null;}
+function upgManaged(){return !!(S&&S.update&&S.update.mode==='managed');}
+function upgModalShown(){return !!(upg.open&&upg.view==='progress'&&$('#modalBg').classList.contains('show')&&$('#modal').classList.contains('upg'));}
+function upgSchedule(ms=1500){clearTimeout(upg.timer);upg.timer=setTimeout(upgPoll,ms);}
+// 由 updateTopUpdateBadge 在每次状态更新时调用:任务在跑就保证轮询在走;这一页发起(或看过)的任务
+// 刚结束、页面刚刷新过来 ⇒ 把结果弹出来一次。
+function upgEnsureWatch(){
+  if(!upgManaged())return;
+  const j=upgJob();if(!j)return;
+  if(upgIsActive(j)&&!upg.timer&&!upg.polling)upgSchedule(1500);
+  if(upg.open||upgWatchId()!==j.id||$('#modalBg').classList.contains('show'))return;
+  if(upgHiddenId()!==j.id)upgOpen(false);
+  else if(!upgIsActive(j))upgNotifyDone(j);   // 收起过:结束时只发一条提示
+}
+function upgNotifyDone(j){
+  if(!j||upg.toasted===j.id)return;
+  upg.toasted=j.id;upgSetWatch('');upgSetHidden('');
+  toast(j.message||(j.state==='done'?`已升级到 v${upgVer(j.to)}`:'升级没有完成'),j.state==='done'?'ok':'err');
+}
+async function upgPoll(){
+  upg.timer=0;if(upg.polling)return;upg.polling=true;
+  let r=null,data=null;
+  try{
+    try{r=await fetch('/api/update',{headers:{'X-Sbot-Token':TOKEN},cache:'no-store'});}catch{}
+    if(r&&r.status===401){upgRender();checkStaleAuth();return;}  // 重启后令牌作废:整页重载或落到登录框
+    if(r&&r.ok){try{data=await r.json();}catch{}}
+    if(!data||!data.currentVersion){                            // 断线 / 反代 502 / 服务重启中
+      if(!upg.offlineSince)upg.offlineSince=Date.now();
+      upgRender();upgSchedule(2000);return;
+    }
+    const wasOffline=!!upg.offlineSince;upg.offlineSince=0;
+    upg.waiting=Array.isArray(data.waitingGroups)?data.waitingGroups:[];
+    const {waitingGroups,...update}=data;
+    S.update={...(S.update||{}),...update};
+    const j=update.job;
+    if(upgIsActive(j)){upgRender();updateTopUpdateBadge();upgSchedule(1500);return;}
+    upgFinished(j,update,wasOffline);
+  }finally{upg.polling=false;}
+}
+// 任务结束(done / failed / rolled-back):这一页是旧版前端就倒数刷新;弹窗被收起了就只发一条提示。
+async function upgFinished(j,update,wasOffline){
+  const mine=!!(j&&upgWatchId()===j.id);
+  const stale=!!(j&&j.state==='done'&&UPG_PAGE_VERSION&&upgVer(update.currentVersion)!==UPG_PAGE_VERSION);
+  if(j&&mine&&stale&&upgModalShown()&&!upg.reloadAt){
+    upg.reloadAt=Date.now()+3000;upgRender();updateTopUpdateBadge();setTimeout(()=>location.reload(),3000);return;
+  }
+  if(j&&mine&&!upgModalShown())upgNotifyDone(j);
+  upgRender();
+  try{S=await api('/api/state');}catch{}
+  updateTopUpdateBadge();
+  if(!busyInteracting()){renderSettings();renderOverview();}
+  else if(wasOffline&&!upgModalShown())renderOverview();
+}
+function upgConfirm(announce){
+  const u=S.update||{};
+  $('#modal').className='modal upg';
+  $('#modal').innerHTML=`<h3>升级到 v${esc(upgVer(u.latestVersion))}</h3>
+    <div class="upg-sub"><span class="mono">v${esc(upgVer(u.currentVersion))} → v${esc(upgVer(u.latestVersion))}</span></div>
+    <div class="upg-note">等所有群空闲、记录结清后装到单独的目录，再切换后台服务；切换期间约一分钟不处理新消息，新版本没连上全部群会自动换回。</div>
+    <div class="hint" style="margin:-6px 0 18px">开始后这里会显示每一步的进度；服务重启时页面会自动重连。</div>
+    <div class="upg-btns"><button class="btn" id="upgCancel">取消</button><button class="btn primary" id="upgGo">开始升级</button></div>`;
+  upg.open=true;upg.view='confirm';
+  $('#modalBg').classList.add('show');
+  $('#upgCancel').onclick=()=>closeModal();
+  $('#upgGo').onclick=async()=>{
+    const b=$('#upgGo');b.disabled=true;b.innerHTML='<span class="spin"></span> 正在提交…';
+    try{
+      const r=await api('/api/update/start','POST',{version:u.latestVersion,announce:!!announce});
+      S.update={...(S.update||{}),...r};
+      upgSetWatch(r.job&&r.job.id);upg.reloadAt=0;
+      upgOpen(true);updateTopUpdateBadge();upgSchedule(600);
+    }catch(e){
+      if(e.payload&&e.payload.update)S.update={...(S.update||{}),...e.payload.update};
+      toast(e.message,'err');b.disabled=false;b.textContent='开始升级';
+    }
+  };
+}
+// 打开进度 / 结果弹窗。user=true:用户点的(「查看进度」、顶栏图标、刚确认),记下任务 id 以便刷新后接着看。
+function upgOpen(user){
+  const j=upgJob();if(!j)return;
+  if(user){upgSetWatch(j.id);upgSetHidden('');}
+  $('#modal').className='modal upg';
+  upg.open=true;upg.view='progress';
+  $('#modalBg').classList.add('show');
+  upgRender();
+  clearInterval(upg.tick);upg.tick=setInterval(()=>{if(!upgModalShown()){clearInterval(upg.tick);upg.tick=0;return;}upgRender();},1000);
+  if(upgIsActive(j)&&!upg.timer&&!upg.polling)upgSchedule(300);
+}
+// 弹窗被关掉(按钮、点遮罩、别的弹窗):升级照常进行,顶栏图标保持转圈,结束时只发提示
+function upgOnClose(){
+  if(!upg.open)return;
+  const wasProgress=upg.view==='progress';
+  upg.open=false;upg.view='';clearInterval(upg.tick);upg.tick=0;
+  const j=upgJob();
+  if(wasProgress&&upgIsActive(j))upgSetHidden(j.id);
+  else if(wasProgress&&j&&upgWatchId()===j.id){upgSetWatch('');upgSetHidden('');}
+  // 结果看完了:设置页那张卡在弹窗开着时没重画,这里补一次
+  if(wasProgress&&!upgIsActive(j))setTimeout(()=>{if(!busyInteracting()){renderSettings();renderOverview();}},0);
+}
+function upgRender(){
+  const j=upgJob(), statusBox=$('#updateStatus');
+  if(statusBox&&j&&upgManaged()&&upgIsActive(j)){
+    const text=upg.offlineSince?(upgRestarting(j)?'服务正在重启，页面会自动重连…':'暂时连不上服务，正在重试…')
+      :j.state==='switching'&&upgStep(j,'start new version')==='ok'?'新版本已启动，正在等全部群连上…':(j.message||j.state);
+    statusBox.innerHTML=`<span class="spin"></span><span>${esc(text)}</span>`;
+  }
+  if(!upgModalShown()||!j)return;
+  // 安装一结束,切换进程不到一秒就停掉旧服务:页面最后看到的多半还是「安装中」。这时连不上 = 正在切换
+  const view=upg.offlineSince&&upgRestarting(j)&&j.state!=='switching'?{...j,state:'switching',installed:true}:j;
+  const active=upgIsActive(view), st=view.state, phases=upgPhases(view);
+  const end=active?Date.now():(+j.finishedAt||+j.updatedAt||Date.now());
+  const took=upgDur(end-(+j.createdAt||end));
+  const doneN=phases.filter(p=>p.key!=='rollback'&&p.state==='done').length;
+  const pct=st==='done'?100:Math.max(4,Math.round(doneN/UPG_PHASES.length*100));
+  const to=esc(upgVer(j.to)), from=esc(upgVer(j.from));
+  const head=st==='done'?`<span class="upg-mark ok">✓</span><span>已升级到 v${to}</span>`
+    :active?`<span class="spin"></span><span>正在升级到 v${to}</span>`
+    :`<span class="upg-mark fail">!</span><span>升级没有完成</span>`;
+  let note,noteCls='';
+  if(active&&upg.offlineSince){note=st==='switching'?'服务正在重启，页面会自动重连…':'暂时连不上服务，正在重试…';noteCls='warn';}
+  else if(st==='switching'&&upgStep(view,'start new version')==='ok'){note='新版本已启动，正在等全部群连上…';}
+  else if(st==='queued'&&upg.waiting.length){note=`还在运行的群：${upg.waiting.map(g=>g.name).join('、')}`;}
+  else if(st==='done'&&upg.reloadAt){note=`页面将在 ${Math.max(0,Math.ceil((upg.reloadAt-Date.now())/1000))} 秒后刷新，载入新版控制台`;}
+  else{note=j.message||st;if(!active&&st!=='done')noteCls='fail';}
+  const icon=p=>p.state==='done'?'✓':p.state==='fail'?'!':p.state==='active'?'<span class="spin"></span>':'';
+  const btns=active?`<button class="btn" id="upgHide">在后台继续</button>`
+    :st==='done'&&upg.reloadAt?`<button class="btn primary" id="upgReload">现在刷新</button>`
+    :`<button class="btn${st==='done'?' primary':''}" id="upgDone">${st==='done'?'完成':'关闭'}</button>`;
+  $('#modal').innerHTML=`<h3>${head}</h3>
+    <div class="upg-sub"><span class="mono">v${from} → v${to}</span><span>${active?`已用 ${took}`:`用时 ${took}`}</span></div>
+    <div class="upg-bar ${active?'run':st==='done'?'ok':'fail'}"><i style="width:${pct}%"></i></div>
+    <ol class="upg-steps">${phases.map(p=>`<li class="${p.state}"><span class="dot">${icon(p)}</span><span>${esc(p.label)}</span></li>`).join('')}</ol>
+    <div class="upg-note ${noteCls}">${esc(note)}</div>
+    <div class="upg-btns">${btns}</div>`;
+  const hide=$('#upgHide');if(hide)hide.onclick=()=>closeModal();
+  const done=$('#upgDone');if(done)done.onclick=()=>closeModal();
+  const rl=$('#upgReload');if(rl)rl.onclick=()=>location.reload();
+}
+/* UPGRADE_PROGRESS_END */
 (()=>{const badge=$('#topUpdateBadge');if(!badge)return;badge.onclick=()=>{
+  if(upgManaged()&&upgIsActive(upgJob())){upgOpen(true);return;}
   const nav=$('nav [data-tab="settings"]');if(nav)nav.click();
   const card=$('#updateCard');if(!card)return;
   requestAnimationFrame(()=>{card.scrollIntoView({behavior:'smooth',block:'start'});
@@ -4777,6 +5009,27 @@ const I18N_EN=[
   ["只安装检测到的稳定版本：等所有群空闲、记录结清后装到单独的目录，再切换后台服务；新版本没在 90 秒内连上全部群会自动换回。旧版本保留用于回滚，不提权，不在群里播报。","Installs only the detected stable version: once every group is idle and settled, it goes into its own folder and the background service switches to it; if the new version does not connect every group within 90 seconds, the previous one is restored. The previous version is kept for rollback. No elevated privileges and no group announcements."],
   ["前台运行不能在控制台升级：在运行 SintBot 的终端按 Ctrl-C 等待退出，重新运行一行安装命令 curl -fsSL https://sintbot.com/install.sh | bash，再用原来的启动命令启动。","A foreground run cannot upgrade from the console: press Ctrl-C in the terminal running SintBot and wait for it to exit, rerun the one-line installer curl -fsSL https://sintbot.com/install.sh | bash, then start with your usual command."],
   ["开发版不在控制台升级，请用部署脚本。","Development builds are not upgraded from the console; use the deployment scripts."],
+  ["查看进度","View progress"],
+  ["查看上次升级","View last upgrade"],
+  ["正在升级，查看进度","Upgrading; view progress"],
+  ["等所有群空闲、记录结清后装到单独的目录，再切换后台服务；切换期间约一分钟不处理新消息，新版本没连上全部群会自动换回。","Once every group is idle and settled, it installs into its own folder and switches the background service; new messages wait about a minute during the switch, and the previous version is restored if the new one does not connect every group."],
+  ["开始后这里会显示每一步的进度；服务重启时页面会自动重连。","Once started, this window shows each step; the page reconnects by itself while the service restarts."],
+  ["开始升级","Start upgrade"],
+  ["正在提交…","Submitting…"],
+  ["等待所有群空闲","Waiting for every group to be idle"],
+  ["下载并安装新版本","Download and install the new version"],
+  ["停止旧服务","Stop the current service"],
+  ["核对群记录并备份数据","Check group records and back up data"],
+  ["新版本预检","Preflight the new version"],
+  ["切换并启动新版本","Switch to and start the new version"],
+  ["等待全部群连上","Wait for every group to connect"],
+  ["升级没有完成","The upgrade did not complete"],
+  ["服务正在重启，页面会自动重连…","The service is restarting; this page reconnects by itself…"],
+  ["暂时连不上服务，正在重试…","Cannot reach the service right now; retrying…"],
+  ["新版本已启动，正在等全部群连上…","The new version has started; waiting for every group to connect…"],
+  ["在后台继续","Continue in background"],
+  ["现在刷新","Reload now"],
+  ["关闭","Close"],
   ["访问地址正在切换;页面即将重载","Changing the access address; this page will reload"],
   ["访问设置已保存","Access settings saved"],
   ["开启局域网访问前要设置至少 6 位访问密码","Set an access password of at least 6 characters before enabling LAN access"],
@@ -5404,6 +5657,15 @@ const I18N_EN_RX=[
   [/^v([\d.]+) 已安装，等所有群空闲后切换$/,"v$1 is installed; switching when every group is idle"],
   [/^正在切换到 v([\d.]+)；期间的消息会提示稍后重发$/,"Switching to v$1; messages meanwhile are asked to be resent later"],
   [/^已升级到 v([\d.]+)$/,"Upgraded to v$1"],
+  [/^升级到 v([\d.]+)$/,"Upgrade to v$1"],
+  [/^正在升级到 v([\d.]+)$/,"Upgrading to v$1"],
+  [/^换回 v([\d.]+)$/,"Restore v$1"],
+  [/^已用 (\d+) 秒$/,"Elapsed $1 s"],
+  [/^已用 (\d+) 分 (\d+) 秒$/,"Elapsed $1 min $2 s"],
+  [/^用时 (\d+) 秒$/,"Took $1 s"],
+  [/^用时 (\d+) 分 (\d+) 秒$/,"Took $1 min $2 s"],
+  [/^还在运行的群：([\s\S]+)$/,"Groups still working: $1"],
+  [/^页面将在 (\d+) 秒后刷新，载入新版控制台$/,"Reloading in $1 s to load the new console"],
   [/^没有切换到 v([\d.]+)：([\s\S]*)；已换回 v([\d.]+)$/,"Did not switch to v$1 ($2); v$3 was restored"],
   [/^等待群空闲超时；可在空闲后重新发起$/,"Timed out waiting for idle groups; retry when they are idle"],
   [/^有暂停的群，升级已取消；先处理暂停的群$/,"A group is paused, so the upgrade was cancelled; handle the paused group first"],

@@ -1160,7 +1160,7 @@ function renderOverview(){
       <span class="tag prov" title="${(()=>{const pn=g.provider||S.defaultProvider;const pv=(S.providers||[]).find(p=>p.name===pn);const m=g.model||(pv&&pv.model);return '模型大脑:'+esc(pn)+(m?' · '+esc(m):'')+'(在「群·项目」页切换)';})()}">${esc(g.provider||S.defaultProvider)}</span>
       ${g.paused?'<span class="tag pz" title="已暂停(「群·项目」页可恢复)">'+IC.pause+' 暂停</span>':`<span class="tag glive" data-g="${esc(g.chatId)}" title="空闲">idle</span>`}
       <span class="meta" title="${esc(g.workdir)}">${esc(shortPath(g.workdir))}</span>
-      ${liveOn&&!g.paused?`<button class="iconbtn sm" data-osay="${esc(g.chatId)}" title="向这个群插一句 —— 空闲时马上处理;正在忙时,加入当前任务或排在它后面(看「忙时跟进」)" style="flex:none">${IC.say}</button>`:''}
+      ${liveOn&&!g.paused?`<button class="iconbtn sm" data-osay="${esc(g.chatId)}" title="${S.runtimeCapabilities?'向这个群插一句 —— 当前版本只在该群空闲时可用;这句话和回复都会发进群':'向这个群插一句 —— 空闲时马上处理;正在忙时,加入当前任务或排在它后面(看「忙时跟进」)'}" style="flex:none">${IC.say}</button>`:''}
       ${liveOn?`<button class="iconbtn sm" data-ostop="${esc(g.chatId)}" title="停止当前任务(保留会话)" style="flex:none">${IC.square}</button>
       <button class="iconbtn sm" data-onew="${esc(g.chatId)}" title="${S.runtimeCapabilities?'开新会话 — 仅在该群空闲、记录全部结账后可用;运行中请先停止,结束后再开(同群内 /new)':'开新会话 — 运行中会先中断当前任务并清空队列(同群内 /new)'}" style="flex:none">${IC.rotate}</button>`:''}</div>`).join('')
     :'<div class="empty">还没有群项目 · 去「群·项目」配置</div>';
@@ -2610,7 +2610,7 @@ function cronFullHtml(text){
   }).join('');
 }
 const RUNTIME_UI_TEXT={
-  "summary": "当前支持多群消息、流式卡片回复、忙时跟进、停止任务、空闲群开新会话、状态查看、认证管理、绑定新群、空闲群的模型（Codex / Claude Code）和项目目录切换、模型的添加与设置，以及后台运行时的软件升级。解除绑定、移除模型、控制台插话、定时任务、生图、画布与预览暂不可用。",
+  "summary": "当前支持多群消息、流式卡片回复、忙时跟进、停止任务、空闲群开新会话、空闲群的控制台插话（这句话和回复都进群）、状态查看、认证管理、绑定新群、空闲群的模型（Codex / Claude Code）和项目目录切换、模型的添加与设置，以及后台运行时的软件升级。群忙时的插话、静默插话、解除绑定、移除模型、定时任务、生图、画布与预览暂不可用。",
   "groups": "可绑定新群，修改模型、项目目录、权限、数据输出和忙时跟进；该群须没有进行中的任务和未结记录。切模型或项目会开始新的一段对话。停止任务和开新会话在「概览」，开新会话须等该群空闲。群里发 /model 也能切换模型。",
   "skills": "当前支持飞书文字消息、忙时跟进、任务回复和停止。定时任务、生图、群消息管理、画布与预览暂未接入。",
   "cron": "当前不执行定时任务；已有定义仅供查看。",
@@ -2619,7 +2619,7 @@ const RUNTIME_UI_TEXT={
   "paused": "已暂停：不接收本群新消息，配置与会话保留。",
   "resume": "恢复本群：重新接收本群消息，配置与会话保留。",
   "resumeLabel": "恢复",
-  "steer": "群成员的后续文字消息可加入当前任务；只有确认消息已进入模型后才算送达。控制台插话和定时任务暂不可用。",
+  "steer": "群成员的后续文字消息可加入当前任务；只有确认消息已进入模型后才算送达。控制台插话只在群空闲时可用，不加入当前任务；定时任务暂不可用。",
   "preview": "当前版本未接入预览服务。",
   "providers": "可添加模型，修改型号、端点、密钥、思考深度与推理强度，测试、隐藏或拖动排序；各群的模型在「群·项目」里切换。改型号、后端或端点时，用它的群须空闲，并会开始新的一段对话；默认模型和群正在用的模型不能隐藏。移除模型暂不可用。",
   "providersView": "当前可查看模型配置与登录状态；各群的模型在「群·项目」里切换。添加或修改模型暂不可用。",
@@ -3337,6 +3337,20 @@ function sayPlan(chatId,reply){
 function runsCodex(g){const pr=(S.providers||[]).find(pp=>pp.name===g.effectiveProvider);return !!pr&&pr.runner==='codex';}
 function sayAge(ms){const m=Math.floor((ms||0)/60e3);if(m<1)return '不到 1 分钟';if(m<60)return m+' 分钟';return Math.floor(m/60)+' 小时'+(m%60?' '+(m%60)+' 分钟':'');}
 let sayRefresh=null; // 浮层开着时,概览的实时刷新顺手重算一遍(打字的这会儿任务可能刚好跑完)
+/* 持久处理流程(当前版本)的插话只有一种形态:空闲群、这句话进群、回复进群。群忙 / 待人工 / 升级中等
+   直接说明白、按钮不可点 —— 不再说「加入当前任务 / 排队」,那是旧流程的行为。原因由服务端实时状态
+   (live.groups[chatId].sayBlocked,与插话接口同一个判据)给出;没有实时状态时以接口回报为准。 */
+const SAY_V1={
+  ok:'当前版本的插话:这句话(标着「管理员」)和它做完的回复都会发进群;静默插话、不回复的插话和群忙时的插话暂不支持。',
+  busy:'该群有任务进行中,当前版本的插话不排队也不加入当前任务,等它结束再插。',
+  held:'该群上一个任务结果不明,已暂停处理、等待人工确认;现在不能插话。',
+  upgrading:'正在升级,现在不能插话,请一分钟后再试。',
+  paused:'这个群项目已暂停,先恢复再插话。',
+  closed:'服务正在启动或停止,或该群当前未开放;现在不能插话。'
+};
+function sayV1Blocked(chatId){const lv=((S.live||{}).groups||{})[chatId]||{};return lv.sayBlocked||(lv.busy?'busy':null);}
+/* 每次提交一个 32 位十六进制幂等键:同一段文字没成功前重点一次,沿用同一个键,服务端据此不重复处理 */
+function sayRequestId(){const a=new Uint8Array(16);crypto.getRandomValues(a);return Array.from(a,b=>b.toString(16).padStart(2,'0')).join('');}
 /* 「向群里插一句」浮层。入口在概览「群·项目」每一行的 ✎ —— 动作长在对象身上,
    目标群由那一行决定,所以这里不再有下拉。
    ⚠ 两个开关**平级**(不是嵌套):四种组合都要够得着,其中「都不勾」= 群里彻底无痕,
@@ -3361,7 +3375,17 @@ function openSay(chatId){
     </div>`;
   $('#modalBg').classList.add('show');
   const ta=$('#sayT'), sw=$('#sayShow'), rp=$('#sayReply'), pv=$('#sayPreview'), go=$('#sayGo'), goTxt=$('#sayGoTxt'), bz=$('#sayBusy');
-  const preview=()=>{ const a=sw.checked,b=rp.checked, plan=sayPlan(chatId,b);
+  const v1=!!S.runtimeCapabilities; let sending=false, req=null;
+  // 当前版本两个开关固定勾上:只支持「这句话进群 + 回复进群」,开关留着,让人看见这句会以什么样子出现
+  if(v1){ for(const c of [sw,rp]){ c.checked=true; c.disabled=true; c.parentElement.title='当前版本固定:这句话和回复都发进群'; } }
+  const preview=()=>{ const a=sw.checked,b=rp.checked, plan=v1?null:sayPlan(chatId,b);
+    if(v1){
+      const why=sayV1Blocked(chatId), lv=((S.live||{}).groups||{})[chatId]||{};
+      bz.innerHTML=why==='busy'?`<span class="dot"></span>${lv.busy?'正在处理任务 · 已 '+sayAge(lv.sinceMs):'正在收尾'}`:why==='held'?'<span class="dot"></span>待人工确认':'';
+      pv.textContent=why?(SAY_V1[why]||SAY_V1.closed):SAY_V1.ok;
+      if(!sending){ go.disabled=!!why; goTxt.textContent=why?'暂不能插':'插入'; }
+      return;
+    }
     const vis = a&&b ? '群里会看到:你插的这句话(标着「管理员」)和它做完的回复。'
       : a&&!b ? '群里只看到你插的这句话 —— 它做完<b>不出声</b>,结果去「实时活动」看。'
       : !a&&b ? '群里只看到它的回复 —— 群成员看不出是谁让做的。'
@@ -3386,11 +3410,13 @@ function openSay(chatId){
   $('#sayCancel').onclick=closeModal;
   go.onclick=async()=>{
     const text=(ta.value||'').trim(); if(!text){ ta.focus(); return }
-    go.disabled=true; const old=goTxt.textContent; goTxt.textContent='插入中…';
+    if(!req||req.text!==text) req={id:sayRequestId(),text};   // 没成功前同一段文字重试 = 同一个键
+    go.disabled=true; sending=true; const old=goTxt.textContent; goTxt.textContent='插入中…';
     try{
-      const r=await api('/api/groups/say','POST',{chatId,text,show:sw.checked,reply:rp.checked});
+      const r=await api('/api/groups/say','POST',{chatId,text,show:sw.checked,reply:rp.checked,requestId:req.id});
       const inj=r.sayInjected; delete r.sayInjected;   // 瞬态字段,读完即删(别进状态签名)
       S=r; closeModal(); renderOverview();
+      if(v1&&inj&&inj.where&&inj.where.state==='duplicate'){ toast('这次提交已经插入过,没有重复处理','ok'); return }
       // 回报照实说清两件事:这句**落在哪**(服务端按引擎实际落点回报),以及群里会/不会出现什么 —— 只说「已插入」等于没说
       const vis = inj&&inj.show ? (inj.reply?'群里能看到这句话和回复':'群里只看到这句话') : (inj&&inj.reply?'群里只会出现回复':'群里不会有任何动静');
       const w=(inj&&inj.where)||{};
@@ -3398,7 +3424,7 @@ function openSay(chatId){
         : w.state==='queued' ? (w.join ? '已排队 · 当前任务一就绪就会加入' : '群正忙,已排队'+(w.ahead?`(前面还有 ${w.ahead} 条)`:'')+' · 当前任务结束后处理')
         : '已插入';
       toast(head+' · '+vis,'ok');
-    }catch(e){ toast(e.message,'err'); go.disabled=false; const t2=$('#sayGoTxt'); if(t2) t2.textContent=old }
+    }catch(e){ toast(e.message,'err'); sending=false; go.disabled=false; const t2=$('#sayGoTxt'); if(t2) t2.textContent=old; if(v1&&$('#sayT')) preview() }
   };
 }
 function closeModal(){clearTimeout(nsTimer);nsTimer=null;nsSeq++;sayRefresh=null;$('#modalBg').classList.remove('show');$('#modal').className='modal';
@@ -3517,12 +3543,12 @@ function renderSettings(){
       <div class="hint">代理第一次填,新的对话轮次就生效;改已有的地址要重启后台服务(sintbot service restart)。</div></div>
   </div>`;
   const updateJob=upd&&upd.job;
-  // 1.4.x 多群服务的升级器带 mode:后台托管才能一键升级,前台与开发版只给说明;不在群里播报。
+  // 1.4.x 多群服务的升级器带 mode:后台托管才能一键升级,前台与开发版只给说明。版本变化后的群播报由启动时的公告卡片负责(控制台可关)。
   const updMode=upd&&upd.mode||'';
   const updateBusy=!!(updateJob&&['queued','installing','switching','restarting','restart-needed'].includes(updateJob.state));
   const updCanInstall=!!(upd&&(updMode?upd.upgradeSupported:true));
   const updateText=!upd?'后台版本检查不可用':updateJob&&updateJob.state!=='done'||updateJob&&!upd.available&&updMode?esc(updateJob.message||updateJob.state):upd.available?`检测到新版本 v${esc(upd.latestVersion)} · 当前 v${esc(upd.currentVersion)}`:updMode==='dev'&&upd.latestVersion?`最新正式版 v${esc(upd.latestVersion)} · 当前开发版 v${esc(upd.currentVersion)}`:upd.checkedAt&&upd.latestVersion?`当前为最新版本 v${esc(upd.currentVersion)}`:upd.checkedAt?'暂时无法确认最新版本':'尚未检查新版';
-  const updHint=updMode==='managed'?'只安装检测到的稳定版本：等所有群空闲、记录结清后装到单独的目录，再切换后台服务；新版本没在 90 秒内连上全部群会自动换回。旧版本保留用于回滚，不提权，不在群里播报。'
+  const updHint=updMode==='managed'?'只安装检测到的稳定版本：等所有群空闲、记录结清后装到单独的目录，再切换后台服务；新版本没在 90 秒内连上全部群会自动换回。旧版本保留用于回滚，不提权。'
     :updMode==='foreground'?'前台运行不能在控制台升级：在运行 SintBot 的终端按 Ctrl-C 等待退出，重新运行一行安装命令 curl -fsSL https://sintbot.com/install.sh | bash，再用原来的启动命令启动。'
     :updMode==='dev'?'开发版不在控制台升级，请用部署脚本。':'只安装检测到的稳定版本;所有群任务与队列清空后才会安装。需要可写的全局安装目录,不会提权;后台服务会自动重启,前台运行需手动重启。';
   const updateCard=`<div class="card" style="grid-column:1/-1" id="updateCard"><div class="lbl">软件更新</div>
@@ -4276,7 +4302,7 @@ updateThemeBtn();
 const I18N_EN=[
   ["需要处理", "Needs attention"],
   ["当前可用操作", "Available controls"],
-  ["当前支持多群消息、流式卡片回复、忙时跟进、停止任务、空闲群开新会话、状态查看、认证管理、绑定新群、空闲群的模型（Codex / Claude Code）和项目目录切换、模型的添加与设置，以及后台运行时的软件升级。解除绑定、移除模型、控制台插话、定时任务、生图、画布与预览暂不可用。", "Available: group messages, streaming reply cards, busy-turn followups, stopping tasks, new sessions for idle groups, live status, authentication, binding new groups, switching the model (Codex / Claude Code) or project of an idle group, adding and configuring models, and software upgrades in a background run. Unbinding, removing models, console messages, schedules, image generation, canvas and previews are unavailable."],
+  ["当前支持多群消息、流式卡片回复、忙时跟进、停止任务、空闲群开新会话、空闲群的控制台插话（这句话和回复都进群）、状态查看、认证管理、绑定新群、空闲群的模型（Codex / Claude Code）和项目目录切换、模型的添加与设置，以及后台运行时的软件升级。群忙时的插话、静默插话、解除绑定、移除模型、定时任务、生图、画布与预览暂不可用。", "Available: group messages, streaming reply cards, busy-turn followups, stopping tasks, new sessions for idle groups, console messages to idle groups (the line and the reply both appear in the group), live status, authentication, binding new groups, switching the model (Codex / Claude Code) or project of an idle group, adding and configuring models, and software upgrades in a background run. Console messages to busy groups, silent console messages, unbinding, removing models, schedules, image generation, canvas and previews are unavailable."],
   ["可绑定新群，修改模型、项目目录、权限、数据输出和忙时跟进；该群须没有进行中的任务和未结记录。切模型或项目会开始新的一段对话。停止任务和开新会话在「概览」，开新会话须等该群空闲。群里发 /model 也能切换模型。", "Bind new groups and change the model, project folder, permissions, data display and busy-turn followups of a group with no running task or unsettled record. Changing the model or project starts a new conversation. Stop tasks and start new sessions in Overview; a new session needs the group to be idle. Members can also switch models with /model in the group."],
   ["当前支持飞书文字消息、忙时跟进、任务回复和停止。定时任务、生图、群消息管理、画布与预览暂未接入。", "Feishu text messages, busy-turn followups, task replies and stopping are supported. Schedules, image generation, group message management, canvas and previews are unavailable."],
   ["当前不执行定时任务；已有定义仅供查看。", "Schedules are not executed. Existing definitions are shown for reference only."],
@@ -4285,7 +4311,7 @@ const I18N_EN=[
   ["已暂停：不接收本群新消息，配置与会话保留。", "Paused: no new group messages are accepted; configuration and sessions are retained."],
   ["恢复本群：重新接收本群消息，配置与会话保留。", "Resume this group: its messages are accepted again; configuration and sessions are retained."],
   ["恢复", "Resume"],
-  ["群成员的后续文字消息可加入当前任务；只有确认消息已进入模型后才算送达。控制台插话和定时任务暂不可用。", "Followup text messages from group members can join the current task. Delivery is confirmed only when the model receives the message. Console messages and schedules are unavailable."],
+  ["群成员的后续文字消息可加入当前任务；只有确认消息已进入模型后才算送达。控制台插话只在群空闲时可用，不加入当前任务；定时任务暂不可用。", "Followup text messages from group members can join the current task. Delivery is confirmed only when the model receives the message. Console messages work only while the group is idle and never join the current task; schedules are unavailable."],
   ["当前版本未接入预览服务。", "Preview services are unavailable in this version."],
   ["当前可查看模型配置与登录状态；各群的模型在「群·项目」里切换。添加或修改模型暂不可用。", "Model configuration and login status are shown here. Switch each group's model under Groups. Adding or changing models is unavailable."],
   ["可添加模型，修改型号、端点、密钥、思考深度与推理强度，测试、隐藏或拖动排序；各群的模型在「群·项目」里切换。改型号、后端或端点时，用它的群须空闲，并会开始新的一段对话；默认模型和群正在用的模型不能隐藏。移除模型暂不可用。", "Add models; change their model id, endpoint, key, thinking depth and reasoning effort; test, hide or drag to reorder them. Switch each group's model under Groups. Changing a model id, backend or endpoint needs the groups using it to be idle and starts a new conversation for them. The default model and models in use by a group cannot be hidden. Removing models is unavailable."],
@@ -4973,6 +4999,17 @@ const I18N_EN=[
   ["什么都不会出现","shows nothing at all"],
   [",连出错也不会说 —— 状态去「实时活动」看。",", not even errors — check the status under \"Live activity\"."],
   ["插入中…","Inserting…"],
+  ["当前版本的插话:这句话(标着「管理员」)和它做完的回复都会发进群;静默插话、不回复的插话和群忙时的插话暂不支持。","In this version a console message always posts the line (marked \"admin\") and its reply to the group; silent messages, messages without a reply and messages to a busy group are unavailable."],
+  ["该群有任务进行中,当前版本的插话不排队也不加入当前任务,等它结束再插。","This group has a task in progress. In this version a console message neither queues nor joins the current task; send it once the task ends."],
+  ["该群上一个任务结果不明,已暂停处理、等待人工确认;现在不能插话。","The outcome of this group's last task is unknown; the group is paused for operator review, so console messages are unavailable."],
+  ["正在升级,现在不能插话,请一分钟后再试。","An upgrade is in progress; try the console message again in a minute."],
+  ["这个群项目已暂停,先恢复再插话。","This group project is paused; resume it before sending a console message."],
+  ["服务正在启动或停止,或该群当前未开放;现在不能插话。","The service is starting or stopping, or this group is not open right now; console messages are unavailable."],
+  ["暂不能插","Unavailable"],
+  ["待人工确认","Awaiting operator review"],
+  ["当前版本固定:这句话和回复都发进群","Fixed in this version: the line and the reply both go to the group"],
+  ["这次提交已经插入过,没有重复处理","This submission was already delivered; it was not processed again"],
+  ["向这个群插一句 —— 当前版本只在该群空闲时可用;这句话和回复都会发进群","Interject in this group — in this version only while the group is idle; the line and the reply both go to the group"],
   ["已插入 · 群里能看到这句话和回复","Interjected · the group can see this line and the reply"],
   ["已插入 · 群里只看到这句话","Interjected · the group sees only this line"],
   ["已插入 · 群里只会出现回复","Interjected · only the reply shows up in the group"],
@@ -5023,7 +5060,7 @@ const I18N_EN=[
   ["版本检查完成","Version check complete"],
   ["暂时无法确认最新版本","The latest version could not be confirmed yet"],
   ["升级已排队，所有群空闲后开始","Upgrade queued; it starts when every group is idle"],
-  ["只安装检测到的稳定版本：等所有群空闲、记录结清后装到单独的目录，再切换后台服务；新版本没在 90 秒内连上全部群会自动换回。旧版本保留用于回滚，不提权，不在群里播报。","Installs only the detected stable version: once every group is idle and settled, it goes into its own folder and the background service switches to it; if the new version does not connect every group within 90 seconds, the previous one is restored. The previous version is kept for rollback. No elevated privileges and no group announcements."],
+  ["只安装检测到的稳定版本：等所有群空闲、记录结清后装到单独的目录，再切换后台服务；新版本没在 90 秒内连上全部群会自动换回。旧版本保留用于回滚，不提权。","Installs only the detected stable version: once every group is idle and settled, it goes into its own folder and the background service switches to it; if the new version does not connect every group within 90 seconds, the previous one is restored. The previous version is kept for rollback. No elevated privileges."],
   ["前台运行不能在控制台升级：在运行 SintBot 的终端按 Ctrl-C 等待退出，重新运行一行安装命令 curl -fsSL https://sintbot.com/install.sh | bash，再用原来的启动命令启动。","A foreground run cannot upgrade from the console: press Ctrl-C in the terminal running SintBot and wait for it to exit, rerun the one-line installer curl -fsSL https://sintbot.com/install.sh | bash, then start with your usual command."],
   ["开发版不在控制台升级，请用部署脚本。","Development builds are not upgraded from the console; use the deployment scripts."],
   ["查看进度","View progress"],
@@ -5906,7 +5943,7 @@ async function fetchCodexModels(){if(CX_MODELS)return CX_MODELS;try{CX_MODELS=aw
 function cxDefEffortLabel(model){const m=CX_MODELS&&(CX_MODELS.models||[]).find(x=>x.model===model);return '默认'+(m&&m.defEffort?'('+m.defEffort+')':'');}
 /* 有 codex provider 时启动即预热模型列表(server 缓存 10min)→ 卡片默认档标注补齐 + 面板秒开 */
 function warmCodexModels(){if(!CX_MODELS&&S&&(S.providers||[]).some(x=>x.runner==='codex'&&!x.hidden))fetchCodexModels().then(()=>renderProviders());}
-const RUNTIME_DISABLED_SELECTORS='[data-osay],.gpv,[data-rm],[data-gcfg],[data-cronnew],[data-cronadd],[data-crontgl],[data-cronrm],[data-reposave],[data-repotest],[data-iconuse],[data-iconsys],[data-iconstyle],[data-stylecollect],#mNewChat,#amDel,#mNewGo,#pgSend,#pgNew,#fSave,#slSave,#wSave,#bSave,#styleNew,[data-styleedit],[data-styledup],[data-styledel],#nsSave,#nsExtract,#clSave,[data-pvstop],[data-lvkill],[data-lvkillall]';
+const RUNTIME_DISABLED_SELECTORS='.gpv,[data-rm],[data-gcfg],[data-cronnew],[data-cronadd],[data-crontgl],[data-cronrm],[data-reposave],[data-repotest],[data-iconuse],[data-iconsys],[data-iconstyle],[data-stylecollect],#mNewChat,#amDel,#mNewGo,#pgSend,#pgNew,#fSave,#slSave,#wSave,#bSave,#styleNew,[data-styleedit],[data-styledup],[data-styledel],#nsSave,#nsExtract,#clSave,[data-pvstop],[data-lvkill],[data-lvkillall]';
 // 持久处理流程按服务端白名单放行:前端照同一份名单判断某个动作能不能做,而不是一刀切。
 function runtimeAllows(method,path){
   const caps=S&&S.runtimeCapabilities;if(!caps)return true;
@@ -5932,6 +5969,8 @@ function applyRuntimeCapabilities(){
   if(!S||!S.runtimeCapabilities)return;
   if(banner){const body=banner.querySelector('[data-runtime-summary]'),text=trText(RUNTIME_UI_TEXT.summary);if(body&&body.textContent!==text)body.textContent=text;}
   document.querySelectorAll(RUNTIME_DISABLED_SELECTORS).forEach(el=>disableRuntimeControl(el,RUNTIME_UI_TEXT.unavailable));
+  // 插话照服务端白名单放行(第 1 版只接空闲群,忙不忙在浮层里按实时状态说)
+  if(!runtimeAllows('POST','/api/groups/say'))document.querySelectorAll('[data-osay]').forEach(el=>disableRuntimeControl(el,RUNTIME_UI_TEXT.unavailable));
   if(!runtimeAllows('POST','/api/providers/order'))document.querySelectorAll('#pgrid .drag').forEach(el=>{el.draggable=false;el.title=trText(RUNTIME_UI_TEXT.unavailable);});
 }
 document.addEventListener('click',event=>{

@@ -1109,8 +1109,25 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         // 说不清就别说成功:与 issues 那条 canNotify 同一条纪律 —— 「让人以为已经插进去了」
         // 比直接报错更糟,因为他会等一个永远不来的回应。
         if (!r.ok) {
-          const why = { 'no-daemon': '守护进程没在跑(纯配置模式)—— 插话需要它在线', paused: '这个群项目已暂停,先恢复再插话', unbound: '没有这个群项目', 'inject-failed': '注入失败(守护进程侧报错,看日志)' }[r.reason] || '插话失败'
-          return sendJSON(res, 409, { error: why })
+          const why = { 'no-daemon': '守护进程没在跑(纯配置模式)—— 插话需要它在线', paused: '这个群项目已暂停,先恢复再插话', unbound: '没有这个群项目', 'inject-failed': '注入失败(守护进程侧报错,看日志)',
+            // 持久处理流程(第 1 版插话)的拒绝原因。shown-failed 之前的几条在发群消息之前就拒,群里没有任何字;
+            // 从 shown-failed 起,群里可能已经有那行「【管理员】…」
+            busy: '该群有任务进行中,当前版本的插话不排队也不加入当前任务,等它结束再插',
+            held: '该群上一个任务结果不明,已暂停处理、等待人工确认;插话未执行',
+            recovering: '该群上一个任务出错,正在收尾;插话未执行,请稍后再试',
+            upgrading: '正在升级,插话未执行,请一分钟后再试',
+            'not-serving': '服务正在启动或停止,或该群当前未开放;插话未执行',
+            'silent-unsupported': '当前版本的插话必须把这句话发进群(勾选「插话」);静默插话暂不支持',
+            'quiet-unsupported': '当前版本的插话必须让回复进群(勾选「回复」);群里无痕的插话暂不支持',
+            command: '插话不执行群命令;停止任务、开新会话请用概览里的按钮',
+            'request-id': '这次提交缺少有效的提交编号,请刷新控制台后再试',
+            empty: '内容不能为空',
+            'shown-failed': '群里那行「【管理员】…」没能确认发出(失败或超时),插话未执行;即使群里随后出现这行,它也不会被处理',
+            'busy-after-post': '这行字发进群时该群刚好开始了别的任务,这句没有处理;等它结束后原样再点一次插入,会沿用群里已有的那行',
+            refused: '该群拒收了这句(原因已回复在群里那行下面);插话未执行',
+            quarantined: '这句的来源已被隔离,未执行',
+            unconfirmed: '这行字已发进群,但没在 5 秒内确认登记,结果以群里和「实时活动」为准;原样再点一次插入不会重复处理' }[r.reason] || '插话失败'
+          return sendJSON(res, 409, { error: why, reason: r.reason || null })
         }
         return sendJSON(res, 200, Object.assign(await buildState(), { sayInjected: { chatId, show: visible, reply: wantReply, where } }))
       }

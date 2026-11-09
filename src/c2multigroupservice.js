@@ -39,7 +39,7 @@ function createC2MultiGroupService({ routes, assertWriterLock,
   createTransport, createBinding, onFatal = () => {}, closeCapacity = () => {},
   quarantine = null, stopTimeoutMs = 2_000, drainTimeoutMs = 12_000,
   createRecoveryAuthority = null, holds = new Map(), sharedFault = () => null,
-  now = Date.now, log = () => {} } = {}) {
+  ingressWaitMs = 60_000, now = Date.now, log = () => {} } = {}) {
   if (!Array.isArray(routes) || !routes.length ||
       new Set(routes.map(route => route.chatId)).size !== routes.length ||
       routes.some(route => !route || typeof route.chatId !== 'string' ||
@@ -52,7 +52,8 @@ function createC2MultiGroupService({ routes, assertWriterLock,
       [...holds.keys()].some(chatId => !routes.some(route => route.chatId === chatId)) ||
       createRecoveryAuthority !== null && typeof createRecoveryAuthority !== 'function' ||
       !Number.isSafeInteger(stopTimeoutMs) || stopTimeoutMs < 1 ||
-      !Number.isSafeInteger(drainTimeoutMs) || drainTimeoutMs < 1) {
+      !Number.isSafeInteger(drainTimeoutMs) || drainTimeoutMs < 1 ||
+      !Number.isSafeInteger(ingressWaitMs) || ingressWaitMs < 1) {
     throw new TypeError('C2 multi-group service needs explicit routes and controls')
   }
   const configured = new Map(routes.map(route => [route.chatId, route]))
@@ -248,7 +249,75 @@ function createC2MultiGroupService({ routes, assertWriterLock,
     opening.then(() => activating.delete(route.chatId), () => activating.delete(route.chatId))
     return opening
   }
+  // A reply or card operation awaiting its platform response blocks the
+  // durable authority only for that moment: blocked, but not closed.
+  const closedForGood = runtime => (runtime?.closed ?? runtime?.blocked) === true
+  const effectInFlight = runtime => runtime?.blocked === true && runtime?.closed === false
+  // Per-group ingress order. The platform runs every inbound event on its own
+  // listener and does not await this route, so messages of one group can reach
+  // it concurrently. A message that finds its group blocked only by an
+  // in-flight effect waits for that effect (polling, bounded) instead of being
+  // refused, and every later message of that group queues behind it in arrival
+  // order until it has been handed to admission or answered. Other groups
+  // never wait, and a group with nothing waiting takes the direct path.
+  // chatId -> { tail, waiting: msgId -> count, recalled: Set of msgId }
+  const INGRESS_POLL_MS = 25
+  const AWAIT_EFFECT = Symbol('await in-flight effect')
+  const ingress = new Map()
+  const pause = () => new Promise(resolve => setTimeout(resolve, INGRESS_POLL_MS))
   function routeMessage(msg, sourceAdapter) {
+    if (!ingress.has(msg?.chatId)) {
+      const outcome = admitMessage(msg, sourceAdapter, false)
+      if (outcome !== AWAIT_EFFECT) return outcome
+      return queueMessage(msg, sourceAdapter, true)
+    }
+    return queueMessage(msg, sourceAdapter, false)
+  }
+  function queueMessage(msg, sourceAdapter, evaluated) {
+    const { chatId, msgId } = msg
+    // The bound counts from arrival, including time spent behind earlier messages.
+    const deadline = performance.now() + ingressWaitMs
+    let lane = ingress.get(chatId)
+    if (!lane) {
+      lane = { tail: Promise.resolve(), waiting: new Map(), recalled: new Set() }
+      ingress.set(chatId, lane)
+    }
+    lane.waiting.set(msgId, (lane.waiting.get(msgId) || 0) + 1)
+    let release
+    const turn = new Promise(resolve => { release = resolve })
+    const prior = lane.tail
+    lane.tail = turn
+    const admitted = (async () => {
+      try {
+        await prior
+        // A box, so the next message does not wait for this one's turn to end.
+        return await awaitAdmission(msg, sourceAdapter, lane, evaluated, deadline)
+      } finally {
+        const left = lane.waiting.get(msgId) - 1
+        if (left > 0) lane.waiting.set(msgId, left)
+        else lane.waiting.delete(msgId)
+        if (lane.tail === turn && ingress.get(chatId) === lane) ingress.delete(chatId)
+        release()
+      }
+    })()
+    return admitted.then(box => box.outcome)
+  }
+  async function awaitAdmission(msg, sourceAdapter, lane, evaluated, deadline) {
+    if (evaluated) await pause()
+    for (;;) {
+      // Never admitted, so no receipt exists: a stop or a recall meanwhile
+      // only drops this message and is no fault.
+      if (!started || stopPromise) return { outcome: { ignored: true, reason: 'ingress-closed' } }
+      if (lane.recalled.has(msg.msgId)) {
+        log(`group ${msg.chatId}: message recalled before admission`)
+        return { outcome: { ignored: true, reason: 'recalled-before-admission' } }
+      }
+      const outcome = admitMessage(msg, sourceAdapter, performance.now() >= deadline)
+      if (outcome !== AWAIT_EFFECT) return { outcome }
+      await pause()
+    }
+  }
+  function admitMessage(msg, sourceAdapter, expired) {
     const route = configured.get(msg?.chatId)
     if (route && route.paused !== true && suspended.has(msg.chatId)) {
       // A held group admits nothing; a replay of a sealed source stays silent.
@@ -275,6 +344,13 @@ function createC2MultiGroupService({ routes, assertWriterLock,
         throw new Error('C2 group ingress authority closed')
       }
       if (binding.gate.blocked) {
+        if (effectInFlight(binding.runtime)) {
+          if (!expired) return AWAIT_EFFECT
+          // Still not settled after the bound: refuse as before, no fault.
+          log(`group ${msg.chatId}: message refused; an outbound effect stayed in flight`)
+          return answerC2InputRejection({ error: rejectC2Input('C2 group effect in flight',
+            { reason: 'effect-in-flight', notice: RECOVERING_NOTICE }), msg, platform: sourceAdapter, log })
+        }
         // A turn still running under a closed authority delivers its own
         // rejection; until then this message, which has no receipt, is
         // refused. An idle closed group is closed as its own fault here.
@@ -333,12 +409,17 @@ function createC2MultiGroupService({ routes, assertWriterLock,
   // wait never rejects.
   const RECALL_WAIT_MS = 60_000
   const RECALL_POLL_MS = 25
-  const closedForGood = runtime => (runtime?.closed ?? runtime?.blocked) === true
-  const effectInFlight = runtime => runtime?.blocked === true && runtime?.closed === false
   function recall(event, waitedMs = 0) {
     if (suspended.has(event?.chatId)) return { ignored: true, reason: 'group-held' }
     if (maintenance) return { ignored: true, reason: 'upgrading' }
     if (!allowed(event?.chatId)) return { ignored: true }
+    // A message still waiting for admission has no receipt yet; it is
+    // dropped there instead of being admitted after its own recall.
+    const lane = ingress.get(event.chatId)
+    if (lane?.waiting.has(event.msgId)) {
+      lane.recalled.add(event.msgId)
+      return { handled: true }
+    }
     let binding
     try {
       held()
@@ -450,6 +531,9 @@ function createC2MultiGroupService({ routes, assertWriterLock,
   }
   return { start, stop, routeMessage, addRoute, heldGroups, beginMaintenance, endMaintenance,
     get inMaintenance() { return maintenance },
+    // True only while the transport serves: the console may inject then and
+    // never during startup or a stop, when routing would close the service.
+    get serving() { return started && !starting && !stopPromise && !failed },
     get bindings() { return new Map(bindings) },
     get held() { return new Map([...suspended].map(([chatId, entry]) =>
       [chatId, { reason: entry.reason, source: entry.source, since: entry.since }])) } }

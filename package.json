@@ -1,6 +1,6 @@
 {
   "name": "sintbot",
-  "version": "1.4.7",
+  "version": "1.4.8",
   "private": false,
   "description": "Drive your Mac projects from Feishu groups with Codex or Claude Code, using a built-in agent core.",
   "bin": {
@@ -67,6 +67,7 @@
     "src/c2upgradeswitch.js",
     "src/cdp.js",
     "src/config.js",
+    "src/consolesay.js",
     "src/core/c2cardeffectbridge.js",
     "src/core/c2cardterminalpath.js",
     "src/core/c2durableingress.js",
@@ -84,6 +85,7 @@
     "src/core/c2runnerinput.js",
     "src/core/c2servicestartgate.js",
     "src/core/c2sessionbridge.js",
+    "src/core/c2sourceidentity.js",
     "src/core/c2sourcequarantine.js",
     "src/core/c2startuprecovery.js",
     "src/core/c2successorbridge.js",
@@ -107,11 +109,14 @@
     "src/core/v2engine.js",
     "src/core/verify.js",
     "src/design.js",
+    "src/feishucli.js",
     "src/gitrepo.js",
     "src/leftover.js",
     "src/platform/board.js",
     "src/platform/feishu.js",
     "src/platform/multi.js",
+    "src/platform/noticecard.js",
+    "src/platform/noticesend.js",
     "src/platform/slack.js",
     "src/platform/wecom.js",
     "src/platform/wecomcli.js",
@@ -133,6 +138,8 @@
     "src/ui/sessions.js",
     "src/ui/takeover.js",
     "src/updater.js",
+    "src/upgrade.js",
+    "src/upgradeannounce.js",
     "src/usage.js"
   ],
   "scripts": {

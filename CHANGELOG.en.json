@@ -1,5 +1,28 @@
 [
   {
+    "version": "1.4.8",
+    "date": "2026-11-10",
+    "name": "Console interjections, upgrade notices, group messaging skills",
+    "items": [
+      {
+        "t": "Fix: a message sent while the previous reply was still being delivered was refused with \"wrapping up, please resend\"",
+        "d": "A message arriving at the moment a reply, card or the stop confirmation was still on its way to Feishu used to be refused. It now waits for that delivery and is handled in arrival order; a message sent right after /stop is answered normally."
+      },
+      {
+        "t": "New: the console can post a line into an idle group",
+        "d": "A line written in the console is posted to the group as the administrator and handled as an ordinary group message, with the reply in the group. A busy, held or upgrading group is refused with the reason; resubmitting the same line is not processed twice."
+      },
+      {
+        "t": "New: a version notice card in each group after an upgrade",
+        "d": "On the first start after an upgrade, each serving group receives one card listing what changed. Not sent on a first install or a downgrade; can be turned off in the console."
+      },
+      {
+        "t": "New: the agent in a group can send messages, notice cards and files, read history, reply, edit and recall",
+        "d": "The agent gains group skills: send messages, notice cards, files and images, read the group history, reply to, edit and recall its own messages, download group files and add reactions."
+      }
+    ]
+  },
+  {
     "version": "1.4.7",
     "date": "2026-11-09",
     "name": "/stop no longer pauses the group",

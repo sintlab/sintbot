@@ -273,6 +273,8 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
         endMaintenance: () => service.endMaintenance(), expectedGroups: () => service.bindings.size,
         registries: c2updates.registriesFromEnv(),
         fetchImpl: require('../src/core/proxy').getProxyFetch() || globalThis.fetch,
+        // The same store as the startup announcement below.
+        setAnnouncementBaseline: version => store.setLastVersion(version),
         autoCheck: uiEnabled, log: message => process.stderr.write(`C2 update · ${message}\n`) })
     }
     const stop = reason => { void service.stop(reason, 0).then(finish) }
@@ -286,6 +288,11 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
         getConfig: () => cfg, getBindings: () => service.bindings,
         getHeld: () => service.held, getCapacity: () => capacity.snapshot(),
         getConnHealth: () => liveTransport?.platform.connHealth?.() || {},
+        // Console injection enters through the same ingress as a group
+        // message, posted and answered with that group's own adapter.
+        getPlatform: chatId => liveTransport?.platform.forChat(chatId) || null,
+        routeMessage: (msg, adapter) => service.routeMessage(msg, adapter),
+        isServing: () => service.serving, isFrozen: () => service.inMaintenance,
         assertWriterLock, ...configControl, updater,
         log: message => process.stderr.write(`Console · ${message}\n`) })
       await new Promise((resolve, reject) => {
@@ -304,6 +311,19 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
     process.stderr.write(`SintBot Feishu ingress connected for ${started.groups} groups\n`)
     for (const item of started.held || []) {
       process.stderr.write(`SintBot group ${item.chatId} is held: ${item.reason}\n`)
+    }
+    // Groups hear about a version change once, as a notice card. A console
+    // upgrade to this version that cannot connect every group is rolled back
+    // by the switch process, so that start announces nothing and leaves the
+    // baseline as it was.
+    const version = require('../package.json').version
+    const switchJob = started.held?.length ? updater?.status().job : null
+    if (!(switchJob?.state === 'switching' && switchJob.to === version)) {
+      const announce = require('../src/upgradeannounce')
+      announce.announceUpgradeOnStart({ store, cfg, platform: liveTransport?.platform,
+        changelog: announce.readChangelog(), currentVersion: version,
+        heldGroups: (started.held || []).map(item => item.chatId),
+        log: message => process.stderr.write(`SintBot · ${message}\n`) })
     }
     // A console upgrade that switched to this version is done once every
     // group is connected; then the daily version check starts.
@@ -353,6 +373,7 @@ Usage:
   sintbot init [--config <absolute path>] [--data-dir <absolute path>]
   sintbot start [--config <absolute path>] [--data-dir <absolute path>] [--preflight] [--ui] [--ui-host <address>] [--ui-port <port>] [--no-open]
   sintbot incident seal --group <oc_…> [--config <absolute path>] [--data-dir <absolute path>] [--reason <text>]
+  sintbot feishu <action> [arguments…] [--chat <oc_…>] [--config <path>]
   sintbot version
   sintbot help
 
@@ -360,6 +381,8 @@ Supports explicit Feishu groups using Codex or Claude Code. Start runs in the fo
 Initialization is for a new installation only; existing journals are never reset.
 Console shows live groups, binds groups and switches models or projects of idle groups;
 in a group, /model lists or switches models. Unsupported actions stay disabled.
+feishu sends to a group without the service (send-msg · send-notice · send-file · send-image ·
+history · reply · edit · recall · download · react); sintbot feishu --help lists the arguments.
 Canvas, scheduled tasks, terminal chat and other platforms are unavailable.
 A group whose last result cannot be proven is held alone; the other groups keep serving.
 Restart first: a journal that can recover reopens on its own. If the group is still held,
@@ -387,10 +410,22 @@ async function main(argv = process.argv.slice(2)) {
     process.exitCode = outcome === 'done' ? 0 : 1
     return
   }
-  if (!['init', 'start', 'incident'].includes(sub)) {
+  if (!['init', 'start', 'incident', 'feishu'].includes(sub)) {
     throw new Error(`${sub} is unavailable in this release; use sintbot help`)
   }
   if (process.platform !== 'darwin') throw new Error('this release supports macOS only')
+  if (sub === 'feishu') {
+    // The agent's group skills. Each call uses the app credentials directly;
+    // the service need not run. Text after the action may itself start with
+    // '-', so only the first two positions can ask for help.
+    const feishuCli = require('../src/feishucli')
+    if (rest.slice(0, 2).some(arg => arg === '--help' || arg === '-h')) {
+      process.stdout.write(feishuCli.feishuUsage('sintbot'))
+      return
+    }
+    await feishuCli.runFeishuAction(rest)
+    return
+  }
   if (sub === 'incident') {
     const [action, ...args] = rest
     if (rest.some(arg => arg === '--help' || arg === '-h')) { process.stdout.write(HELP); return }

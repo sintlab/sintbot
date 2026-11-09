@@ -2,11 +2,13 @@
 // this class owns process-local payloads, runner handles and platform I/O.
 // No legacy Engine, retry/failover scheduler or v1 reducer is loaded here.
 'use strict'
+const fs = require('node:fs')
+const path = require('node:path')
 const { randomBytes } = require('node:crypto')
 const { isDeepStrictEqual } = require('node:util')
 const { redact } = require('./redact')
 const { fmtStamp, normalizeTz } = require('./time')
-const { settleUsage, manifestPolicy, manifestHeader, manifestContext,
+const { settleUsage, manifestPolicy, manifestHeader, manifestContext, manifestFeatures, manifestSkills,
   systemAppendix, turnPrompt, engineTerminalStep, engineQueueStep } = require('../agent/privatecore')
 const { taskId } = require('./enginecheckpoint')
 const { prepareCardTerminalPath } = require('./c2cardterminalpath')
@@ -171,6 +173,39 @@ function v2QueueSelection(queue) {
   if (jobs.some(job => !job)) throw new Error('binary selected unknown queue handle')
   return { jobs, anchor: effect.anchor.slice('receipt:job:'.length) }
 }
+
+// The group skills the release entry serves through `sbot feishu` (the same
+// executable as `sintbot`): messages, notice cards, history, reply, edit,
+// recall, download and reactions. Canvas, image generation and takeover cards
+// are not in this release, and neither are scheduled tasks, so the cron
+// section the core renders after the skills is cut off.
+function releaseSkillLines(platform) {
+  const features = manifestFeatures({ ...(platform?.features || {}),
+    boards: false, imagen: false, takeoverCard: false })
+  const lines = manifestSkills({ features,
+    platformName: String(platform?.chatLabel || '飞书群').replace(/群$/, '') })
+  const cron = lines.findIndex(line => line.startsWith('【定时任务】'))
+  return cron < 0 ? lines : lines.slice(0, cron)
+}
+
+// The group skills call `sbot feishu`. A machine can carry another `sbot` on
+// PATH (an older global install), so a turn puts first the bin directory whose
+// `sbot` is this very entry: an npm global prefix's bin next to
+// lib/node_modules/sintbot. Nothing is changed when no such directory exists
+// (a source checkout, tests).
+let releaseBin
+function releaseBinDir(entry = path.join(__dirname, '..', '..', 'bin', 'sintbot-v2.js')) {
+  if (releaseBin !== undefined && arguments.length === 0) return releaseBin
+  let found = null
+  try {
+    const self = fs.realpathSync(entry)
+    const dir = path.resolve(path.dirname(self), '..', '..', '..', '..', 'bin')
+    if (fs.realpathSync(path.join(dir, 'sbot')) === self) found = dir
+  } catch {}
+  if (arguments.length === 0) releaseBin = found
+  return found
+}
+
 class Engine {
   constructor(cfg, options = {}) {
     const { store, log = () => {}, durableV2Runtime, durableV2Payloads,
@@ -347,7 +382,9 @@ _rt(chatId) {
 
 baseSkillEnv(chatId) {
     const g = (this.cfg.groups || {})[chatId]
-    return { SBOT_CHAT_ID: chatId, ...(g && g.platform ? { SBOT_PLATFORM: g.platform } : {}), TZ: this.tz, ...(this.cfg._path ? { SBOT_CONFIG: this.cfg._path } : {}), ...(this.uiLocalUrl ? { SBOT_UI_URL: this.uiLocalUrl } : {}) }
+    const bin = releaseBinDir()
+    return { ...(bin ? { PATH: [bin, process.env.PATH].filter(Boolean).join(path.delimiter) } : {}),
+      SBOT_CHAT_ID: chatId, ...(g && g.platform ? { SBOT_PLATFORM: g.platform } : {}), TZ: this.tz, ...(this.cfg._path ? { SBOT_CONFIG: this.cfg._path } : {}), ...(this.uiLocalUrl ? { SBOT_UI_URL: this.uiLocalUrl } : {}) }
   }
 
 _resolveGroup(chatId) {
@@ -2057,6 +2094,7 @@ classifyDurableV2UnresolvedTurn({ chatId, receiptId, turnToken, effectId,
           { full: policy.full, isCodex: provider.runner === 'codex' }) : null,
         unredactedPii: group.redactPii === false,
         cardPinned: platform.features?.cardPinned === true, plainSend: false }),
+      ...releaseSkillLines(platform),
     ].join('\n')
     // Reinject current supported context each turn. No legacy feature menu,
     // external-message commands or v1 manifest refresh scheduler is included.
@@ -2146,4 +2184,4 @@ requestDurableV2Stop(chatId) {
 
 }
 
-module.exports = { Engine }
+module.exports = { releaseBinDir, Engine }

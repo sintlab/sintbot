@@ -4,6 +4,7 @@ const path = require('node:path')
 const { createUiServer } = require('./ui/serverbase')
 const { START_PATH, CALLBACK_PATH } = require('./ui/feishulogin')
 const { assertJournalScope } = require('./c2install')
+const { createDurableConsoleSay } = require('./consolesay')
 
 // A host facade over existing v2 authorities, not a second execution engine.
 // The allowlist applies after the existing console's authentication boundary.
@@ -29,6 +30,10 @@ const WRITE_PATHS = ['/api/login', '/api/logout', '/api/logout/all',
   // one-off agent run); it does not take a group concurrency slot.
   '/api/test',
   '/api/inbox/dismiss', '/api/issues/status',
+  // Console injection, first version: an idle group only, the line shown in
+  // the group and the reply delivered there. The posted line is the platform
+  // message that drives the turn (see consolesay.createDurableConsoleSay).
+  '/api/groups/say',
   // Software updates: check and ignore anywhere; install only when launchd
   // manages this exact entry (the updater refuses every other run mode).
   '/api/update/check', '/api/update/start', '/api/update/ignore']
@@ -36,10 +41,18 @@ const SUPPORTED_RUNNERS = ['claude', 'codex']
 
 function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = () => new Map(),
   assertWriterLock, validateConfig, applyConfig, beforeWrite = () => true,
-  appliedResets = () => [], now = Date.now } = {}) {
+  appliedResets = () => [], now = Date.now,
+  // Console injection reaches a group only through the service's own ingress
+  // and that group's real platform adapter. Without them it is refused.
+  getPlatform = null, routeMessage = null, isServing = () => false, isFrozen = () => false,
+  log = () => {} } = {}) {
   for (const callback of [getBindings, getCapacity, getConfig, getHeld, assertWriterLock,
-    validateConfig, applyConfig, beforeWrite, appliedResets, now]) {
+    validateConfig, applyConfig, beforeWrite, appliedResets, now, isServing, isFrozen, log]) {
     if (typeof callback !== 'function') throw new TypeError('C2 console needs live authority and configuration hooks')
+  }
+  if ((getPlatform === null) !== (routeMessage === null) ||
+      getPlatform !== null && (typeof getPlatform !== 'function' || typeof routeMessage !== 'function')) {
+    throw new TypeError('C2 console injection needs both the group platform and the service ingress')
   }
   if ([validateConfig, applyConfig, beforeWrite].some(callback => callback.constructor?.name === 'AsyncFunction')) {
     throw new TypeError('C2 console configuration hooks must be synchronous')
@@ -47,7 +60,7 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
   const startedAt = now()
   const capabilities = Object.freeze({ mode: 'durable-v2',
     reason: '此操作尚未接入当前版本的持久处理流程，未执行。',
-    summary: '实时状态、认证管理、停止任务、空闲群开新会话、绑定新群、空闲群的模型切换（Codex / Claude Code）和项目目录修改、模型的添加与设置，以及后台运行时的软件升级已接入；该群有任务或未结记录时不能修改，也不能开新会话；改模型的型号、后端或端点时，用它的群须空闲，并会开始新的一段对话。解除绑定、移除模型、控制台插话、定时任务和画布暂不可用。',
+    summary: '实时状态、认证管理、停止任务、空闲群开新会话、空闲群的控制台插话、绑定新群、空闲群的模型切换（Codex / Claude Code）和项目目录修改、模型的添加与设置，以及后台运行时的软件升级已接入；该群有任务或未结记录时不能修改，也不能开新会话或插话；改模型的型号、后端或端点时，用它的群须空闲，并会开始新的一段对话。插话会把这句话（标着「管理员」）和回复都发进群，群忙时不排队、也不加入当前任务；静默插话和不回复的插话暂不支持。解除绑定、移除模型、定时任务和画布暂不可用。',
     allowed: { GET: READ_PATHS, POST: WRITE_PATHS } })
   function held() {
     if (assertWriterLock() !== true) throw new Error('服务写入权限已失效，操作未执行')
@@ -84,6 +97,32 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
     binding.engine.store.resetSessionAndStats(chatId)
     return true
   }
+  // Console injection, first version: an open, idle group only. Checked
+  // before the line is posted, so a refused group shows nothing, and again
+  // right after; the service ingress remains the final authority.
+  function sayGate(chatId) {
+    let locked = false
+    try { locked = assertWriterLock() === true } catch {}
+    if (!locked || isServing() !== true) return 'not-serving'
+    if (getConfig().groups?.[chatId]?.paused) return 'paused'
+    if (getHeld().has(chatId)) return 'held'
+    if (isFrozen() === true) return 'upgrading'
+    const binding = bindings().get(chatId)
+    if (!binding || binding.runtime?.closed === true) return 'not-serving'
+    const rt = binding.engine?.rts?.get(chatId)
+    if (groupBusy(chatId, binding) || rt?.v2RunningJobs || rt?.v2StopControl || rt?.v2SkipWaiter ||
+        binding.journal?.snapshot()?.state?.lanes?.stopIntent?.[chatId]) return 'busy'
+    return null
+  }
+  function receiptState(chatId, receiptId) {
+    const receipts = bindings().get(chatId)?.journal?.snapshot()?.receipts
+    if (receipts?.pending?.some(item => item.id === receiptId)) return 'pending'
+    if (receipts?.completed?.some(item => item.id === receiptId)) return 'completed'
+    return null
+  }
+  const say = getPlatform ? createDurableConsoleSay({ getPlatform,
+    getGroup: chatId => getConfig().groups?.[chatId] || null,
+    gate: sayGate, route: routeMessage, receiptState, log, now }) : null
   function getLiveState() {
     const cfg = getConfig()
     const capacity = getCapacity()
@@ -107,6 +146,8 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
         waitingForCapacity: !!rt?.v2AdmissionPending,
         sinceMs: rt?.v2StartedAt ? Math.max(0, now() - rt.v2StartedAt) : 0,
         sessionId: binding?.engine?.store?.getSession(chatId) || '',
+        // Why a console injection would be refused right now (null = accepted).
+        sayBlocked: say ? sayGate(chatId) : 'not-serving',
         // A held group needs the operator: its last result is unknown.
         ...(hold ? { held: true, heldReason: hold.reason, heldSinceMs: Math.max(0, now() - hold.since) } : {}),
       }
@@ -168,6 +209,12 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
         return binding.engine.stop(chatId)
       },
       clearSession,
+      // Same signature as the legacy daemon's say; the result says honestly
+      // whether the line drove a turn ({ ok, where }) or why it did not.
+      say(chatId, text, shown, quiet, options) {
+        return say ? say(chatId, text, shown, quiet, options)
+          : Promise.resolve({ ok: false, reason: 'no-daemon' })
+      },
       // A durable stop settles later, so a busy group is never reset here:
       // the operator stops it first and starts the new session once idle.
       interrupt(chatId) {

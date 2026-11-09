@@ -162,10 +162,23 @@ function createC2Updater({ currentVersion, runMode, stateFile, dataDir, configPa
   installVersion = defaultInstallVersion, verifyInstall = defaultVerifyInstall,
   spawnSwitch = defaultSpawnSwitch, hashJournals = journalHashes, isAlive = alive,
   now = Date.now, waitMs = 5_000, queueTimeoutMs = QUEUE_TIMEOUT_MS,
-  checkIntervalMs = CHECK_INTERVAL_MS, autoCheck = true, log = () => {} } = {}) {
+  checkIntervalMs = CHECK_INTERVAL_MS, autoCheck = true, setAnnouncementBaseline = null,
+  log = () => {} } = {}) {
   if (typeof currentVersion !== 'string' || !runMode || typeof runMode.mode !== 'string' ||
       typeof stateFile !== 'string' || !path.isAbsolute(stateFile) || typeof gate !== 'function') {
     throw new TypeError('C2 updater needs the version, run mode, state file and idle gate')
+  }
+  if (setAnnouncementBaseline !== null && typeof setAnnouncementBaseline !== 'function') {
+    throw new TypeError('C2 updater announcement baseline must be a function')
+  }
+  // The new version announces itself in the groups on its first start; an
+  // upgrade started without announcement records the target version as the
+  // baseline first, so that start finds nothing new.
+  function baseline(version) {
+    try { setAnnouncementBaseline(version); return true } catch (error) {
+      log(`update announcement baseline: ${error?.message || String(error)}`)
+      return false
+    }
   }
   const current = stableVersion(currentVersion)
   let data = readJSON(stateFile)
@@ -205,7 +218,7 @@ function createC2Updater({ currentVersion, runMode, stateFile, dataDir, configPa
       currentVersion, latestVersion: latest, checkedAt: Number(data.checkedAt) || null,
       source: data.source || '', ignoredVersion: data.ignoredVersion || '',
       available: !!current && !!latest && compareVersion(latest, current) > 0 && data.ignoredVersion !== latest,
-      mode: runMode.mode, upgradeSupported, announceSupported: false,
+      mode: runMode.mode, upgradeSupported, announceSupported: !!setAnnouncementBaseline,
       job: data.job ? { ...data.job } : null,
     }
   }
@@ -243,7 +256,7 @@ function createC2Updater({ currentVersion, runMode, stateFile, dataDir, configPa
     return status()
   }
 
-  function startUpgrade({ version } = {}) {
+  function startUpgrade({ version, announce = true } = {}) {
     refresh()
     if (runMode.mode !== 'managed') {
       throw new Error(runMode.mode === 'dev' ? '开发版请用部署脚本升级' : '前台运行请按卡片上的步骤升级')
@@ -256,6 +269,7 @@ function createC2Updater({ currentVersion, runMode, stateFile, dataDir, configPa
     if (gate().includes('held')) throw new Error('有暂停的群，先处理后再升级')
     data.job = { id: `${now()}-${Math.random().toString(36).slice(2, 8)}`, state: 'queued',
       from: current, to: v, registry: data.registry || registries[0].registry,
+      announce: announce !== false,
       createdAt: now(), updatedAt: now(), message: '等所有群空闲、记录结清后升级' }
     persist()
     schedule(0)
@@ -300,6 +314,7 @@ function createC2Updater({ currentVersion, runMode, stateFile, dataDir, configPa
     if (settled.length) { endMaintenance(); schedule(); return status() }
     let hashes
     try { hashes = hashJournals(dataDir) } catch (error) { endMaintenance(); return fail(`无法读取群记录：${error.message}`) }
+    const silent = job.announce === false && !!setAnnouncementBaseline && baseline(job.to)
     setJob({ state: 'switching', oldEntry: runMode.entry, newEntry: entryOf(prefix), label: runMode.label,
       plist: runMode.plist, logFile: runMode.logFile, dataDir, configPath,
       expectedGroups: expectedGroups(), journals: hashes, servicePid: process.pid,
@@ -309,6 +324,8 @@ function createC2Updater({ currentVersion, runMode, stateFile, dataDir, configPa
       const pid = spawnSwitch({ entry: runMode.entry, stateFile })
       setJob({ helperPid: pid })
     } catch (error) {
+      // This version keeps running: its own start recorded it as the baseline.
+      if (silent) baseline(currentVersion)
       endMaintenance()
       return fail(`切换进程没有启动：${error.message}`)
     }

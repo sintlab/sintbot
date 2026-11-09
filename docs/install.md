@@ -1,4 +1,4 @@
-# Install SintBot 1.4.4
+# Install SintBot 1.4.5
 
 English · [简体中文](./zh-CN/install.md)
 
@@ -10,7 +10,7 @@ You need a Mac, Node.js 22 or newer, and projects stored on that Mac. Install an
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-The installer checks the environment, installs `sintbot@1.4.4` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.4`. No sudo is needed.
+The installer checks the environment, installs `sintbot@1.4.5` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.5`. No sudo is needed.
 
 To preview, append `-s -- --dry-run`. To choose another location, set `SINTBOT_INSTALL_DIR` and adjust the executable paths below.
 
@@ -90,19 +90,22 @@ Any text message is a task. Replies arrive in a card that appears once the model
 
 | Command | Effect |
 | --- | --- |
-| `/help` | List commands |
 | `/status` | Group status: model, project, busy or idle (steps and current work while busy), queue |
+| `/skip` | Cancel only the current task; queued messages run next and the conversation is kept |
+| `/stop` | Stop the current task and cancel queued ones; the conversation is kept |
+| `/new` | Start a new conversation, forgetting the previous one (only while the group is idle) |
 | `/model` | List models; `/model name` switches (only while the group is idle; starts a new conversation) |
-| `/new` | Start a new conversation (only while the group is idle) |
-| `/stop` | Stop the current task and cancel queued ones |
 | `/hud` | Quota of the current model and usage of this conversation |
 | `/issue text` | Log feedback; review and close it in the console overview |
+| `/help` | List commands, with this group's project and model |
+
+Send a command as a message of its own; except for `/issue` and `/model`, do not add other text after it. If the Feishu app also subscribes to the message-recall event (the console's setup guide recommends it), recalling your own message cancels it: a queued message is dropped, and the running task stops if that message alone started it; in Codex groups, recalling a message that was added to the running task cancels the whole task.
 
 Messages sent while a task runs are added to that task in Codex groups (`codexSteer: true`) and queued in Claude Code groups. If a turn returns a model error or no result, only that group is asked to resend; there is no automatic retry. If a group's last result cannot be confirmed, such as a reply whose delivery is unknown, only that group is paused and answers new messages with a short notice; other groups keep working. Nothing is replayed or retried.
 
 ## 6. Console
 
-With `--ui`, open `http://127.0.0.1:4600` on this Mac. The console shows each group (a paused group shows Needs attention), stops tasks, binds new groups, and switches the model or project folder of an idle group. For LAN access, set a console password in its settings first, then enable LAN access.
+With `--ui`, open `http://127.0.0.1:4600` on this Mac. The console shows each group (a paused group shows Needs attention), stops tasks, starts a new conversation for an idle group, binds new groups, switches the model or project folder of an idle group, and adds or configures models. For LAN access, set a console password in its settings first, then enable LAN access.
 
 Settings → Software updates checks for new releases. In the foreground setup above it shows the upgrade steps: press Ctrl-C and wait for exit, rerun the one-line installer, then start again with the same command. If your own launchd agent starts SintBot, Upgrade now waits until every group is idle and settled, installs the new version into `~/.local/share/sintbot/releases/<version>` and switches the agent to it; if the new version does not connect every group within 90 seconds, the previous one is restored. A window shows each step, reconnects by itself while the service restarts and can be left running in the background. Upgrades are not announced in groups.
 

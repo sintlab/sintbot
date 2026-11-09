@@ -3,6 +3,7 @@
 const path = require('node:path')
 const { createUiServer } = require('./ui/serverbase')
 const { START_PATH, CALLBACK_PATH } = require('./ui/feishulogin')
+const { assertJournalScope } = require('./c2install')
 
 // A host facade over existing v2 authorities, not a second execution engine.
 // The allowlist applies after the existing console's authentication boundary.
@@ -10,13 +11,23 @@ const READ_PATHS = ['/api/state', '/api/events', '/api/inbox', '/api/activity',
   '/api/changelog', '/api/changelog-en', '/api/codex/models', '/api/usage',
   '/api/plugins', '/api/design/styles', '/api/design/icons', '/api/fs/listdir',
   '/api/feishu/admin-candidates', '/api/feishu/org-users', '/api/feishu/resolve-contact',
-  '/api/feishu/chats', '/api/feishu/chat-members', '/api/update', START_PATH, CALLBACK_PATH]
+  '/api/feishu/chats', '/api/feishu/chat-members', '/api/update', '/api/claude/models',
+  START_PATH, CALLBACK_PATH]
 const WRITE_PATHS = ['/api/login', '/api/logout', '/api/logout/all',
   '/api/ui/network', '/api/ui/public-url', '/api/ui/update-settings', '/api/feishu/admins',
   '/api/groups', '/api/groups/provider', '/api/fs/mkdir',
   '/api/groups/order', '/api/groups/policy', '/api/groups/redact',
   '/api/groups/codex-steer', '/api/groups/pause', '/api/groups/stop',
+  // A fresh session only for an idle, settled group (same rule as /new).
+  '/api/groups/new', '/api/groups/interrupt',
   '/api/agent', '/api/provider-settings', '/api/codex/verify', '/api/usage/refresh',
+  // The model library goes through the same validated writer: an edit that
+  // changes what a group runs waits for that group and starts a new session.
+  '/api/providers/add', '/api/provider-key', '/api/providers/hidden', '/api/providers/order',
+  '/api/default-provider', '/api/claude/verify',
+  // One headless trial reply outside every journal and session (like a
+  // one-off agent run); it does not take a group concurrency slot.
+  '/api/test',
   '/api/inbox/dismiss', '/api/issues/status',
   // Software updates: check and ignore anywhere; install only when launchd
   // manages this exact entry (the updater refuses every other run mode).
@@ -24,9 +35,10 @@ const WRITE_PATHS = ['/api/login', '/api/logout', '/api/logout/all',
 const SUPPORTED_RUNNERS = ['claude', 'codex']
 
 function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = () => new Map(),
-  assertWriterLock, validateConfig, applyConfig, beforeWrite = () => true, now = Date.now } = {}) {
+  assertWriterLock, validateConfig, applyConfig, beforeWrite = () => true,
+  appliedResets = () => [], now = Date.now } = {}) {
   for (const callback of [getBindings, getCapacity, getConfig, getHeld, assertWriterLock,
-    validateConfig, applyConfig, beforeWrite, now]) {
+    validateConfig, applyConfig, beforeWrite, appliedResets, now]) {
     if (typeof callback !== 'function') throw new TypeError('C2 console needs live authority and configuration hooks')
   }
   if ([validateConfig, applyConfig, beforeWrite].some(callback => callback.constructor?.name === 'AsyncFunction')) {
@@ -35,7 +47,7 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
   const startedAt = now()
   const capabilities = Object.freeze({ mode: 'durable-v2',
     reason: '此操作尚未接入当前版本的持久处理流程，未执行。',
-    summary: '实时状态、认证管理、停止任务、绑定新群、空闲群的模型切换（Codex / Claude Code）和项目目录修改，以及后台运行时的软件升级已接入；该群有任务或未结记录时不能修改。开新会话、解除绑定、控制台插话、定时任务和画布暂不可用。',
+    summary: '实时状态、认证管理、停止任务、空闲群开新会话、绑定新群、空闲群的模型切换（Codex / Claude Code）和项目目录修改、模型的添加与设置，以及后台运行时的软件升级已接入；该群有任务或未结记录时不能修改，也不能开新会话；改模型的型号、后端或端点时，用它的群须空闲，并会开始新的一段对话。解除绑定、移除模型、控制台插话、定时任务和画布暂不可用。',
     allowed: { GET: READ_PATHS, POST: WRITE_PATHS } })
   function held() {
     if (assertWriterLock() !== true) throw new Error('服务写入权限已失效，操作未执行')
@@ -44,6 +56,33 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
     const value = getBindings()
     if (!(value instanceof Map)) throw new TypeError('C2 console bindings must be a Map')
     return value
+  }
+  // The engine's /new guard, read from the same runtime and journal the live
+  // view uses: a running, admitted, controlled or queued turn, any receipt of
+  // this group's journal not yet settled, or an outbound effect still in
+  // flight keeps the current session.
+  function groupBusy(chatId, binding) {
+    const rt = binding.engine?.rts?.get(chatId)
+    const snapshot = binding.journal?.snapshot()
+    return !!(rt?.v2NormalRouteActive || rt?.v2AdmissionPending || rt?.v2Controller ||
+      rt?.v2QueueReceiptIds?.length || snapshot?.receipts?.pending?.length ||
+      snapshot?.state?.lanes?.queue?.[chatId]?.queue?.length ||
+      binding.gate?.blocked || binding.runtime?.blocked)
+  }
+  function clearSession(chatId) {
+    held()
+    const binding = bindings().get(chatId)
+    if (!binding) throw new Error('此群未运行，未开新会话')
+    if (binding.runtime?.closed === true) throw new Error('此群当前未开放，未开新会话')
+    const busy = '该群有任务进行中或记录未结账，先停止或等它结束再开新会话'
+    if (groupBusy(chatId, binding)) throw new Error(busy)
+    // The configuration writer's settled check as well: an effect not yet
+    // acknowledged or a notice of unknown outcome also keeps the session.
+    try { assertJournalScope(binding.journal, chatId, { requireSettled: true }) } catch (error) {
+      throw new Error(busy, { cause: error })
+    }
+    binding.engine.store.resetSessionAndStats(chatId)
+    return true
   }
   function getLiveState() {
     const cfg = getConfig()
@@ -109,6 +148,8 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
     validateConfig(raw) { held(); validateConfig(raw) },
     beforeWrite(raw) { held(); beforeWrite(raw) },
     applyConfig(raw) { held(); applyConfig(raw) },
+    // Groups whose session the last applied configuration write reset.
+    appliedResets: () => appliedResets(),
     decorateState(state) {
       state.runtimeCapabilities = capabilities
       state.previews = (state.previews || []).filter(item => getConfig().groups?.[item.chatId])
@@ -125,6 +166,13 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
         const binding = bindings().get(chatId)
         if (!binding) throw new Error('此群未运行，未执行停止')
         return binding.engine.stop(chatId)
+      },
+      clearSession,
+      // A durable stop settles later, so a busy group is never reset here:
+      // the operator stops it first and starts the new session once idle.
+      interrupt(chatId) {
+        clearSession(chatId)
+        return { wasBusy: false }
       },
     },
   }

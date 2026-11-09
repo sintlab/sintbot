@@ -1,5 +1,40 @@
 [
   {
+    "version": "1.4.5",
+    "date": "2026-11-09",
+    "name": "Group commands, console settings and Codex sign-in",
+    "items": [
+      {
+        "t": "New /skip in groups",
+        "d": "Drops only the current task; queued messages run next and the conversation is kept. /stop still cancels the current task and everything queued."
+      },
+      {
+        "t": "/help is written for each group",
+        "d": "It opens with the group's project and model, lists commands by urgency, describes /skip, /stop and /new in the same terms (what happens to the queue and to the conversation), and explains that recalling your own message cancels it."
+      },
+      {
+        "t": "New session from the console",
+        "d": "An idle group with every record settled starts a new conversation right away; a busy group is told to stop or wait first instead of being reported as reset."
+      },
+      {
+        "t": "Models can be added and configured from the model cards",
+        "d": "No service restart. Changing a model id, backend or endpoint waits for the groups using it to be idle and starts a new conversation for them; the default model and models in use cannot be hidden."
+      },
+      {
+        "t": "Fix: tool quality and thinking depth settings could not be saved",
+        "d": "They were wrongly reported as needing a service restart."
+      },
+      {
+        "t": "Codex sign-in is checked with the server",
+        "d": "The console's Codex model card no longer trusts the local sign-in file alone. It asks the server once with the token and shows one of three states: verified, sign-in expired (run codex login again on this machine), or unverified (the server could not be reached; not treated as signed out). A revoked token no longer keeps showing as signed in."
+      },
+      {
+        "t": "Fix: stopping a task before it started could swallow the next answer",
+        "d": "If the model process failed to start after a console stop or /skip, a stale cancelled flag could silently drop the next task's answer."
+      }
+    ]
+  },
+  {
     "version": "1.4.4",
     "date": "2026-11-09",
     "name": "Upgrade progress in the console",

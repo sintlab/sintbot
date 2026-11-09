@@ -303,6 +303,25 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
     if (runtimePolicy) runtimePolicy.applyConfig(obj)
     else if (onConfigChange) { try { onConfigChange() } catch (e) { log('reload hook error: ' + (e && e.message)) } }
   }
+  // 默认模型的兜底。旧守护进程:默认模型隐藏了 / 在本进程看来没配好(如 key 是读不到的 env:X)/
+  // 文件里没写(跟随内置的 claude),都改成第一个可用的。持久处理流程里这会把跟随默认模型的群
+  // 悄悄换到另一个后端并重置会话(拖一下排序、加一个不相干的模型都会触发)⇒ 那里**只在默认模型
+  // 已不存在**(文件和内置都没有这个名字)时补一个,其余一律不动;隐藏默认模型由写入方直接拒绝。
+  // 返回 { from, to } = 这次自动改了默认模型(调用方据此如实报告),null = 没改。
+  const settleDefault = (raw) => {
+    if (!runtimePolicy) { fixDefault(raw); return null }
+    const current = raw.defaultProvider || DEFAULTS.defaultProvider
+    if ({ ...DEFAULTS.providers, ...(raw.providers || {}) }[current]) return null
+    const next = pickDefault(raw.providers || {})
+    if (!next || next === raw.defaultProvider) return null
+    const from = raw.defaultProvider || null
+    raw.defaultProvider = next
+    return { from, to: next }
+  }
+  // 持久处理流程下模型库写入的如实回执:这次写入重置了几个群的会话、默认模型有没有被自动补上。
+  const runtimeLibraryChange = (defaultChange) => runtimePolicy ? {
+    resetGroups: runtimePolicy.appliedResets ? runtimePolicy.appliedResets().length : 0,
+    ...(defaultChange ? { defaultProvider: defaultChange.to } : {}) } : null
   // 群内通知统一出口:暂停群不打扰(暂停语义=完全静默,配置变更通知也不例外 —— 2026-07-22
   // 真机踩过:暂停群仍收到「模型已更新」;operator 在控制台自己改的,群成员恢复后清单会重注入,
   // 静默无损)。唯 force:true 豁免 —— 暂停/恢复动作本身的那条告知必须送达。
@@ -505,15 +524,19 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
     const hasCodex = providers.some((p) => !p.hidden && p.runner === 'codex')
     const cv = hasCodex ? await probeCodexCached() : null
     // 「可用模型」= 能用的,不只是配了的(1.0.3;此前没登录的 Claude 订阅、试跑失败的 key 都算在内)。
-    // key 型看最近一次验证:失败的不算,还没验证的先算上;Claude 订阅与 codex 看本机登录态,探不出来(没装 / 超时)不扣。
-    // 两个登录探测都带缓存(claude 60s · codex 60s),概览每分钟刷新也不会多 spawn。
+    // key 型看最近一次验证:失败的不算,还没验证的先算上;Claude 订阅看本机登录态,探不出来(没装 / 超时)不扣。
+    // codex 用服务端判据(与 doctor、卡片「验证登录」同一个探针,按 bin 共用一份缓存):`codex login status`
+    // 只读本地文件,令牌被吊销后照样「已登录」。只有服务端明确拒绝(dead)才扣;探不到(没装 / 超时 / 连不上)不扣。
+    // ⚠ 概览**绝不等**这个探针(起进程出网,冷缓存 2s、连不上 12s):peekAuthProbe 只读 10 分钟内的缓存,
+    // 没有就按「未验证」算(不扣)并在后台刷新一次,下一次重建就是真结果。claude 那条是 60s 缓存的本地调用,照旧等。
     const live = providers.filter((p) => !p.hidden && p.configured)
     const subLogin = live.some((p) => !p.baseUrl && p.runner !== 'codex') ? await claudestatus.cachedLoginStatus(cfg.agent.bin).catch(() => null) : null
-    const cxLogin = live.some((p) => p.runner === 'codex') ? await codexstatus.cachedLoginStatus('codex').catch(() => null) : null
+    const cxLogin = live.some((p) => p.runner === 'codex') ? codexstatus.peekAuthProbe('codex', 10 * 60_000) : null
     const loggedOut = (st) => !!(st && st.ok && st.loggedIn === false)
     const unusable = (p) => {
       if (p.baseUrl) { const v = verify.lookup(verify.providerFp(cfg.providers[p.name] || {}), vopts); return !!(v && !v.ok) }
-      return loggedOut(p.runner === 'codex' ? cxLogin : subLogin)
+      if (p.runner === 'codex') return !!(cxLogin && cxLogin.dead)
+      return loggedOut(subLogin)
     }
     const badProv = live.filter(unusable).map((p) => p.name)
     const usableProv = live.length - badProv.length
@@ -525,7 +548,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       ...(v ? [{ status: v.ok ? 'ok' : 'fail', label: 'Claude CLI', detail: v.ok ? v.version : v.error }] : []),
       ...(cv ? [{ status: cv.ok ? 'ok' : 'fail', label: 'Codex CLI', detail: cv.ok ? `${cv.version} · GPT 订阅` : cv.error }] : []),
       { status: !usableProv ? 'fail' : badProv.length ? 'warn' : 'ok', label: '可用模型',
-        detail: (usableProv ? `${usableProv} 个能用${hasCodex ? '(含 Codex)' : ''}` : '无可用模型 — 去「模型 · 库」页添加 / 测试')
+        detail: (usableProv ? `${usableProv} 个能用${live.some((p) => p.runner === 'codex' && !badProv.includes(p.name)) ? '(含 Codex)' : ''}` : '无可用模型 — 去「模型 · 库」页添加 / 测试')
           + (badProv.length ? `;${badProv.join('、')} 没登录或验证失败` : '') },
       { status: usableGroups ? 'ok' : 'warn', label: '可用群 / 项目', detail: usableGroups ? `${usableGroups} 个已绑定` : '无绑定群/项目 — 去「群·项目」页创建' },
       ...connRows,
@@ -915,6 +938,10 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       if (p === '/api/providers/add' && req.method === 'POST') {
         const { name, baseUrl, model, apiKey, env, toolQuality, effort, reasoningEffort, hidden, vision, modelClear, runner } = await body(req)
         if (!name || !/^[\w.-]+$/.test(name)) return sendJSON(res, 400, { error: '名称必填,且只用字母/数字/._-' })
+        // 持久处理流程只跑 Codex / Claude Code:别的后端名不能被下面的白名单悄悄改写成 Claude 存进去。
+        if (runtimePolicy && runner !== undefined && runner !== '' && !runtimePolicy.providerSupported({ runner })) {
+          return sendJSON(res, 400, { error: '当前只能添加或修改 Codex 或 Claude Code 模型' })
+        }
         const raw = readRaw(); raw.providers = raw.providers || {}
         // 编辑前快照:model / 推理强度变了要联动受影响群(通知 + model 变更重置会话)
         const prev = raw.providers[name] ? { model: raw.providers[name].model || '', re: raw.providers[name].reasoningEffort || '' } : null
@@ -943,7 +970,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         // 不传 ⇒ 保持原值(编辑已有 codex provider 的常态,别把它降级成 claude 后端)。
         if (runner !== undefined) { if (runner === 'codex') pr.runner = 'codex'; else delete pr.runner }
         raw.providers[name] = pr
-        fixDefault(raw); writeRaw(raw)
+        const defaultChange = settleDefault(raw); writeRaw(raw)
         // 变更联动(仅编辑已有 provider 时):受影响群 = 用着它(显式或经 defaultProvider)
         // 且无 per-group model 覆盖的群。model 变 = 换脑 → 按「切模型即重置」的既有拍板,
         // 重置这些群会话 + 群内一行通知;仅推理强度变 → 通知不重置。daemon 未运行(无
@@ -967,7 +994,9 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
             } catch (e) { log('providerChange notify: ' + (e && e.message)) }
           }
         }
-        return sendJSON(res, 200, { ...(await buildState()), providerChange: { modelChanged: !!modelChanged, reChanged: !!reChanged, affected: affected.length, live } })
+        // 持久处理流程:会话重置由配置写入方按「谁实际在用、型号/后端/端点是否变了」决定并已完成,
+        // 这里如实报它重置了几个群、默认模型有没有被补上(上面的 affected 是旧守护进程的通知口径)。
+        return sendJSON(res, 200, { ...(await buildState()), providerChange: { modelChanged: !!modelChanged, reChanged: !!reChanged, affected: affected.length, live, ...(runtimeLibraryChange(defaultChange) || {}) } })
       }
       if (p === '/api/providers' && req.method === 'DELETE') {
         const name = url.searchParams.get('name'); const raw = readRaw()
@@ -980,13 +1009,17 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
           return sendJSON(res, 400, { error: `「${name}」是内置默认模型,移不掉 —— 不想让它出现在列表里就用「隐藏」` })
         }
         if (raw.providers) delete raw.providers[name]
-        fixDefault(raw); writeRaw(raw); return sendJSON(res, 200, await buildState())
+        const defaultChange = settleDefault(raw); writeRaw(raw)
+        const change = runtimeLibraryChange(defaultChange)
+        return sendJSON(res, 200, { ...(await buildState()), ...(change ? { providerChange: change } : {}) })
       }
       if (p === '/api/providers/hidden' && req.method === 'POST') {
         const { name, hidden } = await body(req); const raw = readRaw()
         if (!raw.providers || !raw.providers[name]) return sendJSON(res, 404, { error: 'no such provider' })
         if (hidden) raw.providers[name].hidden = true; else delete raw.providers[name].hidden
-        fixDefault(raw); writeRaw(raw); return sendJSON(res, 200, await buildState())
+        const defaultChange = settleDefault(raw); writeRaw(raw)
+        const change = runtimeLibraryChange(defaultChange)
+        return sendJSON(res, 200, { ...(await buildState()), ...(change ? { providerChange: change } : {}) })
       }
       if (p === '/api/providers/order' && req.method === 'POST') {
         const { order } = await body(req); const raw = readRaw()
@@ -995,8 +1028,12 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
           for (const n of order) if (raw.providers[n]) next[n] = raw.providers[n]
           for (const [n, v] of Object.entries(raw.providers)) if (!(n in next)) next[n] = v // keep any not listed
           raw.providers = next
-          fixDefault(raw) // ordering doesn't set default; just keep the invisible fallback valid
+          // ordering doesn't set default; just keep the invisible fallback valid
+          // (durable mode: only when the default no longer exists — see settleDefault)
+          const defaultChange = settleDefault(raw)
           writeRaw(raw)
+          const change = runtimeLibraryChange(defaultChange)
+          if (change) return sendJSON(res, 200, { ...(await buildState()), providerChange: change })
         }
         return sendJSON(res, 200, await buildState())
       }
@@ -2250,19 +2287,22 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         }
         return sendJSON(res, 200, { ...claudemodels.listModels({ loggedIn: !!(login && login.ok && login.loggedIn) }), login })
       }
-      // codex 卡片「验证登录」:确认订阅登录态(codex login status)+ 取订阅用量
-      // (app-server account/rateLimits/read)。都无需 API key;用量缓存 60s(app-server 有 spawn 开销)。
+      // codex 卡片「验证登录」:带令牌问一次服务端(app-server account/rateLimits/read),登录态 + 订阅用量
+      // 一次拿到。无需 API key;探针缓存 60s(app-server 有 spawn 开销)。
       if (p === '/api/codex/verify' && req.method === 'POST') {
         // force = 卡片额度行的 ↻:点按钮就是要此刻的数,绕过下面的 60s 去抖
         // (去抖是给开局自动探测用的 —— app-server spawn 不便宜,但手点一次的开销该认)。
         const { force } = await body(req).catch(() => ({}))
-        const login = await codexstatus.loginStatus('codex')
-        let usage = null
-        if (login.loggedIn) {
-          // reuse a fresh (<60s) usage probe if we have one — the app-server spawn isn't free
-          if (!force && codexStatusCache && codexStatusCache.usage && Date.now() - codexStatusCache.at < 60_000) usage = codexStatusCache.usage
-          else usage = await codexstatus.rateLimits('codex')
-        }
+        // 登录态与额度合成**一次**带令牌的服务端询问(额度接口)。此前先 `codex login status` 再取额度 ——
+        // 前者只读本地文件,令牌被吊销后照样「已登录」,卡片一直绿着。现在服务端明确拒绝 ⇒ dead:true、loggedIn:false;
+        // 探不到(超时)⇒ verified:false,保留上一份额度、文案「未验证」,不当成未登录。
+        if (force) codexstatus.clearCache()
+        const probe = await codexstatus.cachedAuthProbe('codex')
+        const file = codexstatus.readAuthFile()
+        const d = codexstatus.describeLogin(probe, file)
+        const login = { ok: true, verified: !!probe.verified, loggedIn: !!(probe.ok || (!probe.verified && file.exists && !file.expired)), dead: !!probe.dead, mode: file.mode || 'chatgpt', level: d.level, text: d.text }
+        let usage = probe.usage || null
+        if (!usage && !probe.dead && codexStatusCache && codexStatusCache.usage) usage = codexStatusCache.usage // 探不到时保住旧额度(同前端那条「同一份状态两个消费者」的教训)
         codexStatusCache = { at: Date.now(), login, usage } // cached into /api/state so the card survives a page reload
         return sendJSON(res, 200, { login, usage })
       }

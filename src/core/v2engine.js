@@ -19,6 +19,10 @@ const progress = require('./turnprogress')
 const NO_REPLY = 'NO_REPLY'
 const SYSTEM_APPENDIX = systemAppendix(NO_REPLY)
 const V2_NORMAL_ROUTE_MISSING = Object.freeze(['complete durable v2 authority'])
+// Permission tiers the manifest describes to the agent as read-only: 1 is
+// the Codex read-only sandbox, 3 the fail-closed default. 0 is full access
+// and 2 an allow-listed tool set, which may still change files.
+const READ_ONLY_TIERS = Object.freeze([1, 3])
 const DURABLE_V2_COMMANDS = new Set(['/help', '/status', '/model', '/new', '/hud', '/issue'])
 function fmtWan(n) {
   n = Number(n) || 0
@@ -33,21 +37,43 @@ function humanDuration(ms) {
   if (minutes < 60) return `${minutes} 分 ${seconds % 60} 秒`
   return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`
 }
+// Group texts name the project by its folder only, never by a machine path.
+function projectName(group) {
+  return String(group?.workdir || '').split(/[\\/]/).filter(Boolean).pop() || '（未设）'
+}
 const T = {
   queued: n => n > 1 ? `⏳ 已排队 — 当前任务结束后与前面 ${n - 1} 条一并处理` : '⏳ 已排队 — 当前任务结束后处理',
   stopped: '已停止',
   noActiveTask: '没有正在运行的任务',
-  unsupportedCommand: '这个命令暂不支持。要停止当前任务请发 /stop，其他需求直接用文字说明。',
+  unsupportedCommand: '这个命令暂不支持。只放弃手头这件发 /skip，连排队的一起取消发 /stop；其他需求直接用文字说明。',
   unsupportedCommandWithModel: '这个命令暂不支持，发 /help 查看可用命令；其他需求直接用文字说明。',
-  help: steer => ['【可用命令】',
-    '/status 本群状态：模型、项目、是否在忙',
-    '/model 查看模型；/model 名字 切换（会开始新的一段对话）',
-    '/new 开始新的一段对话',
-    '/stop 停止当前任务，连同排队的一起取消',
-    '/hud 额度与本段对话的用量',
-    '/issue 一句话 记下问题反馈',
-    steer ? '直接发文字就是派任务；任务进行中再发的消息会补充进当前任务。'
-      : '直接发文字就是派任务；任务进行中再发的消息会排队，等这一轮结束再处理。'].join('\n'),
+  // Plain text: 【】 sections and "· " items, each read in one glance, no
+  // alignment. Commands go by urgency; the three cancel commands rise in what
+  // they discard and describe the queue and the conversation in the same words.
+  help: ({ project, model, steer, readOnly }) => ['【这是什么】',
+    `· 本群绑着项目「${project}」，模型 ${model}`,
+    readOnly ? '· 直接问它，它看代码、答问题；之前聊的都记得'
+      : '· 直接说事它就干，做完在群里回你；之前聊的都记得',
+    steer ? '· 任务进行中再发的消息会补充进当前任务'
+      : '· 任务进行中再发的消息会排队，等这一轮结束再处理',
+    '',
+    '【命令】',
+    '· /status — 跑了多久、还有没有动静、排队几条',
+    '· /skip — 只放弃手头这件，排队的继续；之前聊的还记得',
+    '· /stop — 手头和排队的全取消；之前聊的还记得',
+    '· /new — 忘掉之前聊的，从头开始（要等手头任务结束）',
+    '· /model — 本群在用的模型；换：/model 名字（要等手头任务结束，换完之前聊的不再带着）',
+    '· /hud — 额度与本段对话的用量',
+    '· /issue 一句话 — 记下问题反馈，给管理员看',
+    '· /help — 这份说明',
+    // Not "trailing text is ignored": /stop with text after it is not recognised.
+    '⚠ 命令单独发一条，后面别跟别的字（/issue、/model 除外）',
+    // Same boundary as handleRecall: a queued message, or the task running on
+    // that message alone; a steered follow-up takes its whole task with it.
+    steer ? '⚠ 撤回自己发的消息 = 取消那件事；撤回补进当前任务的那条，会连当前任务一起取消'
+      : '⚠ 撤回自己发的消息 = 取消那件事（已和别的消息合成一轮在做的除外）',
+    ...(readOnly ? ['⚠ 本群为只读模式：能看代码、答问题；要改文件需管理员放开权限'] : []),
+  ].join('\n'),
   status: ({ model, project, state, doing = [], queue, session }) => ['【本群状态】', `· 模型：${model}`,
     `· 项目：${project}`, `· 状态：${state}`,
     ...(doing.length ? [`· 最近在做：${doing.join(' · ')}`] : []),
@@ -71,6 +97,9 @@ const T = {
   stopPending: '正在停止当前任务，这条消息没有处理，请稍后重发。',
   stopUnavailable: '当前任务正在收尾，暂时无法停止。',
   stoppedWithQueue: n => `已停止 — 连同排队的 ${n} 条一并取消`,
+  skipped: n => n > 0 ? `已跳过当前任务（后面还有 ${n} 条排队，接着处理）` : '已跳过当前任务',
+  skipUnavailable: '当前任务正在收尾，暂时无法跳过。',
+  skipPending: '正在跳过当前任务，这条消息没有处理，请稍后重发。',
   quotaFailure: 'Codex 订阅额度已用完，本次任务未完成。请恢复额度后重新发送；本次请求不会自动重试。',
   cardFooter: ({ ms, tokens }) => {
     const parts = [`耗时 ${Math.max(0, Math.round(ms / 1000))} 秒`]
@@ -347,10 +376,20 @@ async _durableV2Command(msg, cmd, rest) {
     const group = this._resolveGroup(msg.chatId)
     if (!group || group.paused) return reject('unsupported-command', T.unsupportedCommandWithModel)
     const { name, provider } = this._resolveProvider(msg.chatId, group)
-    const label = (n, p) => p?.model ? `${n} · ${p.model}` : n
+    // A group may pin its own model; the runner uses it before the provider default.
+    const label = (n, p) => (group.model || p?.model) ? `${n} · ${group.model || p.model}` : n
     if (cmd === '/model') return this._durableV2ModelCommand(msg, rest, group)
     if (cmd === '/help') {
-      return reject('help', T.help(provider?.runner === 'codex' && group.codexSteer !== false))
+      const isCodex = provider?.runner === 'codex'
+      // Read-only exactly when the manifest tells the agent so, for either
+      // runner; an unreadable policy reads as read-only.
+      let readOnly = true
+      try {
+        readOnly = READ_ONLY_TIERS.includes(manifestPolicy(group.permissionMode, isCodex,
+          group.allowedTools, group.disallowedTools).tier)
+      } catch {}
+      return reject('help', T.help({ project: projectName(group), model: label(name, provider),
+        steer: isCodex && group.codexSteer !== false, readOnly }))
     }
     if (cmd === '/status') {
       const rt = this.rts.get(msg.chatId)
@@ -360,8 +399,7 @@ async _durableV2Command(msg, cmd, rest) {
       const state = busy
         ? `运行中（已跑 ${humanDuration(Date.now() - (rt.v2StartedAt || Date.now()))}${rt.v2Steps ? ` · 已执行 ${rt.v2Steps} 步` : ''}${rt.v2AliveAt ? ` · 最近动静 ${humanDuration(Date.now() - rt.v2AliveAt)}前` : ''}）`
         : rt?.v2AdmissionPending ? '消息已登记，等待并发名额' : '空闲'
-      const project = String(group.workdir || '').split(/[\\/]/).filter(Boolean).pop() || '（未设）'
-      return reject('status', T.status({ model: label(name, provider), project, state,
+      return reject('status', T.status({ model: label(name, provider), project: projectName(group), state,
         doing: busy && Array.isArray(rt.v2Doing) ? rt.v2Doing : [], queue: queued,
         session: this.store.getSession(msg.chatId) ? '进行中（记着上下文）' : '未开始' }))
     }
@@ -437,6 +475,9 @@ async runDurableV2Message(msg, platform) {
     if (msg?.text?.trim() === '/stop') {
       return this.runDurableV2Stop(msg, platform)
     }
+    if (typeof msg?.text === 'string' && /^\/skip(?:\s|$)/.test(msg.text.trim())) {
+      throw await this.runDurableV2Skip(msg)
+    }
     if (!this.durableV2NormalRoute) {
       const error = new Error('C2 v2 normal route is closed: runner transcript, tool/stream effects, and terminal projection lack durable evidence')
       error.code = 'C2_V2_NORMAL_ROUTE_CLOSED'
@@ -500,6 +541,12 @@ async runDurableV2Message(msg, platform) {
     if (rt.v2StopControl || before.state.lanes.stopIntent?.[msg.chatId]) {
       throw rejectC2Input('C2 v2 ordinary route is waiting for stop acknowledgement',
         { reason: 'stop-pending', notice: T.stopPending })
+    }
+    // Between /skip and its durable cancellation the runner may already be
+    // closed; refuse before receipt instead of reaching the closed busy route.
+    if (rt.v2SkipWaiter) {
+      throw rejectC2Input('C2 v2 ordinary route is waiting for /skip to settle',
+        { reason: 'skip-pending', notice: T.skipPending })
     }
     const lane = before.state?.lanes
     const queue = lane?.queue?.[msg.chatId]?.queue
@@ -850,6 +897,79 @@ async runDurableV2Stop(msg, platform) {
     }
   }
 
+// /skip cancels only the running turn, through the same durable cancellation
+// as the console stop: queued receipts stay queued and run next, and the
+// session is kept. Like the other chat commands it gets no receipt and is
+// answered as an input rejection, here only after the cancellation has
+// committed. That reply is best effort: the durable stop acknowledgement
+// exists only for /stop, whose transition empties the queue.
+async runDurableV2Skip(msg) {
+    const authority = this.durableV2Runtime
+    const chatId = msg?.chatId
+    if (!this.durableV2NormalRoute || !authority ||
+        !msg || msg.synthetic || msg.cron || msg.polled || msg.quiet ||
+        msg.wantsAck || msg.batch ||
+        typeof chatId !== 'string' || !chatId ||
+        typeof msg.msgId !== 'string' ||
+        !/^om_[A-Za-z0-9_-]{1,124}$/.test(msg.msgId) ||
+        msg.replyCtx?.chatId !== chatId ||
+        msg.replyCtx?.messageId !== msg.msgId) {
+      throw new Error('C2 v2 /skip is unsupported or closed')
+    }
+    const group = this._resolveGroup(chatId)
+    if (!group || group.paused || group.platform && group.platform !== 'feishu') {
+      throw new Error('C2 v2 /skip group control is not migrated')
+    }
+    // As for /stop, a /skip with nothing it may cancel is refused before receipt.
+    const reject = (reason, notice) => rejectC2Input(reason === 'skipped'
+      ? 'C2 v2 /skip answered after durable cancellation'
+      : 'C2 v2 /skip is unsupported or closed', { reason, notice })
+    // Without a receipt nothing durable dedupes this command, so a platform
+    // redelivery must not cancel a later task: a repeat this process has seen
+    // is dropped silently, and so is a /skip sent before the newest message of
+    // the running task (both are platform times).
+    const seen = this.durableV2SkipSeen || (this.durableV2SkipSeen = new Set())
+    const key = `${chatId}\n${msg.msgId}`
+    if (seen.has(key)) return reject('skip-duplicate', null)
+    seen.add(key)
+    if (seen.size > 256) seen.delete(seen.values().next().value)
+    const rt = this.rts.get(chatId)
+    if (!rt?.v2NormalRouteActive || !rt.v2RunningJobs?.length) {
+      return reject('skip-idle', T.noActiveTask)
+    }
+    const sentAt = Number(msg.createTimeMs)
+    if (Number.isSafeInteger(sentAt) && sentAt > 0 && rt.v2RunningJobs.some(job =>
+      Number(job?.msg?.createTimeMs) > sentAt)) {
+      return reject('skip-stale', null)
+    }
+    const route = rt.v2NormalRoutePromise
+    let settle
+    const settled = new Promise(resolve => { settle = resolve })
+    const waiter = { turnToken: rt.v2TurnToken, settle }
+    if (rt.v2SkipWaiter || !route || !Number.isSafeInteger(waiter.turnToken)) {
+      return reject('skip-unavailable', T.skipUnavailable)
+    }
+    rt.v2SkipWaiter = waiter
+    try {
+      if (!this.requestDurableV2Stop(chatId)) {
+        if (authority.blocked) throw new Error('C2 v2 /skip closed its durable authority')
+        return reject('skip-unavailable', T.skipUnavailable)
+      }
+      const queued = await Promise.race([settled, route.then(() => null)])
+      if (queued === null) {
+        // The turn ended without this cancellation, e.g. its runner was proven
+        // never started. Nothing was skipped and the group is not at fault;
+        // only a closed authority is.
+        if (authority.blocked) throw new Error('C2 v2 /skip cancellation was not durably settled')
+        return reject('skip-unavailable', T.skipUnavailable)
+      }
+      this.log(`/skip: ${chatId} (by ${msg.senderName || 'unknown'}), ${queued} queued`)
+      return reject('skipped', T.skipped(queued))
+    } finally {
+      if (rt.v2SkipWaiter === waiter) rt.v2SkipWaiter = null
+    }
+  }
+
 async _cleanupDurableV2CancelledCard(rt, identity, generation,
     verifyGeneration) {
     if (!rt.v2CardBinding?.opened) return null
@@ -963,6 +1083,13 @@ async _drainDurableV2NormalChain(initial) {
             terminalEffectId: null, cancellationEventId: cancelled.eventId })
         }
         if (authority.blocked) throw new Error('C2 v2 cancellation closed ingress')
+        // A chat /skip answers once its own turn is durably cancelled; what
+        // stays in the queue is the work that runs next.
+        const skip = rt.v2SkipWaiter
+        if (!stop && skip?.turnToken === identity.turnToken) {
+          rt.v2SkipWaiter = null
+          skip.settle(authority.snapshot().state.lanes.queue?.[identity.chatId]?.queue?.length || 0)
+        }
         const nextReceiptId = this._nextDurableV2NormalAnchor(identity.chatId)
         if (nextReceiptId) {
           const next = this.commitDurableV2InitialDispatch({
@@ -1642,6 +1769,13 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
         rt.v2RunningJobs = null
         rt.v2DispatchEffect = null
         rt.v2RunnerNotStarted = true
+        // A console stop or /skip asked of this turn has nothing left to
+        // cancel; carried over, it would cancel the group's next turn.
+        if (!rt.v2StopControl) {
+          rt.v2CancelControl = null
+          rt.v2StreamQuiescing = false
+          rt.v2StopIntentGate = null
+        }
         return { effectId, accepted: false, startFailureRecovered: true }
       }
       if (capability && !accepted) {

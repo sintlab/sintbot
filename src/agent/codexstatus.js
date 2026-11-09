@@ -9,7 +9,11 @@
 // machine. Both return best-effort and never throw.
 
 const { spawn } = require('node:child_process')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
 const { IS_WIN, resolveSpawn } = require('./winexec')
+const { classifyError } = require('./privatecore') // 服务端拒绝原话 → 账号档(与出错轮同一张判据表,判据在闭源核心)
 
 // `codex login status` output → { loggedIn, mode }. The line typically reads
 // "Logged in using ChatGPT" (subscription) or mentions an API key.
@@ -70,17 +74,25 @@ function killTree(child) {
 // (never throws). Cache results upstream — each call spawns a process and may hit
 // the ChatGPT backend.
 function appServerCall(bin, method, params, mapFn, timeoutMs = 12000) {
+  return appServerRaw(bin, method, params, timeoutMs).then((r) => (r && r.result !== undefined ? mapFn(r.result) : null))
+}
+
+// 同一条调用的**原始结果**:{ result } | { error:{code,message} } | { timedOut:true } | { spawnError:string }。
+// 为什么要分开:服务端拒绝(401 令牌已吊销)和探不到(超时 / 没装)对调用方意义相反 —— 前者是「账号不可用」的铁证,
+// 后者什么都不能说明。只有 null 一种失败的话,控制台和 doctor 共用的登录态探针(下面的 authProbe / cachedAuthProbe)
+// 就分不出「令牌已被吊销」和「这会儿没探到」。
+function appServerRaw(bin, method, params, timeoutMs = 12000) {
   return new Promise((resolve) => {
     let child
     try {
       const { file, spawnArgs } = resolveSpawn(bin, ['app-server'])
       child = spawn(file, spawnArgs, { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true })
-    } catch { return resolve(null) }
+    } catch (e) { return resolve({ spawnError: (e && e.message) || 'spawn failed' }) }
 
     let settled = false
     const finish = (v) => { if (settled) return; settled = true; clearTimeout(timer); killTree(child); resolve(v) }
-    const timer = setTimeout(() => finish(null), timeoutMs)
-    child.on('error', () => finish(null))
+    const timer = setTimeout(() => finish({ timedOut: true }), timeoutMs)
+    child.on('error', (e) => finish({ spawnError: e && e.code === 'ENOENT' ? `'${bin}' not found on PATH` : (e && e.message) || 'spawn error' }))
     child.stdin.on('error', () => {})
 
     const send = (obj) => { try { child.stdin.write(JSON.stringify(obj) + '\n') } catch {} }
@@ -99,7 +111,7 @@ function appServerCall(bin, method, params, mapFn, timeoutMs = 12000) {
         // server→client requests (none expected without a running turn).
         if (msg.method) continue
         if (msg.id === INIT_ID) { send({ jsonrpc: '2.0', method: 'initialized' }); send({ jsonrpc: '2.0', id: CALL_ID, method, params: params || {} }) }
-        else if (msg.id === CALL_ID) return finish(msg.error ? null : mapFn(msg.result))
+        else if (msg.id === CALL_ID) return finish(msg.error ? { error: { code: msg.error.code, message: String(msg.error.message || '') } } : { result: msg.result })
       }
     })
   })
@@ -108,6 +120,119 @@ function appServerCall(bin, method, params, mapFn, timeoutMs = 12000) {
 // Subscription rate limits (5h/weekly windows) — see mapRateLimits.
 function rateLimits(bin = 'codex', timeoutMs = 12000) {
   return appServerCall(bin, 'account/rateLimits/read', {}, mapRateLimits, timeoutMs)
+}
+
+// ── 登录态真判据 ──────────────────────────────────────────────────────────────────────────
+// `codex login status` 只读本地文件:refresh token 被吊销后它照样打印「Logged in」,能静默坏上好几天
+// (doctor / 控制台 / 它自己三处全绿,到有人用才 401)。真判据只有一条:**带着令牌去问一次服务端**。
+// 额度接口(account/rateLimits/read)正好是这样一次询问 —— 零 token 消耗、2 秒;
+// 令牌死了它回 401「token_revoked / invalidated oauth token」,与出错轮的账号判据(核心 classifyError)同一张表。
+//
+// judgeAuth(raw) 把原始结果归成三态(纯函数,单测钉死):
+//   { verified:true,  ok:true,  usage }                          服务端认了这枚令牌(顺手把额度带回来)
+//   { verified:true,  ok:false, dead:true, kind:'account', error } 服务端明确拒绝 —— 账号 / 登录态不可用
+//   { verified:false, ok:false, error }                           探不到(超时 / 没装 / 别的错)—— **什么都不能说明**,不许当成不可用
+function judgeAuth(raw) {
+  if (!raw) return { verified: false, ok: false, error: 'no result' }
+  if (raw.result !== undefined) return { verified: true, ok: true, usage: mapRateLimits(raw.result) }
+  if (raw.error) {
+    const msg = raw.error.message || ''
+    const q = classifyError(msg)?.quota
+    if (q && q.kind === 'account') return { verified: true, ok: false, dead: true, kind: 'account', error: msg.slice(0, 300) }
+    return { verified: false, ok: false, error: msg.slice(0, 300) || `app-server error ${raw.error.code || ''}`.trim() }
+  }
+  if (raw.timedOut) return { verified: false, ok: false, error: 'timeout' }
+  return { verified: false, ok: false, error: raw.spawnError || 'unknown' }
+}
+
+function authProbe(bin = 'codex', timeoutMs = 12000) {
+  return appServerRaw(bin, 'account/rateLimits/read', {}, timeoutMs).then(judgeAuth)
+}
+
+// TTL 缓存(与 claudestatus.cachedLoginStatus 同款):doctor 一次性,控制台 /api/state 每次动作都会重建健康行。
+// 同一个 bin 同时只跑一个探针(PENDING 记在途的那一个):冷缓存时并发进来的调用(概览 / 卡片自动验证 / doctor)
+// 共用一个 app-server 进程,而不是各起一个。
+const CACHE = new Map() // bin -> { at, val }
+const PENDING = new Map() // bin -> Promise<judgeAuth 结果>
+const TTL = 60_000
+// 写缓存的唯一入口(cachedAuthProbe / peekAuthProbe / 控制台验证接口都经这里,规则一致):
+// 服务端拒绝过令牌(dead)之后,「探不到」(未验证)**不许**把它洗掉 —— 那只说明这会儿连不上,不说明令牌好了;
+// 只有服务端再给出明确答复(认可 ⇒ 换成已验证;再拒绝 ⇒ 仍是 dead)才换。时间戳照样更新:这次探过了,
+// 已知最好的答案仍是 dead,不必每次都重探。认可态被「探不到」覆盖是原语义,不变。
+function storeAuthProbe(bin, val) {
+  const prev = CACHE.get(bin)
+  const keep = prev && prev.val && prev.val.dead && !(val && val.verified)
+  const next = keep ? prev.val : val
+  CACHE.set(bin, { at: Date.now(), val: next })
+  return next
+}
+function refreshAuthProbe(bin) {
+  let p = PENDING.get(bin)
+  if (!p) {
+    p = authProbe(bin)
+      .then((val) => storeAuthProbe(bin, val))
+      .finally(() => { if (PENDING.get(bin) === p) PENDING.delete(bin) })
+    PENDING.set(bin, p)
+  }
+  return p
+}
+async function cachedAuthProbe(bin = 'codex', ttl = TTL) {
+  const c = CACHE.get(bin)
+  if (c && Date.now() - c.at < ttl) return c.val
+  return refreshAuthProbe(bin)
+}
+// 不等探针的版本(控制台概览用):**立刻**回缓存里的结果;过期了也先给旧值,同时在后台起一次刷新(与上面共用在途表,
+// 不会多起进程;出错吞掉)。只有从来没探过时才回 null(= 还不知道,调用方按「未验证」处理)。
+// 为什么不等:概览每次重建都要算「可用模型」,冷缓存时等 2s、服务端连不上时等 12s 超时,控制台会像卡死一样;
+// 为什么过期也给旧值:否则已知 dead 的 codex 每到过期就会被当成「还不知道」算进能用,概览一闪一闪。
+function peekAuthProbe(bin = 'codex', ttl = TTL) {
+  const c = CACHE.get(bin)
+  if (c && Date.now() - c.at < ttl) return c.val
+  refreshAuthProbe(bin).catch(() => {})
+  return c ? c.val : null
+}
+// 让缓存全部过期(控制台额度行 ↻ 的 force 用):下次一定重探,但**不忘掉**已知结果 —— dead 仍受上面「探不到不覆盖」保护,
+// peek 在重探完成前也仍给旧值。正在跑的那次探针不受影响(它本来就是「此刻」的数)。
+function clearCache() { for (const c of CACHE.values()) c.at = 0 }
+
+// 本地登录文件的离线事实(不联网):登录邮箱 / 套餐 / 上次续期 / access token 到期。
+// 只做「补充说明」,不做判据 —— 令牌离到期还有好几天也照样会被服务端吊销;离线只能看出「早过期了还没续上」这一种。
+// 路径:$CODEX_HOME/auth.json,否则 ~/.codex/auth.json(与 codex 自己的查找顺序一致)。
+function decodeJwt(token) {
+  try { return JSON.parse(Buffer.from(String(token).split('.')[1], 'base64url').toString('utf8')) } catch { return null }
+}
+function decodeAuthJson(obj, now = Date.now()) {
+  if (!obj || typeof obj !== 'object') return { exists: false }
+  const t = obj.tokens || {}
+  const ac = decodeJwt(t.access_token), id = decodeJwt(t.id_token)
+  const accessExp = ac && Number.isFinite(ac.exp) ? ac.exp * 1000 : null
+  const auth = (id && id['https://api.openai.com/auth']) || {}
+  const lastRefresh = obj.last_refresh ? Date.parse(obj.last_refresh) : null
+  return {
+    exists: true,
+    mode: obj.auth_mode || (t.access_token ? 'chatgpt' : (obj.OPENAI_API_KEY ? 'apikey' : '')),
+    email: (id && id.email) || '',
+    plan: auth.chatgpt_plan_type || '',
+    lastRefresh: Number.isFinite(lastRefresh) ? lastRefresh : null,
+    accessExp,
+    expired: accessExp != null && accessExp <= now,
+  }
+}
+function readAuthFile(home = process.env.CODEX_HOME || path.join(os.homedir(), '.codex')) {
+  try { return decodeAuthJson(JSON.parse(fs.readFileSync(path.join(home, 'auth.json'), 'utf8'))) } catch { return { exists: false } }
+}
+
+// 三态 → 一行人话(doctor 行 / 控制台卡片共用,措辞单一事实源)。file 可选(readAuthFile 的结果),只用来补细节。
+function describeLogin(s, file = null) {
+  const who = file && file.exists ? [file.plan, file.email].filter(Boolean).join(' · ') : ''
+  if (s && s.verified && s.ok) return { level: 'ok', text: '订阅登录已验证' + (who ? ' · ' + who : '') }
+  if (s && s.dead) return { level: 'fail', text: '登录态已失效(服务端拒绝了这台机器的令牌)— 在这台机器上重新跑 codex login' + (who ? ' · ' + who : '') }
+  // 原因尾巴:服务端原话里的接口地址去掉再截 60 字 —— 这行会上控制台,用户可见文案不带服务商域名
+  const why = s && s.error ? ' — ' + String(s.error).replace(/https?:\/\/\S+/g, '…').slice(0, 60) : ''
+  // 文件不在 ≠ 未登录:codex 可配成走系统钥匙串(cli_auth_credentials_store),没探到时只能说「可能」
+  if (file && file.exists === false) return { level: 'warn', text: '未验证 — 本机没有登录文件(可能未登录)' + why }
+  if (file && file.expired) return { level: 'warn', text: `未验证且令牌已过期(${new Date(file.accessExp).toISOString().slice(0, 10)}),很可能要重新登录${why}` }
+  return { level: 'warn', text: '未验证' + why }
 }
 
 // model/list 响应 → 精简模型清单(过滤 hidden;efforts 兼容字符串/对象两形)。
@@ -178,4 +303,4 @@ function formatUsage(u) {
   return parts.join(' │ ') || null
 }
 
-module.exports = { loginStatus, cachedLoginStatus, clearLoginCache, rateLimits, listModels, parseLoginStatus, mapRateLimits, mapModels, formatUsage, windowLabel, PRESET_MODELS }
+module.exports = { loginStatus, cachedLoginStatus, clearLoginCache, rateLimits, listModels, parseLoginStatus, mapRateLimits, mapModels, formatUsage, windowLabel, PRESET_MODELS, judgeAuth, authProbe, cachedAuthProbe, peekAuthProbe, clearCache, decodeAuthJson, readAuthFile, describeLogin }

@@ -324,7 +324,18 @@ function createC2MultiGroupService({ routes, assertWriterLock,
       return { ignored: true, reason: `unsupported-${source}` }
     }
   }
-  function recall(event) {
+  // A reply or card update awaiting its platform response blocks the durable
+  // authority only for that moment. The bot's own card deleted by /stop or
+  // /skip comes back as a recall exactly then, and a person may recall a
+  // queued message while its queue notice is still on its way. The recall
+  // waits for that effect to settle; only an authority closed for good after
+  // the recall is a fault. The platform does not await this result, so the
+  // wait never rejects.
+  const RECALL_WAIT_MS = 60_000
+  const RECALL_POLL_MS = 25
+  const closedForGood = runtime => (runtime?.closed ?? runtime?.blocked) === true
+  const effectInFlight = runtime => runtime?.blocked === true && runtime?.closed === false
+  function recall(event, waitedMs = 0) {
     if (suspended.has(event?.chatId)) return { ignored: true, reason: 'group-held' }
     if (maintenance) return { ignored: true, reason: 'upgrading' }
     if (!allowed(event?.chatId)) return { ignored: true }
@@ -333,8 +344,20 @@ function createC2MultiGroupService({ routes, assertWriterLock,
       held()
       binding = bindings.get(event.chatId)
       if (!started || stopPromise || !binding) return { ignored: true, reason: 'ingress-closed' }
+      if (effectInFlight(binding.runtime)) {
+        if (waitedMs >= RECALL_WAIT_MS) {
+          log(`group ${event.chatId}: recall not applied; an outbound effect stayed in flight`)
+          return { ignored: true, reason: 'recall-effect-in-flight' }
+        }
+        return new Promise(resolve => setTimeout(resolve, RECALL_POLL_MS))
+          .then(() => recall(event, waitedMs + RECALL_POLL_MS))
+          .catch(error => {
+            log(`group ${event.chatId}: deferred recall failed: ${reasonOf(error)}`)
+            return { ignored: true, reason: 'recall-failed' }
+          })
+      }
       const handled = binding.engine.handleRecall?.(event) === true
-      if (binding.runtime?.blocked) throw new Error('Recall closed its durable authority')
+      if (closedForGood(binding.runtime)) throw new Error('Recall closed its durable authority')
       return handled ? { handled: true } : { ignored: true, reason: 'unsupported-or-inactive-recall' }
     } catch (error) {
       if (!binding || !writerHeld() || !started || stopPromise) return fatal(error)

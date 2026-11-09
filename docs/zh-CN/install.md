@@ -1,4 +1,4 @@
-# 安装 SintBot 1.4.6
+# 安装 SintBot 1.4.7
 
 [English](../install.md) · 简体中文
 
@@ -10,7 +10,7 @@
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-安装器会自动检查环境，把 `sintbot@1.4.6` 装到 `~/.local/share/sintbot`，并验证程序入口、内置核心和飞书模块。看到 `Installed and verified SintBot 1.4.6` 就可以继续。不需要 sudo。
+安装器会自动检查环境，把 `sintbot@1.4.7` 装到 `~/.local/share/sintbot`，并验证程序入口、内置核心和飞书模块。看到 `Installed and verified SintBot 1.4.7` 就可以继续。不需要 sudo。
 
 可选预览：在命令末尾加 `-s -- --dry-run`。要自定义安装位置，设置 `SINTBOT_INSTALL_DIR` 环境变量，并同步修改后面的可执行文件路径。
 

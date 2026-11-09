@@ -1,5 +1,20 @@
 [
   {
+    "version": "1.4.7",
+    "date": "2026-11-09",
+    "name": "/stop no longer pauses the group",
+    "items": [
+      {
+        "t": "Fix: /stop during a task could pause the whole group",
+        "d": "/stop removes the task's reply card, and Feishu then reports that removal as a recall. When it arrived while \"stopped\" was still being sent, it was treated as a fault: the group was paused until an administrator released it, and later /model and /new were refused. The recall now waits for that reply to finish and the group keeps serving."
+      },
+      {
+        "t": "Fix: recalling a queued message could pause the group",
+        "d": "Recalling a message while its \"queued\" notice was still being sent also paused the whole group; the message is now cancelled once the notice has been sent."
+      }
+    ]
+  },
+  {
     "version": "1.4.6",
     "date": "2026-11-09",
     "name": "A rejected Codex resume no longer holds the group",

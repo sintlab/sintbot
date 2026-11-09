@@ -1,6 +1,6 @@
 {
   "name": "sintbot",
-  "version": "1.4.6",
+  "version": "1.4.7",
   "private": false,
   "description": "Drive your Mac projects from Feishu groups with Codex or Claude Code, using a built-in agent core.",
   "bin": {

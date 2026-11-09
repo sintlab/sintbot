@@ -17,7 +17,10 @@ const WRITE_PATHS = ['/api/login', '/api/logout', '/api/logout/all',
   '/api/groups/order', '/api/groups/policy', '/api/groups/redact',
   '/api/groups/codex-steer', '/api/groups/pause', '/api/groups/stop',
   '/api/agent', '/api/provider-settings', '/api/codex/verify', '/api/usage/refresh',
-  '/api/inbox/dismiss', '/api/issues/status']
+  '/api/inbox/dismiss', '/api/issues/status',
+  // Software updates: check and ignore anywhere; install only when launchd
+  // manages this exact entry (the updater refuses every other run mode).
+  '/api/update/check', '/api/update/start', '/api/update/ignore']
 const SUPPORTED_RUNNERS = ['claude', 'codex']
 
 function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = () => new Map(),
@@ -32,7 +35,7 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
   const startedAt = now()
   const capabilities = Object.freeze({ mode: 'durable-v2',
     reason: '此操作尚未接入当前版本的持久处理流程，未执行。',
-    summary: '实时状态、认证管理、停止任务、绑定新群，以及空闲群的模型切换（Codex / Claude Code）和项目目录修改已接入；该群有任务或未结记录时不能修改。开新会话、解除绑定、控制台插话、定时任务、画布和升级暂不可用。',
+    summary: '实时状态、认证管理、停止任务、绑定新群、空闲群的模型切换（Codex / Claude Code）和项目目录修改，以及后台运行时的软件升级已接入；该群有任务或未结记录时不能修改。开新会话、解除绑定、控制台插话、定时任务和画布暂不可用。',
     allowed: { GET: READ_PATHS, POST: WRITE_PATHS } })
   function held() {
     if (assertWriterLock() !== true) throw new Error('服务写入权限已失效，操作未执行')
@@ -133,7 +136,7 @@ function createC2Console(options = {}) {
     throw new TypeError('C2 console requires explicit installation paths')
   }
   const facade = createC2ConsoleFacade(options)
-  const ui = createUiServer({ configPath, host, log, getConnHealth,
+  const ui = createUiServer({ configPath, host, log, getConnHealth, updater: options.updater || null,
     onHostChange: options.onHostChange,
     getLiveState: facade.getLiveState, control: facade.control, runtimePolicy: facade,
     issuesPath: path.join(stateDir, 'issues.jsonl'),

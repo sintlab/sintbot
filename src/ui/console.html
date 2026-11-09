@@ -2580,7 +2580,7 @@ function cronFullHtml(text){
   }).join('');
 }
 const RUNTIME_UI_TEXT={
-  "summary": "当前支持多群消息、流式卡片回复、忙时跟进、停止任务、状态查看、认证管理、绑定新群，以及空闲群的模型（Codex / Claude Code）和项目目录切换。新会话、解除绑定、控制台插话、定时任务、生图、画布、预览与升级暂不可用。",
+  "summary": "当前支持多群消息、流式卡片回复、忙时跟进、停止任务、状态查看、认证管理、绑定新群、空闲群的模型（Codex / Claude Code）和项目目录切换，以及后台运行时的软件升级。新会话、解除绑定、控制台插话、定时任务、生图、画布与预览暂不可用。",
   "groups": "可绑定新群，修改模型、项目目录、权限、数据输出和忙时跟进；该群须没有进行中的任务和未结记录。切模型或项目会开始新的一段对话。停止任务在「概览」。群里发 /model 也能切换模型。",
   "skills": "当前支持飞书文字消息、忙时跟进、任务回复和停止。定时任务、生图、群消息管理、画布与预览暂未接入。",
   "cron": "当前不执行定时任务；已有定义仅供查看。",
@@ -3485,21 +3485,27 @@ function renderSettings(){
       <div class="hint">代理第一次填,新的对话轮次就生效;改已有的地址要重启后台服务(sintbot service restart)。</div></div>
   </div>`;
   const updateJob=upd&&upd.job;
-  const updateBusy=!!(updateJob&&['queued','installing','restarting','restart-needed'].includes(updateJob.state));
-  const updateText=!upd?'后台版本检查不可用':updateJob?esc(updateJob.message||updateJob.state):upd.available?`检测到新版本 v${esc(upd.latestVersion)} · 当前 v${esc(upd.currentVersion)}`:upd.checkedAt?`当前为最新版本 v${esc(upd.currentVersion)}`:'尚未检查新版';
+  // 1.4.x 多群服务的升级器带 mode:后台托管才能一键升级,前台与开发版只给说明;不在群里播报。
+  const updMode=upd&&upd.mode||'';
+  const updateBusy=!!(updateJob&&['queued','installing','switching','restarting','restart-needed'].includes(updateJob.state));
+  const updCanInstall=!!(upd&&(updMode?upd.upgradeSupported:true));
+  const updateText=!upd?'后台版本检查不可用':updateJob&&updateJob.state!=='done'||updateJob&&!upd.available&&updMode?esc(updateJob.message||updateJob.state):upd.available?`检测到新版本 v${esc(upd.latestVersion)} · 当前 v${esc(upd.currentVersion)}`:updMode==='dev'&&upd.latestVersion?`最新正式版 v${esc(upd.latestVersion)} · 当前开发版 v${esc(upd.currentVersion)}`:upd.checkedAt&&upd.latestVersion?`当前为最新版本 v${esc(upd.currentVersion)}`:upd.checkedAt?'暂时无法确认最新版本':'尚未检查新版';
+  const updHint=updMode==='managed'?'只安装检测到的稳定版本：等所有群空闲、记录结清后装到单独的目录，再切换后台服务；新版本没在 90 秒内连上全部群会自动换回。旧版本保留用于回滚，不提权，不在群里播报。'
+    :updMode==='foreground'?'前台运行不能在控制台升级：在运行 SintBot 的终端按 Ctrl-C 等待退出，重新运行一行安装命令 curl -fsSL https://sintbot.com/install.sh | bash，再用原来的启动命令启动。'
+    :updMode==='dev'?'开发版不在控制台升级，请用部署脚本。':'只安装检测到的稳定版本;所有群任务与队列清空后才会安装。需要可写的全局安装目录,不会提权;后台服务会自动重启,前台运行需手动重启。';
   const updateCard=`<div class="card" style="grid-column:1/-1" id="updateCard"><div class="lbl">软件更新</div>
     <div id="updateStatus" class="hint" style="margin:0 0 12px;color:var(--ink)">${updateText}</div>
     ${upd&&upd.available?`<div class="hint" style="margin:-4px 0 12px">版本差异与发布说明：<a href="https://github.com/sintlab/sintbot/releases/tag/v${encodeURIComponent(upd.latestVersion)}" target="_blank" rel="noopener" style="color:var(--ember-soft)">查看 v${esc(upd.latestVersion)} 发布说明</a></div>`:''}
     <div class="inline" style="gap:14px;flex-wrap:wrap;margin-bottom:12px">
       <span class="dim">自动检查稳定版(启动时及每天)</span>
-      <label class="inline" style="gap:6px;cursor:pointer"><input type="checkbox" id="updAnnounce" ${upd&&upd.announce!==false?'checked':''} style="width:auto"/> <span class="dim">升级后向群里播报(记住选择)</span></label>
+      ${upd&&upd.announceSupported===false?'':`<label class="inline" style="gap:6px;cursor:pointer"><input type="checkbox" id="updAnnounce" ${upd&&upd.announce!==false?'checked':''} style="width:auto"/> <span class="dim">升级后向群里播报(记住选择)</span></label>`}
     </div>
     <div class="inline" style="gap:8px;flex-wrap:wrap">
       <button class="btn" id="updCheck" ${!upd?'disabled':''}>检查新版</button>
-      <button class="btn primary" id="updInstall" ${!upd||!upd.available||updateBusy?'disabled':''}>现在升级</button>
+      ${updCanInstall?`<button class="btn primary" id="updInstall" ${!upd||!upd.available||updateBusy?'disabled':''}>现在升级</button>`:''}
       <button class="btn" id="updIgnore" ${!upd||!upd.available?'disabled':''}>忽略此版本</button>
     </div>
-    <div class="hint" style="margin-top:10px">只安装检测到的稳定版本;所有群任务与队列清空后才会安装。需要可写的全局安装目录,不会提权;后台服务会自动重启,前台运行需手动重启。</div>
+    <div class="hint" style="margin-top:10px">${updHint}</div>
     <div class="update-history"><div class="subhead">版本历史</div>
       <div id="verhistBox"><div class="empty">加载中…</div></div></div>
   </div>`;
@@ -3547,18 +3553,19 @@ function renderSettings(){
     }catch(e){toast(e.message,'err');b.disabled=false;}
   };
   const saveUpdatePrefs=async(patch)=>{try{S=await api('/api/ui/update-settings','POST',patch);renderSettings();}catch(e){toast(e.message,'err');}};
-  $('#updAnnounce').onchange=()=>saveUpdatePrefs({announce:$('#updAnnounce').checked});
+  if($('#updAnnounce'))$('#updAnnounce').onchange=()=>saveUpdatePrefs({announce:$('#updAnnounce').checked});
   $('#updCheck').onclick=async()=>{const b=$('#updCheck');b.disabled=true;b.textContent='检查中…';
     try{await api('/api/update/check','POST',{});S=await api('/api/state');await refreshInbox();renderSettings();renderOverview();toast('版本检查完成','ok');}
     catch(e){toast(e.message,'err');b.disabled=false;b.textContent='检查新版';}};
-  $('#updInstall').onclick=async()=>{const u=S.update||{},version=u.latestVersion;if(!version)return;
-    const announce=$('#updAnnounce').checked;
-    if(!confirm(`将从 v${u.currentVersion} 升级到 v${version}。${announce?'安装完成后会向未暂停的群播报；':'本次不向群播报。'}所有群任务结束后才开始安装，后台服务会重启。继续?`))return;
+  if($('#updInstall'))$('#updInstall').onclick=async()=>{const u=S.update||{},version=u.latestVersion;if(!version)return;
+    const announce=$('#updAnnounce')?$('#updAnnounce').checked:false;
+    const what=u.mode==='managed'?'等所有群空闲、记录结清后装到单独的目录，再切换后台服务；切换期间约一分钟不处理新消息，新版本没连上全部群会自动换回。':`${announce?'安装完成后会向未暂停的群播报；':'本次不向群播报。'}所有群任务结束后才开始安装，后台服务会重启。`;
+    if(!confirm(`将从 v${u.currentVersion} 升级到 v${version}。${what}继续?`))return;
     const b=$('#updInstall');b.disabled=true;
-    try{const r=await api('/api/update/start','POST',{version,announce});S.update={...r,announce};await refreshInbox();renderSettings();renderOverview();toast('更新已排队，群任务空闲后开始','ok');}
+    try{const r=await api('/api/update/start','POST',{version,announce});S.update={...r,announce};await refreshInbox();renderSettings();renderOverview();toast(u.mode==='managed'?'升级已排队，所有群空闲后开始':'更新已排队，群任务空闲后开始','ok');}
     catch(e){toast(e.message,'err');b.disabled=false;}};
   $('#updIgnore').onclick=async()=>{const version=(S.update||{}).latestVersion;if(!version)return;
-    try{const r=await api('/api/update/ignore','POST',{version});S.update={...r,announce:$('#updAnnounce').checked};await refreshInbox();renderSettings();renderOverview();toast('已忽略此版本','ok');}
+    try{const r=await api('/api/update/ignore','POST',{version});S.update={...r,announce:$('#updAnnounce')?$('#updAnnounce').checked:false};await refreshInbox();renderSettings();renderOverview();toast('已忽略此版本','ok');}
     catch(e){toast(e.message,'err');}};
   // 只开着控制台的守护进程(还没接平台):第一次接上平台时说一句接下来会发生什么(服务托管的会自己重启连上)
   {const pl=S.platforms||{};if(S.setupMode&&(pl.feishu||pl.slack||pl.wecom)&&!window._sbRestartToast){window._sbRestartToast=1;toast(S.setupMode.supervised?'已接上聊天平台 —— 后台服务几秒后自动重启并连上':'已接上聊天平台 —— 在终端里重启 sintbot start --ui 连上','ok');}}
@@ -4032,7 +4039,7 @@ updateThemeBtn();
 const I18N_EN=[
   ["需要处理", "Needs attention"],
   ["当前可用操作", "Available controls"],
-  ["当前支持多群消息、流式卡片回复、忙时跟进、停止任务、状态查看、认证管理、绑定新群，以及空闲群的模型（Codex / Claude Code）和项目目录切换。新会话、解除绑定、控制台插话、定时任务、生图、画布、预览与升级暂不可用。", "Available: group messages, streaming reply cards, busy-turn followups, stopping tasks, live status, authentication, binding new groups, and switching the model (Codex / Claude Code) or project of an idle group. New sessions, unbinding, console messages, schedules, image generation, canvas, previews and upgrades are unavailable."],
+  ["当前支持多群消息、流式卡片回复、忙时跟进、停止任务、状态查看、认证管理、绑定新群、空闲群的模型（Codex / Claude Code）和项目目录切换，以及后台运行时的软件升级。新会话、解除绑定、控制台插话、定时任务、生图、画布与预览暂不可用。", "Available: group messages, streaming reply cards, busy-turn followups, stopping tasks, live status, authentication, binding new groups, switching the model (Codex / Claude Code) or project of an idle group, and software upgrades in a background run. New sessions, unbinding, console messages, schedules, image generation, canvas and previews are unavailable."],
   ["可绑定新群，修改模型、项目目录、权限、数据输出和忙时跟进；该群须没有进行中的任务和未结记录。切模型或项目会开始新的一段对话。停止任务在「概览」。群里发 /model 也能切换模型。", "Bind new groups and change the model, project folder, permissions, data display and busy-turn followups of a group with no running task or unsettled record. Changing the model or project starts a new conversation. Stop tasks in Overview. Members can also switch models with /model in the group."],
   ["当前支持飞书文字消息、忙时跟进、任务回复和停止。定时任务、生图、群消息管理、画布与预览暂未接入。", "Feishu text messages, busy-turn followups, task replies and stopping are supported. Schedules, image generation, group message management, canvas and previews are unavailable."],
   ["当前不执行定时任务；已有定义仅供查看。", "Schedules are not executed. Existing definitions are shown for reference only."],
@@ -4765,6 +4772,11 @@ const I18N_EN=[
   ["更新已排队，群任务空闲后开始","Update queued; installation will start when all group tasks are idle"],
   ["已忽略此版本","This version was ignored"],
   ["版本检查完成","Version check complete"],
+  ["暂时无法确认最新版本","The latest version could not be confirmed yet"],
+  ["升级已排队，所有群空闲后开始","Upgrade queued; it starts when every group is idle"],
+  ["只安装检测到的稳定版本：等所有群空闲、记录结清后装到单独的目录，再切换后台服务；新版本没在 90 秒内连上全部群会自动换回。旧版本保留用于回滚，不提权，不在群里播报。","Installs only the detected stable version: once every group is idle and settled, it goes into its own folder and the background service switches to it; if the new version does not connect every group within 90 seconds, the previous one is restored. The previous version is kept for rollback. No elevated privileges and no group announcements."],
+  ["前台运行不能在控制台升级：在运行 SintBot 的终端按 Ctrl-C 等待退出，重新运行一行安装命令 curl -fsSL https://sintbot.com/install.sh | bash，再用原来的启动命令启动。","A foreground run cannot upgrade from the console: press Ctrl-C in the terminal running SintBot and wait for it to exit, rerun the one-line installer curl -fsSL https://sintbot.com/install.sh | bash, then start with your usual command."],
+  ["开发版不在控制台升级，请用部署脚本。","Development builds are not upgraded from the console; use the deployment scripts."],
   ["访问地址正在切换;页面即将重载","Changing the access address; this page will reload"],
   ["访问设置已保存","Access settings saved"],
   ["开启局域网访问前要设置至少 6 位访问密码","Set an access password of at least 6 characters before enabling LAN access"],
@@ -5380,16 +5392,25 @@ const I18N_EN_RX=[
   [/^登录失败 \(HTTP (\d+)\)$/,"Sign-in failed (HTTP $1)"],
   [/^检测到新版本 v([\d.]+) · 当前 v([\d.]+)$/,"New version v$1 · current v$2"],
   [/^当前为最新版本 v([\d.]+)$/,"v$1 is the latest version"],
+  [/^最新正式版 v([\d.]+) · 当前开发版 v(\S+)$/,"Latest release v$1 · this development build v$2"],
   [/^等待所有群任务结束后更新$/,"Waiting for all group tasks to finish"],
   [/^正在检查安装位置并安装指定版本$/,"Checking the install location and installing the selected version"],
   [/^已安装，正在重启后台服务$/,"Installed; restarting the background service"],
   [/^已安装新版；后台服务未能自动重启，请手动重启$/,"The new version is installed, but the background service did not restart; restart it manually"],
   [/^已安装新版；当前不是受托管服务，请手动重启 SintBot$/,"The new version is installed; restart SintBot manually"],
   [/^更新完成并已重启$/,"Update completed and restarted"],
+  [/^等所有群空闲、记录结清后升级$/,"Waiting until every group is idle and settled"],
+  [/^正在安装 v([\d.]+)$/,"Installing v$1"],
+  [/^v([\d.]+) 已安装，等所有群空闲后切换$/,"v$1 is installed; switching when every group is idle"],
+  [/^正在切换到 v([\d.]+)；期间的消息会提示稍后重发$/,"Switching to v$1; messages meanwhile are asked to be resent later"],
+  [/^已升级到 v([\d.]+)$/,"Upgraded to v$1"],
+  [/^没有切换到 v([\d.]+)：([\s\S]*)；已换回 v([\d.]+)$/,"Did not switch to v$1 ($2); v$3 was restored"],
+  [/^等待群空闲超时；可在空闲后重新发起$/,"Timed out waiting for idle groups; retry when they are idle"],
+  [/^有暂停的群，升级已取消；先处理暂停的群$/,"A group is paused, so the upgrade was cancelled; handle the paused group first"],
   [/^更新后未能自动重启，请手动重启服务$/,"The update could not restart automatically; restart the service manually"],
   [/^等待群任务结束超时；可在任务空闲后重新发起$/,"Timed out waiting for group tasks; retry when they are idle"],
   [/^当前运行的是开发目录或非全局副本；请在终端手动更新$/,"This is a development or non-global install; update it from a terminal"],
-  [/^将从 v([\d.]+) 升级到 v([\d.]+)。([\s\S]*)$/,(a,from,to,what)=>`Upgrade from v${from} to v${to}. ${what.replace('所有群任务结束后才开始安装，后台服务会重启。','Installation waits until all group tasks finish, then restarts the background service.').replace('本次不向群播报。','This update will not be announced in groups.').replace('安装完成后会向未暂停的群播报；','After installation, it will be announced in active groups;')}`],
+  [/^将从 v([\d.]+) 升级到 v([\d.]+)。([\s\S]*)$/,(a,from,to,what)=>`Upgrade from v${from} to v${to}. ${what.replace('等所有群空闲、记录结清后装到单独的目录，再切换后台服务；切换期间约一分钟不处理新消息，新版本没连上全部群会自动换回。','Once every group is idle and settled, it installs into its own folder and switches the background service; new messages wait about a minute during the switch, and the previous version is restored if the new one does not connect every group. ').replace('所有群任务结束后才开始安装，后台服务会重启。','Installation waits until all group tasks finish, then restarts the background service.').replace('本次不向群播报。','This update will not be announced in groups.').replace('安装完成后会向未暂停的群播报；','After installation, it will be announced in active groups;')}`],
 ];
 /* I18N_DICT_END */
 
@@ -5590,7 +5611,7 @@ async function fetchCodexModels(){if(CX_MODELS)return CX_MODELS;try{CX_MODELS=aw
 function cxDefEffortLabel(model){const m=CX_MODELS&&(CX_MODELS.models||[]).find(x=>x.model===model);return '默认'+(m&&m.defEffort?'('+m.defEffort+')':'');}
 /* 有 codex provider 时启动即预热模型列表(server 缓存 10min)→ 卡片默认档标注补齐 + 面板秒开 */
 function warmCodexModels(){if(!CX_MODELS&&S&&(S.providers||[]).some(x=>x.runner==='codex'&&!x.hidden))fetchCodexModels().then(()=>renderProviders());}
-const RUNTIME_DISABLED_SELECTORS='[data-osay],[data-onew],.gpv,[data-rm],[data-gcfg],[data-cronnew],[data-cronadd],[data-crontgl],[data-cronrm],[data-reposave],[data-repotest],[data-iconuse],[data-iconsys],[data-iconstyle],[data-stylecollect],#mNewChat,#addModel,.pcard [data-act="edit"],.pcard [data-act="test"],#amSave,#amDel,#mNewGo,#pgSend,#pgNew,#fSave,#slSave,#wSave,#bSave,#styleNew,[data-styleedit],[data-styledup],[data-styledel],#nsSave,#nsExtract,#clSave,#updCheck,#updInstall,#updIgnore,[data-pvstop],[data-lvkill],[data-lvkillall]';
+const RUNTIME_DISABLED_SELECTORS='[data-osay],[data-onew],.gpv,[data-rm],[data-gcfg],[data-cronnew],[data-cronadd],[data-crontgl],[data-cronrm],[data-reposave],[data-repotest],[data-iconuse],[data-iconsys],[data-iconstyle],[data-stylecollect],#mNewChat,#addModel,.pcard [data-act="edit"],.pcard [data-act="test"],#amSave,#amDel,#mNewGo,#pgSend,#pgNew,#fSave,#slSave,#wSave,#bSave,#styleNew,[data-styleedit],[data-styledup],[data-styledel],#nsSave,#nsExtract,#clSave,[data-pvstop],[data-lvkill],[data-lvkillall]';
 function disableRuntimeControl(el,reason){
   el.disabled=true;el.title=trText(reason);el.dataset.runtimeDisabled='1';
   el.setAttribute('aria-disabled','true');

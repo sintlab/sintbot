@@ -112,6 +112,7 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
   let service
   let ui
   let configControl
+  let updater
   let liveTransport
   let onSigint, onSigterm
   try {
@@ -157,6 +158,7 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
       if (finishing) return
       finishing = true
       ui?.close()
+      updater?.close()
       lock.release()
       process.stderr.write(`C2 multi-group · ${result.reason}; platform stopped=${result.platformStopped}; runner drained=${result.drained}\n`,
         () => process.exit(result.code))
@@ -255,8 +257,24 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
     configControl = require('../src/c2configcontrol').createC2ConfigControl({
       installation, getBindings: () => service.bindings, getHeld: () => service.held,
       assertWriterLock, store,
-      activateRoute: route => service.addRoute(route),
+      activateRoute: route => service.addRoute(route), isFrozen: () => service.inMaintenance,
       log: message => process.stderr.write(`C2 multi-group · ${message}\n`) })
+    if (!preflightOnly) {
+      // Console software updates. Only a launchd job that starts this exact
+      // entry may upgrade, and only while every group is idle and settled.
+      const c2updates = require('../src/c2updater')
+      const pkg = require('../package.json')
+      const upgradeGate = c2updates.createC2UpgradeGate({ isRunning: () => running,
+        service: () => service, capacity, assertJournalScope })
+      updater = c2updates.createC2Updater({ currentVersion: pkg.version,
+        runMode: c2updates.detectRunMode({ privateBuild: pkg.private === true, entry: __filename }),
+        stateFile: path.join(stateDir, 'update.json'), dataDir: stateDir, configPath: cfg._path,
+        gate: upgradeGate, beginMaintenance: () => service.beginMaintenance(),
+        endMaintenance: () => service.endMaintenance(), expectedGroups: () => service.bindings.size,
+        registries: c2updates.registriesFromEnv(),
+        fetchImpl: require('../src/core/proxy').getProxyFetch() || globalThis.fetch,
+        autoCheck: uiEnabled, log: message => process.stderr.write(`C2 update · ${message}\n`) })
+    }
     const stop = reason => { void service.stop(reason, 0).then(finish) }
     onSigint = () => stop('SIGINT')
     onSigterm = () => stop('SIGTERM')
@@ -268,7 +286,7 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
         getConfig: () => cfg, getBindings: () => service.bindings,
         getHeld: () => service.held, getCapacity: () => capacity.snapshot(),
         getConnHealth: () => liveTransport?.platform.connHealth?.() || {},
-        assertWriterLock, ...configControl,
+        assertWriterLock, ...configControl, updater,
         log: message => process.stderr.write(`Console · ${message}\n`) })
       await new Promise((resolve, reject) => {
         ui.server.once('error', reject)
@@ -287,6 +305,10 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
     for (const item of started.held || []) {
       process.stderr.write(`SintBot group ${item.chatId} is held: ${item.reason}\n`)
     }
+    // A console upgrade that switched to this version is done once every
+    // group is connected; then the daily version check starts.
+    if (!started.held?.length) updater?.confirmStarted()
+    void updater?.start()
   } catch (error) {
     ui?.close()
     const stopped = await service?.stop('startup-failed', 1)
@@ -297,6 +319,7 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
     throw error
   } finally {
     if (!running) {
+      updater?.close()
       if (onSigint) process.off('SIGINT', onSigint)
       if (onSigterm) process.off('SIGTERM', onSigterm)
       capacity.close(); lock.release()
@@ -354,6 +377,14 @@ async function main(argv = process.argv.slice(2)) {
   if (!sub || sub === 'help' || sub === '--help' || sub === '-h' ||
       ['init', 'start'].includes(sub) && rest.length === 1 && ['--help', '-h'].includes(rest[0])) {
     process.stdout.write(HELP)
+    return
+  }
+  if (sub === 'upgrade-switch') {
+    // Internal: started detached by a console upgrade; never run it by hand.
+    const { values } = parseArgs({ args: rest, allowPositionals: false, options: { state: { type: 'string' } } })
+    if (!values.state || !path.isAbsolute(values.state)) throw new Error('upgrade-switch needs --state <absolute path>')
+    const outcome = await require('../src/c2upgradeswitch').runUpgradeSwitch({ stateFile: values.state })
+    process.exitCode = outcome === 'done' ? 0 : 1
     return
   }
   if (!['init', 'start', 'incident'].includes(sub)) {

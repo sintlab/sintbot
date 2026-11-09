@@ -1,5 +1,24 @@
 [
   {
+    "version": "1.4.2",
+    "date": "2026-11-09",
+    "name": "Check and install new versions from the console",
+    "items": [
+      {
+        "t": "Version checks in the console",
+        "d": "Software updates in Settings checks for stable releases at startup and daily and shows release notes when a new version is available."
+      },
+      {
+        "t": "One-click upgrade for background runs",
+        "d": "When a launchd agent runs SintBot, Upgrade now waits until every group is idle and settled, installs the new version into its own folder and switches to it; if it does not connect every group within 90 seconds, the previous version is restored. New messages wait about a minute during the switch and are asked to be resent."
+      },
+      {
+        "t": "Steps for foreground runs",
+        "d": "A foreground run shows how to stop, reinstall and start. Upgrades are not announced in groups."
+      }
+    ]
+  },
+  {
     "version": "1.4.1",
     "date": "2026-11-09",
     "name": "A failing group stops only itself",

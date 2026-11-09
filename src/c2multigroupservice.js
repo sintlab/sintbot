@@ -5,6 +5,7 @@ const { coordinateC2GlobalFault } = require('./core/c2globalfault')
 
 const RECOVERING_NOTICE = '上一个任务出错，正在收尾，这条消息没有处理，请稍后重发。'
 const HELD_NOTICE = '本群上一个任务结果不明，已暂停处理，等待人工确认；其他群不受影响。'
+const UPGRADING_NOTICE = 'SintBot 正在升级，这条消息没有处理，请一分钟后重发。'
 const reasonOf = error => String(error?.message || error || 'unknown').slice(0, 300)
 
 // Turns a group binding still holds: a running turn, a non-idle handoff or a
@@ -58,6 +59,8 @@ function createC2MultiGroupService({ routes, assertWriterLock,
   const bindings = new Map()
   // chatId -> { reason, source: 'startup' | 'runtime', since, binding }
   const suspended = new Map()
+  // Set while a console upgrade switches the service: no message is admitted.
+  let maintenance = false
   let transport = null
   let started = false
   let starting = false
@@ -227,7 +230,7 @@ function createC2MultiGroupService({ routes, assertWriterLock,
     if (bindings.has(route.chatId)) return Promise.resolve(bindings.get(route.chatId))
     if (activating.has(route.chatId)) return activating.get(route.chatId)
     const opening = (async () => {
-      if (!started || starting || stopPromise) throw new Error('C2 service is not serving')
+      if (!started || starting || stopPromise || maintenance) throw new Error('C2 service is not serving')
       held()
       const binding = await createBinding({ route, transport })
       if (!started || stopPromise || !writerHeld() || suspended.has(route.chatId) ||
@@ -255,6 +258,10 @@ function createC2MultiGroupService({ routes, assertWriterLock,
     // Foreign/paused group events are not faults and never get a receipt.
     if (!allowed(msg?.chatId)) return { ignored: true, reason: 'unconfigured-or-paused' }
     if (quarantine?.rejects(msg)) return { quarantined: true }
+    if (maintenance && started && !stopPromise) {
+      return answerC2InputRejection({ error: rejectC2Input('C2 service upgrading',
+        { reason: 'upgrading', notice: UPGRADING_NOTICE }), msg, platform: sourceAdapter, log })
+    }
     if (recovering.has(msg.chatId) && started && !stopPromise) {
       // The group's failed turn is being closed; nothing is admitted meanwhile.
       return answerC2InputRejection({ error: rejectC2Input('C2 group recovering',
@@ -319,6 +326,7 @@ function createC2MultiGroupService({ routes, assertWriterLock,
   }
   function recall(event) {
     if (suspended.has(event?.chatId)) return { ignored: true, reason: 'group-held' }
+    if (maintenance) return { ignored: true, reason: 'upgrading' }
     if (!allowed(event?.chatId)) return { ignored: true }
     let binding
     try {
@@ -409,7 +417,16 @@ function createC2MultiGroupService({ routes, assertWriterLock,
     return [...suspended].map(([chatId, entry]) => Object.freeze({ chatId,
       reason: entry.reason, source: entry.source, since: entry.since }))
   }
-  return { start, stop, routeMessage, addRoute, heldGroups,
+  function beginMaintenance() {
+    if (!maintenance) log('upgrade: admission closed for the service switch')
+    maintenance = true
+  }
+  function endMaintenance() {
+    if (maintenance) log('upgrade: admission reopened')
+    maintenance = false
+  }
+  return { start, stop, routeMessage, addRoute, heldGroups, beginMaintenance, endMaintenance,
+    get inMaintenance() { return maintenance },
     get bindings() { return new Map(bindings) },
     get held() { return new Map([...suspended].map(([chatId, entry]) =>
       [chatId, { reason: entry.reason, source: entry.source, since: entry.since }])) } }

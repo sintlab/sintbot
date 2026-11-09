@@ -19,9 +19,9 @@ const RESET_KEYS = ['provider', 'model', 'workdir', 'codexApp']
 // It never moves a journal, settles a receipt or reconnects the platform.
 function createC2ConfigControl({ installation, getBindings, getHeld = () => new Map(),
   assertWriterLock, store = null, activateRoute = null, probeRunner = assertRunnerExecutable,
-  log = () => {} } = {}) {
+  isFrozen = () => false, log = () => {} } = {}) {
   if (!installation?.cfg?._path || typeof getBindings !== 'function' ||
-      typeof getHeld !== 'function' ||
+      typeof getHeld !== 'function' || typeof isFrozen !== 'function' ||
       typeof assertWriterLock !== 'function' ||
       store !== null && typeof store.resetGroupSession !== 'function' ||
       activateRoute !== null && typeof activateRoute !== 'function' ||
@@ -47,6 +47,7 @@ function createC2ConfigControl({ installation, getBindings, getHeld = () => new 
   function validateConfig(raw) {
     prepared = null
     held()
+    if (isFrozen()) throw new Error('SintBot is upgrading; settings cannot change until it restarts')
     const next = loadInstallationFromRaw(raw, cfg._path, { dataDir: stateDir,
       allowAddedGroups: !!activateRoute && !!store })
     const bindings = getBindings()

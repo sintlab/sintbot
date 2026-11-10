@@ -7,6 +7,7 @@
 const { createC2CardEffectBoundary, confirmCardOperation } = require('./c2cardeffectbridge')
 const { prepareTerminalEffectBridge, terminalReplyText } = require('./c2terminaleffectbridge')
 const { stripMilestones } = require('./turnprogress')
+const { engineTerminalStep } = require('../agent/privatecore')
 
 function prepareCardTerminalPath({ runtime, payloadHandles, platform, replyCtx,
   cardAnchor = null, preferPlain = false,
@@ -207,10 +208,11 @@ function prepareCardTerminalPath({ runtime, payloadHandles, platform, replyCtx,
         if (card && await card.flush() !== true) {
           throw new Error('C2 card prior operations lack confirmed flush')
         }
-        // Mirrors the private reducer's silent predicate. A posted card must
-        // be durably recalled before the zero-send quiet settlement.
-        const quiet = receipt.quiet || terminalPayload.resultText.trim() === 'NO_REPLY' ||
-          (!terminalPayload.resultText.trim() && terminalPayload.bufferText.trim() === 'NO_REPLY')
+        // Partial NO_REPLY text on a crashed turn is not a silent completion.
+        const terminalEvent = { ...terminalPayload, type: 'finalize' }
+        delete terminalEvent.receiptId; delete terminalEvent.turnToken; delete terminalEvent.quiet
+        const quiet = receipt.quiet || engineTerminalStep(
+          { finalized: false, outcome: null }, terminalEvent).state.outcome.silent
         if (suppressedCard && !quiet) {
           throw new Error('C2 suppressed card needs a silent terminal')
         }

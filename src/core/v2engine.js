@@ -167,10 +167,11 @@ function supportedV2QuotaFailure(payload, runnerResult) {
 // Error classification remains in the core; close/session/effect authority is
 // checked by the terminal path before any delivery can be attempted.
 function supportedV2ClosedFailure(payload, runnerResult) {
-  if (!payload || payload.source !== 'result' || payload.aborted ||
+  if (!payload || !['result', 'runner-exit'].includes(payload.source) || payload.aborted ||
       payload.sessionMissing || payload.transientNetwork || payload.hasQuota ||
       payload.freshRetried || payload.resumedSessionCurrent ||
-      runnerResult?.aborted !== false) return false
+      runnerResult?.aborted !== false ||
+      (payload.source === 'runner-exit' && runnerResult.result != null)) return false
   const terminal = { ...payload, type: 'finalize' }
   delete terminal.receiptId; delete terminal.turnToken; delete terminal.quiet
   return engineTerminalStep({ finalized: false, outcome: null }, terminal)
@@ -1266,7 +1267,7 @@ async _drainDurableV2NormalChain(initial) {
         error.classificationEventId = classified.eventId
         throw error
       }
-      if (payload.source !== 'result' || payload.sessionMissing ||
+      if ((payload.source !== 'result' && !closedFailure) || payload.sessionMissing ||
           (payload.hasQuota && !quotaFailure) || payload.transientNetwork || payload.freshRetried ||
           payload.resumedSessionCurrent ||
           (!['ok', 'no-reply'].includes(outcome.status) && !quotaFailure && !closedFailure)) {
@@ -1523,7 +1524,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
         throw new Error('C2 v2 runner effect changed before start')
       }
       const projection = createC2TurnProjection({ receiptId, turnToken,
-        quiet: receipt.quiet,
+        quiet: receipt.quiet, requireResult: true,
         resumed: !!this.store.getSession(chatId), freshRetried: false,
         ...(cohort.receiptIds.length > 1
           ? { batchReceiptIds: cohort.receiptIds } : {}) })
@@ -1997,7 +1998,7 @@ async completeDurableV2CardTurn({ chatId, receiptId, turnToken, effectId,
         !isDeepStrictEqual(payload, projected.payload) ||
         // A deterministic failure is delivered once, after the same durable
         // close checks as success. Retry and unknown outcomes stay sealed.
-        payload.source !== 'result' || payload.aborted || (payload.isError && !quotaFailure && !closedFailure) ||
+        (payload.source !== 'result' && !closedFailure) || payload.aborted || (payload.isError && !quotaFailure && !closedFailure) ||
         payload.sessionMissing || (payload.hasQuota && !quotaFailure) || payload.transientNetwork ||
         payload.freshRetried || payload.resumedSessionCurrent ||
         (replyText !== undefined && replyText !== terminalReplyText(projected.payload)) ||

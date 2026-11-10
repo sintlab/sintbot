@@ -402,6 +402,10 @@ function runOnce(opts, effort) {
     }))
 
     const completeClose = (code) => {
+      if (onDurableEvent && acceptedStart && !lastResult && !aborted) {
+        done(() => resolveRun({ sessionId: capturedSessionId, result: null, code, aborted }))
+        return
+      }
       if (onDurableEvent && code !== 0 && !lastResult && !aborted) {
         done(() => reject(closedError(new Error(`codex exited ${code} before a durable result`))))
         return

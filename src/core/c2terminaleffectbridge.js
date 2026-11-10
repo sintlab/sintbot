@@ -9,6 +9,7 @@ const { C2PayloadHandles } = require('./c2payloadhandles')
 const { engineTerminalStep } = require('../agent/privatecore')
 
 const FAILURE_NOTICE = '本次任务执行失败。若已执行过工具，请先核对实际结果，再决定是否重试。'
+const INTERRUPTED_NOTICE = '本次任务执行中断，未收到最终结果。已执行的操作可能已经生效，请核对后再决定是否重试。'
 
 const RECEIPT_ID = /^[0-9a-f]{32}$/
 const GENERATION = /^[0-9a-f]{32}$/
@@ -28,11 +29,12 @@ function terminalReplyText(payload) {
   }
   // The core classifies the result; the host supplies a fixed display string.
   // Neither a provider error nor unfinished assistant text is a final answer.
-  if (payload.source === 'result' && payload.isError === true) {
+  if (payload.source === 'runner-exit' || payload.source === 'result' && payload.isError === true) {
     const event = { ...payload, type: 'finalize' }
     delete event.receiptId; delete event.turnToken; delete event.quiet
     if (engineTerminalStep({ finalized: false, outcome: null }, event)
-      .state.outcome.status === 'error') return FAILURE_NOTICE
+      .state.outcome.status === 'error') return payload.source === 'runner-exit'
+        ? INTERRUPTED_NOTICE : FAILURE_NOTICE
   }
   return (payload.answerText.trim() ? payload.answerText : payload.bufferText) ||
     payload.resultText

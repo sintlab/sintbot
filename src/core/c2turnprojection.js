@@ -8,11 +8,11 @@ const NO_REPLY = 'NO_REPLY'
 const { isDeepStrictEqual } = require('node:util')
 
 function createC2TurnProjection({ receiptId, turnToken, quiet, resumed = false,
-  freshRetried = false, batchReceiptIds } = {}) {
+  freshRetried = false, batchReceiptIds, requireResult = false } = {}) {
   if (!RECEIPT_ID.test(receiptId || '') ||
       !Number.isSafeInteger(turnToken) || turnToken <= 0 ||
       typeof quiet !== 'boolean' || typeof resumed !== 'boolean' ||
-      typeof freshRetried !== 'boolean') {
+      typeof freshRetried !== 'boolean' || typeof requireResult !== 'boolean') {
     throw new TypeError('C2 projection needs a typed running receipt')
   }
   if (batchReceiptIds !== undefined &&
@@ -137,10 +137,11 @@ function createC2TurnProjection({ receiptId, turnToken, quiet, resumed = false,
       throw new TypeError('C2 projection current resumed session requires abort')
     }
     completed = true
+    const runnerExit = requireResult && !observedResult && !runnerResult.aborted
     const resultText = observedResult?.text || ''
     const payload = Object.freeze({
       type: 'finalizeEffectCommit', receiptId, turnToken, quiet,
-      source: observedResult ? 'result' : 'close',
+      source: observedResult ? 'result' : runnerExit ? 'runner-exit' : 'close',
       aborted: runnerResult.aborted,
       isError: observedResult?.isError || false,
       resumed, sessionMissing: observedResult?.sessionMissing || false,
@@ -156,10 +157,12 @@ function createC2TurnProjection({ receiptId, turnToken, quiet, resumed = false,
     const display = Object.freeze({
       resultText, bufferText, answerText, fullText,
       finalAnswer: (answerText.trim() ? answerText : bufferText) || resultText,
-      silent: quiet || resultText.trim() === NO_REPLY ||
-        (!resultText.trim() && bufferText.trim() === NO_REPLY),
+      silent: quiet || !runnerExit && (resultText.trim() === NO_REPLY ||
+        (!resultText.trim() && bufferText.trim() === NO_REPLY)),
       assistantEvents, tools,
-      sessionId: runnerResult.sessionId || sessionId,
+      // A crashed process may never have flushed its new session. Retain the
+      // previously stored session; never publish an unproven new session ID.
+      sessionId: runnerExit ? null : runnerResult.sessionId || sessionId,
       contextTokens,
       usage: result?.usage || null,
       usageCumulative: result?.usageCumulative === true,

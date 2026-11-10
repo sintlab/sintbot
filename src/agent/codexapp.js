@@ -486,6 +486,12 @@ function runTurn(opts = {}) {
     })
     const completeClose = (code) => settle(() => {
       if (onDurableEvent && !completed && !aborted) {
+        if (acceptedTurnId) {
+          // No synthetic result: retain the distinction between process
+          // closure and model completion for the durable terminal reducer.
+          resolveRun({ sessionId: capturedSessionId, result: null, code, aborted })
+          return
+        }
         reject(closedError(new Error(`codex app-server exited ${code} before a durable result`)))
         return
       }

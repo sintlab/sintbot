@@ -455,6 +455,10 @@ function runTurn({
       }))
 
       const completeClose = (code) => finish(() => {
+        if (onDurableEvent && turnAccepted && !lastResult && !aborted) {
+          resolveRun({ sessionId: capturedSessionId, result: null, code, aborted })
+          return
+        }
         if (code !== 0 && !lastResult && !aborted) {
           return reject(closedError(new Error(`claude exited ${code}: ${stderr.trim().slice(0, 800) || '(no stderr)'}`)))
         }

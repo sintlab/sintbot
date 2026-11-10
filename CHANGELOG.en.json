@@ -1,5 +1,16 @@
 [
   {
+    "version": "1.4.10",
+    "date": "2026-11-10",
+    "name": "Interrupted task completion",
+    "items": [
+      {
+        "t": "Fix: a group could stop accepting work after an executor exited mid-task",
+        "d": "When an accepted executor exits without a final result, the existing card shows an interruption notice. The group continues after delivery is confirmed. Partial output is not treated as an answer and the task is not automatically rerun. Check any operations already performed; uncertain closure or delivery remains held."
+      }
+    ]
+  },
+  {
     "version": "1.4.9",
     "date": "2026-11-10",
     "name": "Failure completion and reply card improvements",

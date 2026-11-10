@@ -292,8 +292,15 @@ class Engine {
       durableV2SwitchProvider, durableV2UsageProbe, durableV2Issues, durableV2Version })
     this.projectMemory = options.projectMemory || null
     this.repoInfo = options.repoInfo || null
+    this.activity = options.activity || null
     this.tz = normalizeTz(cfg.timezone)
     this.rts = new Map()
+  }
+
+  // Read-only diagnostics must never change admission, delivery or settlement.
+  _observeActivity(method, value) {
+    try { this.activity?.[method]?.(value) }
+    catch { this.log('Activity display update unavailable') }
   }
 
   shutdown() {
@@ -741,6 +748,7 @@ async runDurableV2Message(msg, platform) {
           } catch (error) {
             if (controller.signal.aborted && !rt.v2DispatchEffect &&
                 error?.code === 'C2_CAPACITY_WAIT_CANCELLED') {
+              this._observeActivity('unknown', { chatId: msg.chatId })
               return { receiptId, status: 'interruptedBeforeDispatch',
                 queued: true, ingressClosed: true }
             }
@@ -763,6 +771,7 @@ async runDurableV2Message(msg, platform) {
         // siblings must not dispatch in the microtask before the service sees
         // this rejection and begins its process-wide stop.
         failed = true
+        this._observeActivity('unknown', { chatId: msg.chatId })
         this.durableV2SealCapacity?.(error)
         throw error
       } finally {
@@ -823,6 +832,7 @@ async _runDurableV2Steer(rt, receiptId) {
         invoke: () => control.steerDurable({ msgId: job.msg.msgId, text }) })
       entry.accepted = accepted
       if (accepted) {
+        try { this.activity?.merge(chatId, identity.parentReceiptId, [receiptId], entry.landed ? 'landed' : 'accepted') } catch {}
         if (entry.landed) {
           authority.commitSteerObservation({ ...identity, type: 'landed' })
         }
@@ -1100,6 +1110,7 @@ async _drainDurableV2NormalChain(initial) {
       }
       const started = await this.startDurableV2Runner(identity)
       if (started.startFailureRecovered === true) {
+        this._observeActivity('finish', { ...identity, status: 'not-started', err: '任务未启动，已通知群内' })
         settled.push({ receiptId: identity.receiptId, status: 'startupNotified' })
         return { receiptId: firstReceiptId, status: settled[0].status,
           settledReceiptIds: settled.map(item => item.receiptId),
@@ -1170,6 +1181,8 @@ async _drainDurableV2NormalChain(initial) {
         }
         for (const settledReceiptId of cancelled.cancelledReceiptIds ||
           [identity.receiptId]) {
+          this._observeActivity('finish', { chatId: identity.chatId, receiptId: settledReceiptId,
+            status: control === 'recall' ? 'recalled' : 'stopped' })
           settled.push({ receiptId: settledReceiptId,
             status: control === 'recall' ? 'recalled' : 'stopped',
             terminalEffectId: null, cancellationEventId: cancelled.eventId })
@@ -1230,6 +1243,8 @@ async _drainDurableV2NormalChain(initial) {
         rt.v2TurnToken = null
         for (const settledReceiptId of released.settledReceiptIds ||
           [identity.receiptId]) {
+          this._observeActivity('finish', { chatId: identity.chatId, receiptId: settledReceiptId,
+            status: 'timeout', err: '任务超过运行时限，已停止' })
           settled.push({ receiptId: settledReceiptId,
             status: 'timeout', terminalEffectId: null,
             cancellationEventId: released.eventId })
@@ -1361,6 +1376,8 @@ stageDurableV2Message(msg, platform) {
     const rt = this._rt(msg.chatId)
     if (!rt.v2QueueReceiptIds) rt.v2QueueReceiptIds = []
     rt.v2QueueReceiptIds.push(receipt.id)
+    this._observeActivity('receive', { chatId: msg.chatId, receiptId: receipt.id,
+      text: msg.text, sender: msg.senderName || '', acceptedAt })
     return { receiptId: receipt.id, cursor: result.cursor, staged: true,
       ingressClosed: !!authority.blocked }
   }
@@ -1534,6 +1551,9 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
         throw new Error('C2 v2 runner provider unavailable')
       }
       rt.v2CardModelInfo = cardModelInfo(job.group, provider)
+      this._observeActivity('start', { chatId, receiptId, receiptIds: cohort.receiptIds, generation,
+        sessionId: this.store.getSession(chatId), model: rt.v2CardModelInfo.model,
+        runner: provider.runner, project: projectName(job.group) })
       rt.v2FollowupEnabled = followupEnabled(job.group, provider.runner)
       rt.v2SteerControl = null
       rt.v2SteerEntries = new Map()
@@ -1579,6 +1599,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
           if (rt.v2CardBinding?.opened) await rt.v2CardBinding.path.flushForTerminal()
           if (rt.v2RunnerGeneration !== generation) return
           authority.commitSteerObservation({ ...steerIdentity, receiptId: entry.identity.receiptId, type: 'landed' })
+          try { this.activity?.merge(chatId, receiptId, [entry.identity.receiptId], 'landed') } catch {}
           await rt.v2MoveCard?.(entry)
         })
         rt.v2SteerLandedChain = observation
@@ -1777,6 +1798,12 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
         onDurableEvent: event => {
           projection.accept(event)
           enqueueFrame(event)
+          this._observeActivity('observe', { chatId, receiptId, generation, event,
+            doing: rt.v2Doing, milestones: event.text?.includes('>>') ? progress.milestonesOf(projection.streamSnapshot().bufferText) : undefined })
+        },
+        onEvent: event => {
+          if (event.type === 'system' && event.subtype === 'context')
+            this._observeActivity('observe', { chatId, receiptId, generation, event })
         },
         onTurnAccepted: value => {
           const ack = capability.onTurnAccepted(value)
@@ -2049,8 +2076,14 @@ async completeDurableV2CardTurn({ chatId, receiptId, turnToken, effectId,
         ...progress.milestonesOf(payload.bufferText)]
         .filter((m, i, a) => a.indexOf(m) === i).map(redactMilestone)
         .filter(m => typeof m === 'string' && m.trim())
+      this._observeActivity('sending', { chatId, receiptId })
       const completed = await path.complete({ payload, replyText, paused,
         footer, footerDetail, milestones })
+      this._observeActivity('finish', { chatId, receiptId,
+        status: quotaFailure || closedFailure ? 'error' : payload.quiet || projected.display.silent ? 'silent' : 'answered',
+        reply: redact(quotaFailure ? T.quotaFailure : replyText || '', { pii: job.group?.redactPii !== false }),
+        err: quotaFailure ? T.quotaFailure : closedFailure ? terminalReplyText(payload) : '',
+        tokens: rt.v2UsageDecision?.tokens || null, sessionId: projected.display.sessionId })
       const after = authority.snapshot()
       const queue = after.state?.lanes?.queue?.[chatId]?.queue
       let successor = null
@@ -2269,6 +2302,7 @@ requestDurableV2Stop(chatId) {
           payloadHandles: this.durableV2Payloads,
           assertWriterLock: this.durableV2AssertWriterLock })
         rt.v2QueueReceiptIds = rt.v2QueueReceiptIds.filter(id => id !== receiptId)
+        this._observeActivity('finish', { chatId, receiptId, status: 'recalled' })
         return true
       } catch (error) { authority?.close(); this.log(error.message); return false }
     }

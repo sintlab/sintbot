@@ -1008,7 +1008,6 @@ d.dataset.theme=t;if(l!=='en'&&l!=='zh')l=/^zh/i.test((navigator.language||''))?
     <button data-tab="playground" class="navplay" title="试跑 — 从控制台直接跑一轮" aria-label="试跑"><svg class="ic ic-play" aria-hidden="true"><use href="#lu-play"/></svg></button>
   </nav>
 
-  <div id="runtimeCapabilitiesNotice" class="card" hidden style="margin-bottom:16px"><div class="lbl">当前可用操作</div><div class="hint" data-runtime-summary></div></div>
 
   <section id="overview" class="tab on"><div class="empty" style="padding:48px;text-align:center"><span class="spin"></span>　加载中…</div></section>
   <section id="providers" class="tab"></section>
@@ -1027,6 +1026,7 @@ d.dataset.theme=t;if(l!=='en'&&l!=='zh')l=/^zh/i.test((navigator.language||''))?
 /* 令牌来源:本机环回免密时服务端注入;设了密码时注入空串,退而用登录(密码 / 飞书)签发的会话令牌 ——
    记在 localStorage(服务端落盘 30 天,重启不登出);过期或被吊销的令牌只会 401 → 重新登录。 */
 let TOKEN='__SBOT_TOKEN__'; // 本机环回免密时服务端注入;为空 = 要登录(⚠ 这一行的形状被服务端单测当锚点抠 token,别改)
+/*__LIVE_ACTIVITY__*/
 const INJECTED_TOKEN=TOKEN; // 记住「是不是注入的」:注入态不显示退出登录
 TOKEN=TOKEN||localStorage.getItem('sbot-token')||sessionStorage.getItem('sbot-token')||''; // 登录签发的令牌记在 localStorage(30 天)
 const FEISHU_LOGIN='__SBOT_FEISHU_LOGIN__'; // 服务端算好:公网地址 + 凭证 + 管理员名单三样齐才是 '1'
@@ -1149,6 +1149,7 @@ function startCardHtml(){
   </div>`;
 }
 function renderOverview(){
+  if(typeof activityPanel!=='undefined')activityPanel.preserve();
   const h=S.health;
   const cap=Math.max((S.agent&&S.agent.maxConcurrent)||0,0); // 0 = 不限(无固定槽位 → 不画 gauge)
   const segs=cap>0?Array.from({length:cap},()=>'<div class="seg"></div>').join(''):'';
@@ -1164,13 +1165,13 @@ function renderOverview(){
       ${liveOn?`<button class="iconbtn sm" data-ostop="${esc(g.chatId)}" title="停止当前任务(保留会话)" style="flex:none">${IC.square}</button>
       <button class="iconbtn sm" data-onew="${esc(g.chatId)}" title="${S.runtimeCapabilities?'开新会话 — 仅在该群空闲、记录全部结账后可用;运行中请先停止,结束后再开(同群内 /new)':'开新会话 — 运行中会先中断当前任务并清空队列(同群内 /new)'}" style="flex:none">${IC.rotate}</button>`:''}</div>`).join('')
     :'<div class="empty">还没有群项目 · 去「群·项目」配置</div>';
-  $('#overview').innerHTML=`${startCardHtml()}<div id="ovInboxWrap">${inboxHtml()}</div><div class="grid cols2 stagger">
+  $('#overview').innerHTML=`${startCardHtml()}<div id="ovInboxWrap">${inboxHtml()}</div><div class="grid ${S.runtimeCapabilities?'':'cols2'} stagger">
     <div class="card" id="ovHealth"><div class="lbl">健康</div>
       <span class="hpill ${healthClass(h)}" id="ovHealthPill"><span class="led"></span><span id="ovHealthTxt">${healthText(h)}</span></span>
       <div class="hrows" id="ovHrows">${h.rows.map(r=>`<div class="hrow" data-hk="${esc(r.label)}"><span class="dot ${r.status}"></span>
         <span class="k">${esc(r.label)}</span><span class="v" title="${esc(r.detail)}">${esc(r.detail)}</span></div>`).join('')}</div>
     </div>
-    <div class="grid" style="gap:16px">
+    ${S.runtimeCapabilities?'':`<div class="grid" style="gap:16px">
       <div class="card">
         <div class="inline" style="justify-content:space-between;align-items:baseline">
           <span class="lbl" style="margin:0">并发</span>
@@ -1179,14 +1180,15 @@ function renderOverview(){
         ${cap>0?`<div class="gauge" id="ovGauge" style="margin-top:13px">${segs}</div>`:''}
       </div>
       <div class="card ovgroups"><div class="lbl">群 · 项目</div>${gRows}</div>
-    </div>
+    </div>`}
   </div>
-  <h2 class="sec">实时活动</h2><div class="card" id="ovActivity">${activityHtml()}</div>
+  ${S.runtimeCapabilities?'<div id="liveActivity"></div>':`<h2 class="sec">实时活动</h2><div class="card" id="ovActivity">${activityHtml()}</div>`}
   ${issuesHtml()}
   ${previewsHtml()}
   ${leftoversHtml()}`;
   lastActSig='';
   bindActivityClicks();
+  if(S.runtimeCapabilities&&typeof activityPanel!=='undefined')activityPanel.mount();
   bindInbox();
   // 插话:入口挂在「群·项目」每一行的 ✎ 上 —— 动作长在对象身上,目标群由那一行决定,不必再选。
   $$('#overview [data-osay]').forEach(b=>b.onclick=()=>openSay(b.dataset.osay));
@@ -1374,6 +1376,7 @@ function bindActivityClicks(){
 let lastActSig='';
 function updateOverviewLive(){
   if(!S) return;
+  if(S.runtimeCapabilities&&typeof activityPanel!=='undefined')activityPanel.live(S.live);
   if(sayRefresh&&$('#sayT')) sayRefresh();
   const live=S.live||{};
   const active=(live.concurrency&&live.concurrency.active)||0;
@@ -2610,7 +2613,6 @@ function cronFullHtml(text){
   }).join('');
 }
 const RUNTIME_UI_TEXT={
-  "summary": "当前支持多群消息、流式卡片回复、忙时跟进、停止任务、空闲群开新会话、空闲群的控制台插话（这句话和回复都进群）、状态查看、认证管理、绑定新群、空闲群的模型（Codex / Claude Code）和项目目录切换、模型的添加与设置，以及后台运行时的软件升级。群忙时的插话、静默插话、解除绑定、移除模型、定时任务、生图、画布与预览暂不可用。",
   "groups": "可绑定新群，修改模型、项目目录、权限、数据输出和忙时跟进；该群须没有进行中的任务和未结记录。切模型或项目会开始新的一段对话。停止任务和开新会话在「概览」，开新会话须等该群空闲。群里发 /model 也能切换模型。",
   "skills": "当前支持飞书文字消息、忙时跟进、任务回复和停止。定时任务、生图、群消息管理、画布与预览暂未接入。",
   "cron": "当前不执行定时任务；已有定义仅供查看。",
@@ -4301,8 +4303,6 @@ updateThemeBtn();
    ⚠ 正则一律 ^…$ 整串、不加 g 标志;更具体的条目必须排在泛化条之前。 */
 const I18N_EN=[
   ["需要处理", "Needs attention"],
-  ["当前可用操作", "Available controls"],
-  ["当前支持多群消息、流式卡片回复、忙时跟进、停止任务、空闲群开新会话、空闲群的控制台插话（这句话和回复都进群）、状态查看、认证管理、绑定新群、空闲群的模型（Codex / Claude Code）和项目目录切换、模型的添加与设置，以及后台运行时的软件升级。群忙时的插话、静默插话、解除绑定、移除模型、定时任务、生图、画布与预览暂不可用。", "Available: group messages, streaming reply cards, busy-turn followups, stopping tasks, new sessions for idle groups, console messages to idle groups (the line and the reply both appear in the group), live status, authentication, binding new groups, switching the model (Codex / Claude Code) or project of an idle group, adding and configuring models, and software upgrades in a background run. Console messages to busy groups, silent console messages, unbinding, removing models, schedules, image generation, canvas and previews are unavailable."],
   ["可绑定新群，修改模型、项目目录、权限、数据输出和忙时跟进；该群须没有进行中的任务和未结记录。切模型或项目会开始新的一段对话。停止任务和开新会话在「概览」，开新会话须等该群空闲。群里发 /model 也能切换模型。", "Bind new groups and change the model, project folder, permissions, data display and busy-turn followups of a group with no running task or unsettled record. Changing the model or project starts a new conversation. Stop tasks and start new sessions in Overview; a new session needs the group to be idle. Members can also switch models with /model in the group."],
   ["当前支持飞书文字消息、忙时跟进、任务回复和停止。定时任务、生图、群消息管理、画布与预览暂未接入。", "Feishu text messages, busy-turn followups, task replies and stopping are supported. Schedules, image generation, group message management, canvas and previews are unavailable."],
   ["当前不执行定时任务；已有定义仅供查看。", "Schedules are not executed. Existing definitions are shown for reference only."],
@@ -5965,10 +5965,7 @@ function disableRuntimeControl(el,reason){
   }
 }
 function applyRuntimeCapabilities(){
-  const banner=document.getElementById('runtimeCapabilitiesNotice');
-  if(banner)banner.hidden=!(S&&S.runtimeCapabilities);
   if(!S||!S.runtimeCapabilities)return;
-  if(banner){const body=banner.querySelector('[data-runtime-summary]'),text=trText(RUNTIME_UI_TEXT.summary);if(body&&body.textContent!==text)body.textContent=text;}
   document.querySelectorAll(RUNTIME_DISABLED_SELECTORS).forEach(el=>disableRuntimeControl(el,RUNTIME_UI_TEXT.unavailable));
   // 插话照服务端白名单放行(第 1 版只接空闲群,忙不忙在浮层里按实时状态说)
   if(!runtimeAllows('POST','/api/groups/say'))document.querySelectorAll('[data-osay]').forEach(el=>disableRuntimeControl(el,RUNTIME_UI_TEXT.unavailable));
@@ -6002,6 +5999,7 @@ function applyTurnEvent(a){
 // reconnect drops, and rows the self-heal resolved to a bare '✓' without their real done
 // data. Idempotent (id-keyed merge). Called on load + on every SSE (re)connect.
 async function syncActivity(repaint){
+  if(S?.runtimeCapabilities&&typeof activityPanel!=='undefined')return activityPanel.sync();
   try{const d=await api('/api/activity'); if(d&&d.activity){d.activity.forEach(applyTurnEvent); if(repaint&&$('#overview').innerHTML)updateOverviewLive();}}catch(e){}
 }
 
@@ -6012,10 +6010,11 @@ function startLive(){
     if(esRef){try{esRef.close();}catch{}}
     helloN=0;
     const es=new EventSource('/api/events?token='+encodeURIComponent(TOKEN));esRef=es;
+    es.addEventListener('activity-update',ev=>{try{activityPanel.receive(JSON.parse(ev.data));}catch{}});
     // hello fires on first connect AND every native reconnect → replay the buffer to
     // recover whatever SSE dropped while we were away (SSE has no replay of its own);
     // 重连(非首连)还拉一次全量 state —— 断流期间的 live/conn 变化就地补齐,不整页重渲染。
-    es.addEventListener('hello',()=>{$('#conn').classList.add('live');syncActivity(true);
+    es.addEventListener('hello',()=>{$('#conn').classList.add('live');if(typeof activityPanel!=='undefined')activityPanel.connected(true);syncActivity(true);
       if(++helloN>1)api('/api/state').then(r=>{S=r;updateDaemon();updateTopUpdateBadge();updateOverviewLive();updateConnLive();startClock();}).catch(()=>{});});
     es.addEventListener('tick',ev=>{try{const d=JSON.parse(ev.data);if(S){if(d.live)S.live=d.live;if('conn' in d)S.conn=d.conn;}if(d.activity)d.activity.forEach(applyTurnEvent);updateDaemon();updateOverviewLive();updateConnLive();}catch{}});
     startAutoRefresh();
@@ -6023,7 +6022,7 @@ function startLive(){
     es.addEventListener('turn',ev=>{try{const d=JSON.parse(ev.data);applyTurnEvent(d);updateOverviewLive();
       // 收件箱跟着轮次走:刚失败的要尽快出现,重说成功的要尽快消失 —— 不等 60 秒的例行刷新;只取这一块,不拉整份 state
       if(d.kind==='done')refreshInbox();}catch(e){}});
-    es.onerror=()=>{$('#conn').classList.remove('live');checkStaleAuth();};
+    es.onerror=()=>{$('#conn').classList.remove('live');if(typeof activityPanel!=='undefined')activityPanel.connected(false);checkStaleAuth();};
   }catch(e){}
 }
 /* SSE 断流自愈:daemon 重启会作废内存里的 token(页面 token / 登录 session 都是),

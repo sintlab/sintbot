@@ -439,6 +439,10 @@ function runTurn({
             ev.contextTokens = (lastMsgUsage.input_tokens || 0) + (lastMsgUsage.cache_read_input_tokens || 0) + (lastMsgUsage.cache_creation_input_tokens || 0)
           }
           if (ev.type === 'result') {
+            const windows = Object.values(raw.modelUsage || {}).map(value => value?.contextWindow)
+            // No model-name guesses; a single reported capacity is unambiguous.
+            if (windows.length && windows.every(value => Number.isFinite(value) && value > 0) &&
+                new Set(windows).size === 1) ev.contextWindowTokens = windows[0]
             // 当前上下文规模 = 最后一次 API 请求的输入侧总量(未命中 + 缓存读 + 缓存写)。
             // result.usage 是整轮跨请求聚合、不能当上下文用;逐请求数在 assistant 事件的
             // message.usage 里(2.1.222 真机核对),兜底走 usage.iterations 末元素(同一形状)。

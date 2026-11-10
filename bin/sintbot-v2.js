@@ -114,6 +114,7 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
   let configControl
   let updater
   let liveTransport
+  let activity
   let onSigint, onSigterm
   try {
     const migrationFence = require('../src/c2migration').loadC2MigrationFence({ stateDir, routes })
@@ -139,6 +140,9 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
     // All group Engines must share this exact object: separate Store caches
     // would overwrite sibling sessions when they save the same state file.
     const store = new StateStore(path.join(stateDir, 'state.json'))
+    activity = require('../src/ui/liveactivity').createLiveActivity({
+      file: path.join(stateDir, 'activity-v1.json'), canWrite: assertWriterLock,
+      log: message => process.stderr.write(`Console · ${message}\n`) })
     const closeChecks = {
       claude: require('../src/agent/claudecode').isClosedRunnerResult,
       'codex-exec': require('../src/agent/codexcode').isClosedRunnerResult,
@@ -154,11 +158,12 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
     const limits = { maxEventCount: 100_000, maxJournalBytes: 64 * 1024 * 1024,
       maxCompletionEvents: 1_000, maxCompletionBytes: 8 * 1024 * 1024 }
     let finishing = false
-    const finish = result => {
+    const finish = async result => {
       if (finishing) return
       finishing = true
       ui?.close()
       updater?.close()
+      await activity?.close()
       lock.release()
       process.stderr.write(`C2 multi-group · ${result.reason}; platform stopped=${result.platformStopped}; runner drained=${result.drained}\n`,
         () => process.exit(result.code))
@@ -230,7 +235,7 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
             return result
           }
           engine = new Engine({ ...cfg, groups: { [route.chatId]: route.group } }, {
-            store, log: message => process.stderr.write(`C2 v2 · ${message}\n`),
+            store, activity, log: message => process.stderr.write(`C2 v2 · ${message}\n`),
             durableV2Runtime: runtime, durableV2Payloads: handles,
             durableV2StartTurn: startTurn, durableV2ApplyLocalEffect: applyLocalEffect,
             durableV2VerifyRunnerClosed: ({ result, error }) => result
@@ -284,7 +289,7 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
     process.on('SIGTERM', onSigterm)
     if (uiEnabled && !preflightOnly) {
       ui = require('../src/c2console').createC2Console({
-        configPath: cfg._path, stateDir, host: uiHost,
+        configPath: cfg._path, stateDir, host: uiHost, activity, store,
         getConfig: () => cfg, getBindings: () => service.bindings,
         getHeld: () => service.held, getCapacity: () => capacity.snapshot(),
         getConnHealth: () => liveTransport?.platform.connHealth?.() || {},
@@ -339,6 +344,7 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
     throw error
   } finally {
     if (!running) {
+      await activity?.close()
       updater?.close()
       if (onSigint) process.off('SIGINT', onSigint)
       if (onSigterm) process.off('SIGTERM', onSigterm)

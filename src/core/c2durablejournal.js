@@ -646,6 +646,16 @@ class C2DurableJournal {
       effects: new Map(this.#effects), notices: new Map(this.#notices) }
   }
 
+  // Bounded diagnostics: the console must not clone all effects and history
+  // at progress-event frequency. This is never accepted as recovery authority.
+  consoleSnapshot() {
+    return { cursor: this.#cursor, state: { lanes: {
+      queue: structuredClone(this.#state.lanes?.queue || {}),
+      stopIntent: structuredClone(this.#state.lanes?.stopIntent || {}) } },
+      receipts: { pending: structuredClone(this.#receipts.pending),
+        completed: structuredClone(this.#receipts.completed.slice(-30)) } }
+  }
+
   #settlementAuthority() {
     return { state: this.#state, receipts: this.#receipts, effects: this.#effects,
       attempts: this.#effectAttempts, descriptors: this.#effectDescriptors,

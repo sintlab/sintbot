@@ -1,4 +1,4 @@
-# Install SintBot 1.4.11
+# Install SintBot 1.4.12
 
 English · [简体中文](./zh-CN/install.md)
 
@@ -10,7 +10,7 @@ You need a Mac, Node.js 22 or newer, and projects stored on that Mac. Install an
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-The installer checks the environment, installs `sintbot@1.4.11` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.11`. No sudo is needed.
+The installer checks the environment, installs `sintbot@1.4.12` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.12`. No sudo is needed.
 
 To preview, append `-s -- --dry-run`. To choose another location, set `SINTBOT_INSTALL_DIR` and adjust the executable paths below.
 
@@ -105,7 +105,9 @@ Busy follow-ups default on for both Codex and Claude Code. Set `steer: false` to
 
 ## 6. Console
 
-With `--ui`, open `http://127.0.0.1:4600` on this Mac. The console shows each group (a paused group shows Needs attention), stops tasks, starts a new conversation for an idle group, binds new groups, switches the model or project folder of an idle group, and adds or configures models. For LAN access, set a console password in its settings first, then enable LAN access.
+The overview combines group projects and concurrency. Each row shows the runner, state and elapsed time, project folder, model and configured reasoning effort, and the latest reported context usage. Select a group to view its tasks, then expand a task for tools, reply and usage. Context is a session sample, not cumulative token consumption; unknown capacity and older samples are labeled. Row icons provide console messages, stop and new-session controls according to the current group state.
+
+With `--ui`, open `http://127.0.0.1:4600` on this Mac. The console shows each group, stops tasks, starts a new conversation for an idle group, binds new groups, switches the model or project folder of an idle group, and adds or configures models. For LAN access, set a console password in its settings first, then enable LAN access.
 
 Settings → Software updates checks for new releases. In the foreground setup above it shows the upgrade steps: press Ctrl-C and wait for exit, rerun the one-line installer, then start again with the same command. If your own launchd agent starts SintBot, Upgrade now waits until every group is idle and settled, installs the new version into `~/.local/share/sintbot/releases/<version>` and switches the agent to it; if the new version does not connect every group within 90 seconds, the previous one is restored. A window shows each step, reconnects by itself while the service restarts and can be left running in the background. On the first start after an upgrade, each serving group gets one card listing what changed; to turn this off, clear "Announce upgrades in groups" under Settings → Software updates.
 

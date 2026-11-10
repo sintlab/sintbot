@@ -49,6 +49,7 @@ const DEFAULT_ISSUES_FILE = () => path.join(os.homedir(), '.sbot', 'issues.jsonl
 const DEFAULT_SESSIONS_FILE = () => path.join(os.homedir(), '.sbot', 'ui-sessions.json')
 
 const CONSOLE_HTML = path.join(__dirname, 'console.html')
+const LIVE_ACTIVITY_JS = fs.readFileSync(path.join(__dirname, 'liveactivity-client.js'), 'utf8')
 const BROWSER_HTML = path.join(__dirname, 'browser.html') // 接管浏览器页(自包含单文件,群成员凭一次性链接也能进)
 const takeover = require('./takeover') // 接管链接的票据与 cookie(纯逻辑)
 const dashboard = require('./dashboard') // 「需要你处理」收件箱 + 活动流的账本回填(纯逻辑)
@@ -840,7 +841,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         //   隧道对端哪天被写成 127.0.0.1:4600,也不会退化成「公网全员免密」;伪造这两个头只会让自己失去免密,方向安全。
         const localBypass = !loopbackBind && isLoopbackReq(req) && !req.headers['x-forwarded-for'] && !req.headers['x-forwarded-proto']
         const injectTok = (authConfigured() && !localBypass) ? '' : token
-        return fs.readFile(CONSOLE_HTML, 'utf8', (e, html) => e ? (res.writeHead(500), res.end('console.html missing')) : (res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }), res.end(html.replace('__SBOT_TOKEN__', injectTok).replace('__SBOT_VERSION__', PKG_VERSION).replace('__SBOT_FEISHU_LOGIN__', feishuLoginInfo().ready ? '1' : ''))))
+        return fs.readFile(CONSOLE_HTML, 'utf8', (e, html) => e ? (res.writeHead(500), res.end('console.html missing')) : (res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }), res.end(html.replace('__SBOT_TOKEN__', injectTok).replace('__SBOT_VERSION__', PKG_VERSION).replace('__SBOT_FEISHU_LOGIN__', feishuLoginInfo().ready ? '1' : '').replace('/*__LIVE_ACTIVITY__*/', () => LIVE_ACTIVITY_JS))))
       }
       // 接管浏览器页。群成员的一次性链接是 /browser#k=<票>:票在 URL 片段里,服务端根本收不到 ⇒ 不进任何日志、链接预览的
       //   裸 GET 也抓不走;页面脚本读片段、人点「开始接管」后 POST /api/browser/claim 换 cookie。这里只分发页面:
@@ -867,7 +868,12 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       if (p === '/api/inbox' && req.method === 'GET') return sendJSON(res, 200, { inbox: await inboxOnly() })
       // Recent activity for the console to seed/merge on load + SSE reconnect (下一步 ②).
       // Lightweight + kept off /api/state so mutations don't re-ship it every write.
-      if (p === '/api/activity' && req.method === 'GET') return sendJSON(res, 200, { activity: recentActivity() })
+      if (p === '/api/activity' && req.method === 'GET') return sendJSON(res, 200, runtimePolicy?.activityPage
+        ? runtimePolicy.activityPage(Object.fromEntries(url.searchParams)) : { activity: recentActivity() })
+      if (p === '/api/activity/detail' && req.method === 'GET') {
+        const detail = runtimePolicy?.activityDetail?.(url.searchParams.get('chatId'), url.searchParams.get('id'))
+        return sendJSON(res, detail ? 200 : 404, detail || { error: '活动详情未记录' })
+      }
       // 版本历史(设置页「版本历史」卡):CHANGELOG.json 随包分发 = 单一事实源,发版时更新
       if (p === '/api/changelog' && req.method === 'GET') return sendJSON(res, 200, { changelog: readChangelog() })
       // 同一份版本历史的英文本(界面切英文时才拉;缺的版本前端按 version 回退中文)
@@ -2417,8 +2423,11 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
     const live = getLiveState ? getLiveState() : { running: false }
     const conn = getConnHealth ? getConnHealth() : null // 飞书 WS 健康度随心跳带上(SSE 无重放,轮询兜底)
     const msg = `event: tick\ndata: ${JSON.stringify({ live, conn, ts: Date.now(),
-      ...(runtimePolicy ? { activity: runtimePolicy.getActivity() } : {}) })}\n\n`
-    for (const c of sseClients) { try { c.write(msg) } catch { sseClients.delete(c) } }
+      ...(runtimePolicy && !runtimePolicy.activityPage ? { activity: runtimePolicy.getActivity() } : {}) })}\n\n`
+    for (const c of sseClients) { try {
+      if (c.writableLength > 256 * 1024) { c.destroy(); sseClients.delete(c) }
+      else c.write(msg)
+    } catch { sseClients.delete(c) } }
   }, 3000)
 
   return {
@@ -2434,7 +2443,10 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       if (type === 'turn' && getLiveState) {
         msg += `event: tick\ndata: ${JSON.stringify({ live: getLiveState(), conn: getConnHealth ? getConnHealth() : null, ts: Date.now() })}\n\n`
       }
-      for (const c of sseClients) { try { c.write(msg) } catch { sseClients.delete(c) } }
+      for (const c of sseClients) { try {
+        if (c.writableLength > 256 * 1024) { c.destroy(); sseClients.delete(c) }
+        else c.write(msg)
+      } catch { sseClients.delete(c) } }
     },
     close() { clearInterval(tick); for (const c of sseClients) { try { c.end() } catch {} } try { browserRoutes.close() } catch {} server.close(); if (typeof server.closeAllConnections === 'function') server.closeAllConnections(); if (updater) updater.close() },
     _browserRoutes: browserRoutes, // 测试探 CDP 会话注册表用

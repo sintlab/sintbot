@@ -8,7 +8,7 @@ const { createDurableConsoleSay } = require('./consolesay')
 
 // A host facade over existing v2 authorities, not a second execution engine.
 // The allowlist applies after the existing console's authentication boundary.
-const READ_PATHS = ['/api/state', '/api/events', '/api/inbox', '/api/activity',
+const READ_PATHS = ['/api/state', '/api/events', '/api/inbox', '/api/activity', '/api/activity/detail',
   '/api/changelog', '/api/changelog-en', '/api/codex/models', '/api/usage',
   '/api/plugins', '/api/design/styles', '/api/design/icons', '/api/fs/listdir',
   '/api/feishu/admin-candidates', '/api/feishu/org-users', '/api/feishu/resolve-contact',
@@ -39,7 +39,7 @@ const WRITE_PATHS = ['/api/login', '/api/logout', '/api/logout/all',
   '/api/update/check', '/api/update/start', '/api/update/ignore']
 const SUPPORTED_RUNNERS = ['claude', 'codex']
 
-function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = () => new Map(),
+function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = () => new Map(), activity = null, store = null,
   assertWriterLock, validateConfig, applyConfig, beforeWrite = () => true,
   appliedResets = () => [], now = Date.now,
   // Console injection reaches a group only through the service's own ingress
@@ -76,7 +76,7 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
   // flight keeps the current session.
   function groupBusy(chatId, binding) {
     const rt = binding.engine?.rts?.get(chatId)
-    const snapshot = binding.journal?.snapshot()
+    const snapshot = binding.journal?.consoleSnapshot?.() || binding.journal?.snapshot()
     return !!(rt?.v2NormalRouteActive || rt?.v2AdmissionPending || rt?.v2Controller ||
       rt?.v2QueueReceiptIds?.length || snapshot?.receipts?.pending?.length ||
       snapshot?.state?.lanes?.queue?.[chatId]?.queue?.length ||
@@ -111,7 +111,7 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
     if (!binding || binding.runtime?.closed === true) return 'not-serving'
     const rt = binding.engine?.rts?.get(chatId)
     if (groupBusy(chatId, binding) || rt?.v2RunningJobs || rt?.v2StopControl || rt?.v2SkipWaiter ||
-        binding.journal?.snapshot()?.state?.lanes?.stopIntent?.[chatId]) return 'busy'
+        (binding.journal?.consoleSnapshot?.() || binding.journal?.snapshot())?.state?.lanes?.stopIntent?.[chatId]) return 'busy'
     return null
   }
   function receiptState(chatId, receiptId) {
@@ -133,11 +133,13 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
       const binding = bindings().get(chatId)
       const hold = heldGroups.get(chatId)
       const rt = binding?.engine?.rts.get(chatId)
-      const snapshot = binding?.journal?.snapshot()
+      const snapshot = binding?.journal?.consoleSnapshot?.() || binding?.journal?.snapshot()
       const pending = snapshot?.receipts?.pending || []
       const queued = snapshot?.state?.lanes?.queue?.[chatId]?.queue?.length || 0
       queue += queued
       groups[chatId] = {
+        context: activity?.context(chatId, (binding?.engine?.store || store)?.getSession(chatId),
+          !!rt?.v2NormalRouteActive, rt?.v2RunnerGeneration) || null,
         busy: !!rt?.v2NormalRouteActive,
         finalizing: !!rt?.v2TerminalStarted,
         followups: !!rt?.v2SteerControl && !rt?.v2SteerClosing && !rt?.v2TerminalStarted,
@@ -145,7 +147,7 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
         queueFaulted: !group.paused && (!binding || (!rt?.v2NormalRouteActive && !!binding.gate?.blocked)),
         waitingForCapacity: !!rt?.v2AdmissionPending,
         sinceMs: rt?.v2StartedAt ? Math.max(0, now() - rt.v2StartedAt) : 0,
-        sessionId: binding?.engine?.store?.getSession(chatId) || '',
+        sessionId: (binding?.engine?.store || store)?.getSession(chatId) || '',
         // Why a console injection would be refused right now (null = accepted).
         sayBlocked: say ? sayGate(chatId) : 'not-serving',
         // A held group needs the operator: its last result is unknown.
@@ -163,29 +165,55 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
   function getActivity() {
     const cfg = getConfig(), items = []
     for (const [chatId, binding] of bindings()) {
-      const snap = binding.journal.snapshot()
+      const snap = binding.journal.consoleSnapshot?.() || binding.journal.snapshot()
       const rt = binding.engine.rts.get(chatId)
       const group = cfg.groups[chatId]?.name || chatId.slice(-8)
       for (const receipt of snap.receipts.pending) {
+        if (activity?.has(chatId, receipt.id)) continue
         const running = rt?.v2RunningJobs?.some(job => job.msg?._c2ReceiptId === receipt.id)
         items.push({ id: receipt.id, chatId, group, ts: receipt.acceptedAt,
           kind: running ? 'start' : 'done', status: running ? 'running' : '等待处理',
           text: running ? '正在处理群消息' : '消息已登记，等待处理', sender: '' })
       }
       for (const receipt of snap.receipts.completed.slice(-30)) {
+        if (activity?.has(chatId, receipt.id)) continue
         // A settled receipt alone does not prove successful answer delivery.
         items.push({ id: receipt.id, chatId, group, ts: receipt.settledAt,
           kind: 'done', status: '已结账', text: '消息处理记录已结账', sender: '' })
       }
     }
-    return items.sort((a, b) => b.ts - a.ts).slice(0, 30)
+    const recent = activity?.list({ limit: 100 }).activity || []
+    return [...recent, ...items].filter(item => cfg.groups[item.chatId])
+      .sort((a, b) => Number(a.kind !== 'start') - Number(b.kind !== 'start') || b.ts - a.ts).slice(0, 100)
+  }
+  function activityPage(query = {}) {
+    const cfg = getConfig(), live = getLiveState()
+    const meta = activity?.list({ limit: 1 }) || { epoch: 'receipts', revision: 0 }
+    const groups = Object.entries(cfg.groups || {}).map(([chatId, group]) => {
+      const binding = bindings().get(chatId), groupStore = binding?.engine?.store || store
+      const providerName = groupStore?.getProvider?.(chatId) || group.provider || cfg.defaultProvider
+      const provider = cfg.providers?.[providerName] || {}
+      const stats = groupStore?.getSessionStats?.(chatId), session = groupStore?.getSession?.(chatId)
+      const context = live.groups[chatId].context || (session && stats?.sessionId === session && Number.isFinite(stats.ctx)
+        ? { usedTokens: stats.ctx, windowTokens: null, measuredAt: null, quality: 'historical' } : null)
+      return { chatId, name: group.name || chatId.slice(-8), project: path.basename(group.workdir || '') || '—',
+        workdir: group.workdir || '', runner: provider.runner || 'claude',
+        model: group.model || provider.model || provider.env?.ANTHROPIC_MODEL || providerName,
+        reasoningEffort: (provider.runner === 'codex' ? provider.reasoningEffort : provider.env?.CLAUDE_CODE_EFFORT_LEVEL) || '',
+        paused: !!group.paused, ...live.groups[chatId], context }
+    })
+    const rows = getActivity().filter(row => (!query.chatId || row.chatId === query.chatId) && (!query.status || row.status === query.status))
+    const offset = Math.max(0, Math.min(100, Number(query.offset) || 0)), limit = Math.max(1, Math.min(100, Number(query.limit) || 30))
+    return { epoch: meta.epoch, revision: meta.revision, storageError: !!meta.storageError, groups,
+      total: rows.length, activity: rows.slice(offset, offset + limit) }
   }
   return {
     capabilities,
     allows: (method, pathname) => (capabilities.allowed[method] || []).includes(pathname),
     // A provider without a runner field is Claude Code, as everywhere else.
     providerSupported: provider => SUPPORTED_RUNNERS.includes(provider?.runner || 'claude'),
-    getLiveState, getActivity,
+    getLiveState, getActivity, activityPage,
+    activityDetail(chatId, id) { return getConfig().groups?.[chatId] ? activity?.detail(chatId, id) || null : null },
     validateConfig(raw) { held(); validateConfig(raw) },
     beforeWrite(raw) { held(); beforeWrite(raw) },
     applyConfig(raw) { held(); applyConfig(raw) },
@@ -241,7 +269,18 @@ function createC2Console(options = {}) {
     inboxDismissPath: path.join(stateDir, 'inbox-dismissed.json'),
     verifyFile: path.join(stateDir, 'verify.json'),
   })
-  return { ...ui, facade }
+  let previous = null
+  const unsubscribe = options.activity?.subscribe(() => {
+    const page = facade.activityPage({ limit: 100 })
+    const before = new Map((previous?.activity || []).map(row => [row.chatId + ':' + row.id, JSON.stringify(row)]))
+    const current = new Set(page.activity.map(row => row.chatId + ':' + row.id))
+    const changed = page.activity.filter(row => before.get(row.chatId + ':' + row.id) !== JSON.stringify(row))
+    const groups = page.groups.filter(group => JSON.stringify(previous?.groups.find(g => g.chatId === group.chatId)) !== JSON.stringify(group))
+    ui.pushEvent('activity-update', { epoch: page.epoch, revision: page.revision, storageError: page.storageError,
+      activity: changed, groups, removed: [...before.keys()].filter(id => !current.has(id)) })
+    previous = page
+  })
+  return { ...ui, facade, close() { unsubscribe?.(); ui.close() } }
 }
 
 module.exports = { createC2Console, createC2ConsoleFacade }

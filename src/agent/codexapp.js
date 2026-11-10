@@ -143,6 +143,9 @@ function runTurn(opts = {}) {
       totalUsage = usageFromTotal(usage.total)
       if (Number.isFinite(usage.last && usage.last.inputTokens) && usage.last.inputTokens > 0) contextTokens = usage.last.inputTokens
       if (Number.isFinite(usage.modelContextWindow) && usage.modelContextWindow > 0) contextWindowTokens = usage.modelContextWindow
+      // Observational only: do not add telemetry to the durable transcript.
+      if (!completed && contextTokens > 0) legacyEmit({ type: 'system', subtype: 'context',
+        sessionId: capturedSessionId, contextTokens, contextWindowTokens })
     }
     const write = (obj) => {
       if (child.stdin.destroyed) throw new Error('codex app-server stdin closed')
@@ -402,7 +405,8 @@ function runTurn(opts = {}) {
         const next = appDeltaNext(messageDeltas.get(params.itemId) || '', delta)
         if (next !== null) {
           messageDeltas.set(params.itemId, next)
-          emit({ type: 'assistant', text: delta, contextTokens })
+          emit({ type: 'assistant', text: delta,
+            ...(contextTokens > 0 ? { contextTokens, contextWindowTokens, contextSampled: false } : {}) })
         }
       } else if (action === 4) {
         const item = params.item

@@ -1,5 +1,20 @@
 [
   {
+    "version": "1.4.12",
+    "date": "2026-11-10",
+    "name": "Projects and live activity",
+    "items": [
+      {
+        "t": "Projects, concurrency and context in one panel",
+        "d": "Show project paths, runtime, configured reasoning and context together; restore row icon actions and display task tools, reply and compact metrics after selecting a group. Remove the top available-controls notice."
+      },
+      {
+        "t": "Actual task details and reported context",
+        "d": "Shows requests, follow-ups, progress, replies and the latest reported context. Reuses existing events without extra model calls; details load on demand and restored samples are labeled historical."
+      }
+    ]
+  },
+  {
     "version": "1.4.11",
     "date": "2026-11-10",
     "name": "Unified busy follow-ups",

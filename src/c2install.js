@@ -123,6 +123,7 @@ function resolveInstallation(cfg, configFile, stateDir, { allowAddedGroups = fal
     if (group.paused !== undefined && typeof group.paused !== 'boolean') {
       throw new Error('Group paused must be a boolean')
     }
+    if (group.steer !== undefined && typeof group.steer !== 'boolean') throw new Error('Group steer must be a boolean')
     if (group.codexSteer !== undefined && typeof group.codexSteer !== 'boolean') {
       throw new Error('Group codexSteer must be a boolean')
     }

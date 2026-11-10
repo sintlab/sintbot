@@ -1,4 +1,4 @@
-# Install SintBot 1.4.10
+# Install SintBot 1.4.11
 
 English · [简体中文](./zh-CN/install.md)
 
@@ -10,7 +10,7 @@ You need a Mac, Node.js 22 or newer, and projects stored on that Mac. Install an
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-The installer checks the environment, installs `sintbot@1.4.10` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.10`. No sudo is needed.
+The installer checks the environment, installs `sintbot@1.4.11` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.11`. No sudo is needed.
 
 To preview, append `-s -- --dry-run`. To choose another location, set `SINTBOT_INSTALL_DIR` and adjust the executable paths below.
 
@@ -51,7 +51,7 @@ Create a private directory with `mkdir -p ~/.sbot && chmod 700 ~/.sbot`, then cr
       "provider": "codex",
       "workdir": "/absolute/path/to/first/project",
       "permissionMode": "dontAsk",
-      "codexSteer": true
+      "steer": true
     },
     "oc_REPLACE_WITH_SECOND_CHAT_ID": {
       "platform": "feishu",
@@ -99,9 +99,9 @@ Any text message is a task. Replies arrive in a card that appears once the model
 | `/issue text` | Log feedback; review and close it in the console overview |
 | `/help` | List commands, with this group's project and model |
 
-Send a command as a message of its own; except for `/issue` and `/model`, do not add other text after it. If the Feishu app also subscribes to the message-recall event (the console's setup guide recommends it), recalling your own message cancels it: a queued message is dropped, and the running task stops if that message alone started it; in Codex groups, recalling a message that was added to the running task cancels the whole task.
+Send a command as a message of its own; except for `/issue` and `/model`, do not add other text after it. If the Feishu app also subscribes to the message-recall event (the console's setup guide recommends it), recalling your own message cancels it: a queued message is dropped, and the running task stops if that message alone started it; recalling a follow-up handed to either runner cancels the whole task, including accepted input not yet read.
 
-Messages sent while a task runs are added to that task in Codex groups (`codexSteer: true`) and queued in Claude Code groups. If a turn returns a model error or no result, only that group is asked to resend; there is no automatic retry. If a group's last result cannot be confirmed, such as a reply whose delivery is unknown, only that group is paused and answers new messages with a short notice; other groups keep working. Nothing is replayed or retried.
+Busy follow-ups default on for both Codex and Claude Code. Set `steer: false` to queue them instead; an explicit `steer` value overrides the legacy Codex setting. Claude Code must advertise the required input capabilities, otherwise messages stay queued. Reading can wait until a long-running tool finishes. The reply card follows confirmed reading, and continuation answers are combined into one final reply. If a turn returns a model error or no result, only that group is asked to resend; there is no automatic retry. If a group's last result cannot be confirmed, such as a reply whose delivery is unknown, only that group is paused and answers new messages with a short notice; other groups keep working. Nothing is replayed or retried.
 
 ## 6. Console
 

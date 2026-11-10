@@ -1,9 +1,9 @@
-// ABI v34 adapter for the private binary decision core. Manifest assembly still stays in JS.
+// ABI v35 adapter for the private binary decision core. Manifest assembly still stays in JS.
 const fs = require('node:fs')
 const path = require('node:path')
 const { createHash } = require('node:crypto')
 
-const EXPECTED_SHA256 = '8c55d4f97a738e14885841f9b8f83906cca1e8e9aef46bb28f31022aef1fce2d'
+const EXPECTED_SHA256 = '9c29c9123b38aa75b9c47066c809d844f938baca41779372b77c02fa7baa9989'
 let bytes
 try {
   bytes = fs.readFileSync(path.join(__dirname, 'privatecore.wasm'))
@@ -26,7 +26,7 @@ try {
 } catch (cause) {
   throw new Error('SintBot binary core cannot start on this runtime', { cause })
 }
-if (core.abi_version() !== 34) throw new Error('SintBot binary core ABI mismatch')
+if (core.abi_version() !== 35) throw new Error('SintBot binary core ABI mismatch')
 const encoder = new TextEncoder()
 const decoder = new TextDecoder('utf-8', { fatal: true })
 
@@ -784,7 +784,21 @@ function guarded(fn) {
   }
 }
 
-const entries = { classifyError, routeBackend, sandboxTier, appErrorOverride, appNormalizeItem, appStreamTail, appNoticeAction, appDeltaNext, appLandedAction, appCompletionAction, appCompletionNoticeAction, manifestFeatures, manifestHeader, manifestContext, manifestSkills, manifestStyleBoard, manifestImagenAsset, manifestRuntime, manifestPolicy, systemAppendix, codexEffortRejection, wecomGatePrompt, imagenPrompt, turnPrompt, compactEvent, engineQueueStep, engineSlotsStep, engineTurnStep, engineSessionStep, engineHandoffStep, engineIntakeStep, engineLifecycleStep, engineTerminalStep, engineSteerStep, engineRecoveryStep, engineFailoverStep, parseResetFields, chooseResetEpoch, codexBuildPrompt, codexBuildArgs, appUsageFromTotal, settleUsage, appBuildRequest, claudeBaseSkillAllows, claudeBuildArgs, claudePluginAllowRules, claudeNormalizeEvent, codexNormalizeEvent, codexParseError }
+function followupCall(name, value) {
+  let ptr = 0, size = 0
+  try {
+    ptr = callText(name, JSON.stringify(value))
+    if (!ptr) throw new Error('Follow-up core rejected protocol state')
+    size = new DataView(core.memory.buffer).getUint32(ptr, true) + 4
+    return JSON.parse(decoder.decode(new Uint8Array(core.memory.buffer, ptr + 4, size - 4)))
+  } finally {
+    if (ptr && size) { new Uint8Array(core.memory.buffer).fill(0, ptr, ptr + size); core.dealloc(ptr, size) }
+  }
+}
+function followupEnabled(group, runner) { return followupCall('followup_policy', { group, runner }) }
+function claudeFollowupStep(state, event) { return followupCall('claude_followup_step', { state, event }) }
+
+const entries = { followupEnabled, claudeFollowupStep, classifyError, routeBackend, sandboxTier, appErrorOverride, appNormalizeItem, appStreamTail, appNoticeAction, appDeltaNext, appLandedAction, appCompletionAction, appCompletionNoticeAction, manifestFeatures, manifestHeader, manifestContext, manifestSkills, manifestStyleBoard, manifestImagenAsset, manifestRuntime, manifestPolicy, systemAppendix, codexEffortRejection, wecomGatePrompt, imagenPrompt, turnPrompt, compactEvent, engineQueueStep, engineSlotsStep, engineTurnStep, engineSessionStep, engineHandoffStep, engineIntakeStep, engineLifecycleStep, engineTerminalStep, engineSteerStep, engineRecoveryStep, engineFailoverStep, parseResetFields, chooseResetEpoch, codexBuildPrompt, codexBuildArgs, appUsageFromTotal, settleUsage, appBuildRequest, claudeBaseSkillAllows, claudeBuildArgs, claudePluginAllowRules, claudeNormalizeEvent, codexNormalizeEvent, codexParseError }
 for (const name of Object.keys(entries)) entries[name] = guarded(entries[name])
 
 module.exports = { ...entries, engineStep, resetBinaryCore, HUMAN_BY_KIND: HUMAN }

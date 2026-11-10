@@ -1,4 +1,5 @@
 'use strict'
+const { followupEnabled } = require('../agent/privatecore')
 
 // Assemble the same user-facing runner inputs as Engine._runTurn after the
 // host has prepared its timestamped prompt and manifest. This only assembles
@@ -25,12 +26,13 @@ function prepareC2RunnerInput({ prompt, appendSystemPrompt, msg, group, provider
     throw new TypeError('C2 runner input requires an exact process-local turn')
   }
   const isCodex = provider.runner === 'codex'
-  const codexSteer = isCodex && group.codexSteer !== false
+  const enabled = followupEnabled(group, provider.runner)
+  const codexSteer = isCodex && enabled
   if ((onSteerReady !== undefined && typeof onSteerReady !== 'function') ||
       (onSteerLanded !== undefined && typeof onSteerLanded !== 'function') ||
-      (codexSteer && (typeof onSteerReady !== 'function' ||
+      (enabled && (typeof onSteerReady !== 'function' ||
         typeof onSteerLanded !== 'function'))) {
-    throw new TypeError('C2 Codex follow-up needs durable control callbacks')
+    throw new TypeError('C2 follow-up needs durable control callbacks')
   }
   const rawCompact = Number(config.agent.autocompactTokens) || 0
   const autocompactTokens = rawCompact > 0
@@ -40,6 +42,7 @@ function prepareC2RunnerInput({ prompt, appendSystemPrompt, msg, group, provider
     prompt, appendSystemPrompt, provider,
     codexApp: isCodex && group.codexApp === true,
     codexSteer,
+    steer: !isCodex && enabled,
     codexProjectDocFallback: isCodex && group.codexProjectDocFallback === true,
     onSteerReady, onSteerLanded,
     model: group.model,

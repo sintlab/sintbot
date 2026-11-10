@@ -5,6 +5,7 @@
 // two stay in sync.
 
 const http = require('node:http')
+const { followupEnabled } = require('../agent/privatecore')
 const crypto = require('node:crypto')
 const fs = require('node:fs')
 const os = require('node:os')
@@ -507,7 +508,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       // repo:群项目关联的 git 远端(可空)。repoState 走纯 fs 的 .git/config 读取(quickLinkState)
       // —— 群卡标签要反映真实关联(origin 被手改/删掉时不能还绿着),但这里每个 API 响应都跑一遍,
       // per-group spawn git 会把控制台拖垮,所以只读文件、不 spawn。
-      .map(([chatId, g]) => ({ chatId, name: g.name || '', workdir: g.workdir || '', repo: g.repo || '', platform: chatPlatformOf(raw, chatId) /* 群属于哪个平台:配置写了就认,没写按 id 形态 / 唯一平台推断(与 config.normalizeGroupPlatforms 同口径) */, repoState: gitrepo.quickLinkState(g.workdir, g.repo), board: g.board && g.board.url ? { url: g.board.url, createdAt: g.board.createdAt || null } : null, provider: g.provider || '', effectiveProvider: (control && control.providerOf && control.providerOf(chatId)) || g.provider || raw.defaultProvider || cfg.defaultProvider, codexSteer: g.codexSteer !== false, model: g.model || '', allowedTools: g.allowedTools || [], disallowedTools: g.disallowedTools || [], permissionMode: g.permissionMode || '', paused: g.paused === true, plugins: g.plugins || null,
+      .map(([chatId, g]) => ({ chatId, name: g.name || '', workdir: g.workdir || '', repo: g.repo || '', platform: chatPlatformOf(raw, chatId) /* 群属于哪个平台:配置写了就认,没写按 id 形态 / 唯一平台推断(与 config.normalizeGroupPlatforms 同口径) */, repoState: gitrepo.quickLinkState(g.workdir, g.repo), board: g.board && g.board.url ? { url: g.board.url, createdAt: g.board.createdAt || null } : null, provider: g.provider || '', effectiveProvider: (control && control.providerOf && control.providerOf(chatId)) || g.provider || raw.defaultProvider || cfg.defaultProvider, codexSteer: followupEnabled(g, 'codex'), steer: g.steer ?? null, followupEnabled: followupEnabled(g, cfg.providers[(control && control.providerOf && control.providerOf(chatId)) || g.provider || cfg.defaultProvider]?.runner || 'claude'), model: g.model || '', allowedTools: g.allowedTools || [], disallowedTools: g.disallowedTools || [], permissionMode: g.permissionMode || '', paused: g.paused === true, plugins: g.plugins || null,
         // 项目级插件/技能(workdir 自带声明,随项目恒加载)—— 群卡摘要行不点开也看得见。
         // projectPlugins 纯 fs 读且各错各兜(readJson/scanSkills 都 catch),与同行的 projectStyleCard 同量级。
         // ⚠ workdir 必须先判空:空串会让 path.join 退化成 daemon cwd 相对读(实验证实能读到别的项目的
@@ -1795,15 +1796,15 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       }
       // Codex 忙时跟进默认开启；显式 false 才关闭。当前轮按启动时配置运行。
       // providerOf 覆盖运行时模型切换/额度回退，因此必须以实际有效 runner 校验。
-      if (p === '/api/groups/codex-steer' && req.method === 'POST') {
+      if ((p === '/api/groups/steer' || p === '/api/groups/codex-steer') && req.method === 'POST') {
         const { chatId, enabled } = await body(req); const raw = readRaw()
         if (!chatId || !raw.groups || !raw.groups[chatId]) return sendJSON(res, 404, { error: 'no such group' })
         if (typeof enabled !== 'boolean') return sendJSON(res, 400, { error: 'enabled 必须为布尔值' })
         const name = (control && control.providerOf && control.providerOf(chatId)) || raw.groups[chatId].provider || raw.defaultProvider || loadConfig(configPath).defaultProvider
         const provider = { ...DEFAULTS.providers, ...(raw.providers || {}) }[name]
-        if (!provider || provider.runner !== 'codex') return sendJSON(res, 400, { error: '仅实际使用 Codex 的群项目可开启忙时跟进' })
-        if (enabled) delete raw.groups[chatId].codexSteer
-        else raw.groups[chatId].codexSteer = false
+        if (p === '/api/groups/codex-steer' && (!provider || provider.runner !== 'codex')) return sendJSON(res, 400, { error: '仅实际使用 Codex 的群项目可开启忙时跟进' })
+        raw.groups[chatId].steer = enabled
+        delete raw.groups[chatId].codexSteer
         writeRaw(raw)
         return sendJSON(res, 200, await buildState())
       }

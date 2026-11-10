@@ -1,4 +1,4 @@
-# 安装 SintBot 1.4.10
+# 安装 SintBot 1.4.11
 
 [English](../install.md) · 简体中文
 
@@ -10,7 +10,7 @@
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-安装器会自动检查环境，把 `sintbot@1.4.10` 装到 `~/.local/share/sintbot`，并验证程序入口、内置核心和飞书模块。看到 `Installed and verified SintBot 1.4.10` 就可以继续。不需要 sudo。
+安装器会自动检查环境，把 `sintbot@1.4.11` 装到 `~/.local/share/sintbot`，并验证程序入口、内置核心和飞书模块。看到 `Installed and verified SintBot 1.4.11` 就可以继续。不需要 sudo。
 
 可选预览：在命令末尾加 `-s -- --dry-run`。要自定义安装位置，设置 `SINTBOT_INSTALL_DIR` 环境变量，并同步修改后面的可执行文件路径。
 
@@ -51,7 +51,7 @@ export FEISHU_APP_ID FEISHU_APP_SECRET
       "provider": "codex",
       "workdir": "/absolute/path/to/first/project",
       "permissionMode": "dontAsk",
-      "codexSteer": true
+      "steer": true
     },
     "oc_REPLACE_WITH_SECOND_CHAT_ID": {
       "platform": "feishu",
@@ -99,9 +99,9 @@ SINTBOT="$HOME/.local/share/sintbot/bin/sintbot"
 | `/issue 一句话` | 记下问题反馈，在控制台概览里查看和标记处理 |
 | `/help` | 查看可用命令，以及本群的项目和模型 |
 
-命令单独发一条；除 `/issue` 和 `/model` 外，后面不要跟别的字。如果飞书应用还订阅了消息撤回事件（控制台接入引导里建议订阅），撤回自己发的消息即取消那件事：还在排队的直接丢弃；当前任务只由这一条触发时会停下；Codex 群里撤回已补充进当前任务的那条，会连当前任务一起取消。
+命令单独发一条；除 `/issue` 和 `/model` 外，后面不要跟别的字。如果飞书应用还订阅了消息撤回事件（控制台接入引导里建议订阅），撤回自己发的消息即取消那件事：还在排队的直接丢弃；当前任务只由这一条触发时会停下；两种执行器中，撤回已交给执行器的补话均会取消整轮，包括已受理但尚未读取的补话。
 
-任务进行中再发的消息：Codex 群（`codexSteer: true`）会补充进当前任务，Claude Code 群会排队，等这一轮结束再处理。某一轮模型报错或没有结果时，只在本群提示重新发送，不会自动重试。某个群上一轮的结果无法确认时（例如回复是否送达不明），只暂停这个群，它收到新消息会回一句说明，其他群照常；不重放、不重试。
+Codex 和 Claude Code 的忙时跟进默认开启；`steer:false` 改为排队，显式 `steer` 优先于旧 Codex 开关。Claude Code 未提供所需输入能力时保留排队。长工具调用可能延迟读取；确认读取后回复卡才跟随补话，续轮答案合并为一条最终回复。某一轮模型报错或没有结果时，只在本群提示重新发送，不会自动重试。某个群上一轮的结果无法确认时（例如回复是否送达不明），只暂停这个群，它收到新消息会回一句说明，其他群照常；不重放、不重试。
 
 ## 6. 控制台
 

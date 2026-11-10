@@ -24,6 +24,8 @@ function createC2TurnProjection({ receiptId, turnToken, quiet, resumed = false,
   }
   let bufferText = ''
   let answerText = ''
+  let keptText = ''
+  let segmentBreak = false
   let fullText = ''
   let sessionId = null
   let contextTokens = 0
@@ -68,6 +70,11 @@ function createC2TurnProjection({ receiptId, turnToken, quiet, resumed = false,
         throw new TypeError('C2 projection tool names invalid')
       }
       if (event.text) {
+        if (segmentBreak) {
+          segmentBreak = false
+          if (bufferText) bufferText += '\n\n'
+          if (fullText) fullText += '\n\n'
+        }
         fullText = append(fullText, event.text)
         bufferText = append(bufferText, event.text)
         answerText = append(answerText, event.text)
@@ -78,6 +85,13 @@ function createC2TurnProjection({ receiptId, turnToken, quiet, resumed = false,
       // Claude can report text and tool use in one assistant event. Text before
       // the tool is progress, while the final answer begins after that tool.
       if (tools.length) answerText = ''
+    } else if (event.type === 'turn_continue') {
+      if (event.text !== undefined && typeof event.text !== 'string') throw new TypeError('C2 segment text invalid')
+      const text = (answerText.trim() ? answerText : event.text || '').trim()
+      if (text && text !== NO_REPLY) keptText += (keptText ? '\n\n' : '') + text
+      if (bufferText.trim() === NO_REPLY) bufferText = ''
+      if (fullText.trim() === NO_REPLY) fullText = ''
+      answerText = ''; segmentBreak = true
     } else if (event.type === 'result') {
       if (event.text !== undefined && typeof event.text !== 'string') {
         throw new TypeError('C2 projection result text invalid')
@@ -138,7 +152,11 @@ function createC2TurnProjection({ receiptId, turnToken, quiet, resumed = false,
     }
     completed = true
     const runnerExit = requireResult && !observedResult && !runnerResult.aborted
-    const resultText = observedResult?.text || ''
+    const rawResultText = observedResult?.text || ''
+    const tail = (answerText.trim() ? answerText : rawResultText).trim()
+    const joined = keptText ? keptText + (tail && tail !== NO_REPLY ? '\n\n' + tail : '') : ''
+    const resultText = joined || rawResultText
+    if (joined) answerText = joined
     const payload = Object.freeze({
       type: 'finalizeEffectCommit', receiptId, turnToken, quiet,
       source: observedResult ? 'result' : runnerExit ? 'runner-exit' : 'close',

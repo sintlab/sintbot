@@ -9,7 +9,7 @@ const { isDeepStrictEqual } = require('node:util')
 const { redact } = require('./redact')
 const { fmtStamp, normalizeTz } = require('./time')
 const { settleUsage, manifestPolicy, manifestHeader, manifestContext, manifestFeatures, manifestSkills,
-  systemAppendix, turnPrompt, engineTerminalStep, engineQueueStep } = require('../agent/privatecore')
+  followupEnabled, systemAppendix, turnPrompt, engineTerminalStep, engineQueueStep } = require('../agent/privatecore')
 const { taskId } = require('./enginecheckpoint')
 const { prepareCardTerminalPath } = require('./c2cardterminalpath')
 const { terminalReplyText } = require('./c2terminaleffectbridge')
@@ -468,7 +468,7 @@ async _durableV2Command(msg, cmd, rest) {
           group.allowedTools, group.disallowedTools).tier)
       } catch {}
       return reject('help', T.help({ project: projectName(group), model: label(name, provider),
-        steer: isCodex && group.codexSteer !== false, readOnly }))
+        steer: followupEnabled(group, provider.runner), readOnly }))
     }
     if (cmd === '/status') {
       const rt = this.rts.get(msg.chatId)
@@ -651,7 +651,7 @@ async runDurableV2Message(msg, platform) {
       lane?.handoff?.[msg.chatId]?.phase === 'running' ||
       Array.isArray(queue) && queue.length > 0 ||
       rt.v2RunningJobs || rt.v2QueueReceiptIds?.length
-    if (busy && provider.runner === 'codex' && group.codexSteer !== false &&
+    if (busy && rt.v2FollowupEnabled &&
         rt.v2SteerControl && rt.v2NormalRouteActive && !rt.v2RunnerStopVerified &&
         !rt.v2TerminalStarted && !rt.v2StreamQuiescing && rt.v2Controller &&
         !rt.v2Controller.signal.aborted && !rt.v2SteerClosing) {
@@ -1534,6 +1534,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
         throw new Error('C2 v2 runner provider unavailable')
       }
       rt.v2CardModelInfo = cardModelInfo(job.group, provider)
+      rt.v2FollowupEnabled = followupEnabled(job.group, provider.runner)
       rt.v2SteerControl = null
       rt.v2SteerEntries = new Map()
       rt.v2SteerClosing = false

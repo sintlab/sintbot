@@ -1,5 +1,16 @@
 [
   {
+    "version": "1.4.11",
+    "date": "2026-11-10",
+    "name": "Unified busy follow-ups",
+    "items": [
+      {
+        "t": "Busy follow-ups default on for Codex and Claude Code",
+        "d": "One per-group switch preserves explicit disabling. Claude follow-ups join after confirmed reading, and continuation answers form one final reply. Recalling handed-over input cancels the whole task; uncertain delivery is never replayed."
+      }
+    ]
+  },
+  {
     "version": "1.4.10",
     "date": "2026-11-10",
     "name": "Interrupted task completion",

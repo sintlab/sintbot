@@ -2619,7 +2619,7 @@ const RUNTIME_UI_TEXT={
   "paused": "已暂停：不接收本群新消息，配置与会话保留。",
   "resume": "恢复本群：重新接收本群消息，配置与会话保留。",
   "resumeLabel": "恢复",
-  "steer": "群成员的后续文字消息可加入当前任务；只有确认消息已进入模型后才算送达。控制台插话只在群空闲时可用，不加入当前任务；定时任务暂不可用。",
+  "steer": "Codex 与 Claude Code 默认开启忙时跟进；长命令执行期间的补充会在工具步骤之间读取。只有确认模型已读取才显示已加入；不支持此能力时排队。控制台插话仅空闲时可用。",
   "preview": "当前版本未接入预览服务。",
   "providers": "可添加模型，修改型号、端点、密钥、思考深度与推理强度，测试、隐藏或拖动排序；各群的模型在「群·项目」里切换。改型号、后端或端点时，用它的群须空闲，并会开始新的一段对话；默认模型和群正在用的模型不能隐藏。移除模型暂不可用。",
   "providersView": "当前可查看模型配置与登录状态；各群的模型在「群·项目」里切换。添加或修改模型暂不可用。",
@@ -2631,7 +2631,7 @@ function renderGroups(){
     // Codex(GPT)跑自己的 agent 框架:只吃 permissionMode→沙箱层级,allow/deny 与 MCP 门控
     // 都是 Claude 专属(codexcode 根本不接收这些字段)。所以 codex 群不渲染那些无效控件。
     const pr=provOf(g), isCodex=!!pr&&pr.runner==='codex';
-    const showCodexSteer=runsCodex(g);
+
     // 群属于哪个平台(服务端按配置 / id 形态算好):企微群没有画布、没有解散、基础技能文案不同;徽标只在配了企微 / Slack 时出(只配飞书的机器零变化)
     const isWe=g.platform==='wecom', isSl=g.platform==='slack', showPlat=!!(S.platforms&&(S.platforms.wecom||S.platforms.slack));
     const platTag=showPlat?`<span class="tag tan" title="${isWe?'企业微信群:只收 @ 机器人的消息;没有画布、表情回应与撤回即停':isSl?'Slack 频道:没有画布与表情回应,群内收发文件未接;控制面用 !命令 或 /sint':'飞书群'}">${isWe?'企业微信':isSl?'Slack':'飞书'}</span>`:'';
@@ -2845,13 +2845,13 @@ function renderGroups(){
       <select class="gprov" data-g="${esc(g.chatId)}" style="width:auto;min-width:110px;padding:5px 30px 5px 10px;font-size:11.5px">
         ${S.providers.filter(pp=>!pp.hidden&&pp.configured).map(pp=>`<option value="${esc(pp.name)}" ${pp.name===(g.provider||S.defaultProvider)?'selected':''}>${esc(pp.name)}${pp.model?' · '+esc(pp.model):''}</option>`).join('')}
       </select></div>
-    ${showCodexSteer?`<div class="kv" style="align-items:flex-start"><span class="kk">忙时跟进</span><span class="vv" style="min-width:0">
-      <label class="inline" style="gap:6px;cursor:pointer" title="${esc(S.runtimeCapabilities?RUNTIME_UI_TEXT.steer:'开启后，Codex 处理任务期间：群成员的后续消息、控制台勾了「回复」的插话，都会加入当前任务 —— 相关要求及时吸收，独立请求按先后回应。定时任务和不回复的插话仍排在后面。')}">
-        <input type="checkbox" class="gsteer" data-g="${esc(g.chatId)}"${g.codexSteer?' checked':''} style="width:auto;margin:0"/>
+    <div class="kv" style="align-items:flex-start"><span class="kk">忙时跟进</span><span class="vv" style="min-width:0">
+      <label class="inline" style="gap:6px;cursor:pointer" title="${esc(S.runtimeCapabilities?RUNTIME_UI_TEXT.steer:'开启后，处理任务期间：群成员的后续消息、控制台勾了「回复」的插话，都会加入当前任务 —— 相关要求及时吸收，独立请求按先后回应。定时任务和不回复的插话仍排在后面。')}">
+        <input type="checkbox" class="gsteer" data-g="${esc(g.chatId)}"${g.followupEnabled?' checked':''} style="width:auto;margin:0"/>
         <span style="font-size:11.5px;color:var(--dim)">后续消息加入当前处理</span>
       </label>
-      <span class="faint" style="font-size:11px">仅 Codex · 默认开启 · 下轮生效</span>
-    </span></div>`:''}
+      <span class="faint" style="font-size:11px">默认开启 · 下轮生效</span>
+    </span></div>
     <div class="kv"><span class="kk">执行模式</span>${modeControl}</div>
     ${permPlug}
     <div class="spacer"></div>
@@ -2890,7 +2890,7 @@ function renderGroups(){
     try{S=await api('/api/groups/pause','POST',{chatId:b.dataset.gpause,paused:on});renderGroups();renderOverview();toast(S.runtimeCapabilities?(on?'已暂停':'已恢复'):(on?'已暂停 · 群内已通知':'已恢复 · 群内已通知'),'ok');}catch(e){toast(e.message,'err');}});
   $$('#groups .gprov').forEach(sel=>sel.onchange=async()=>{try{const r=await api('/api/groups/provider','POST',{chatId:sel.dataset.g,provider:sel.value});S=r;renderOverview();renderGroups();toast(r.switched&&r.switched.live?('已切到 '+sel.value+' · 会话已重置,下条消息生效'):('已保存 '+sel.value+' · daemon 未运行下次生效'),'ok');}catch(e){toast(e.message,'err');}});
   $$('#groups .gsteer').forEach(c=>c.onchange=async()=>{const on=c.checked;
-    try{S=await api('/api/groups/codex-steer','POST',{chatId:c.dataset.g,enabled:on});renderGroups();toast(on?'已开启 · 下轮生效':'已关闭 · 下轮恢复排队','ok');}
+    try{S=await api('/api/groups/steer','POST',{chatId:c.dataset.g,enabled:on});renderGroups();toast(on?'已开启 · 下轮生效':'已关闭 · 下轮恢复排队','ok');}
     catch(e){c.checked=!on;toast(e.message,'err');}});
   $$('#groups [data-pol]').forEach(b=>b.onclick=async()=>{const g=b.dataset.pol,allow=splitList($('.gallow[data-g="'+g+'"]').value),deny=splitList($('.gdeny[data-g="'+g+'"]').value);try{S=await api('/api/groups/policy','POST',{chatId:g,allowedTools:allow,disallowedTools:deny});toast('权限已保存 · 下轮生效','ok');}catch(e){toast(e.message,'err');}});
   // 仓库地址:保存 = 校验 + git init(若非仓库)+ 设 origin(幂等,不 clone/不提交);留空保存 = 解除关联。
@@ -3330,7 +3330,7 @@ function sayPlan(chatId,reply){
   if(lv.finalizing) return {busy:true,join:false,why:'closing',lv};
   if(lv.followups) return reply?{busy:true,join:true,lv}:{busy:true,join:false,why:'quiet',lv};
   const g=(S.groups||[]).find(x=>x.chatId===chatId)||{};
-  return {busy:true,join:false,why:!runsCodex(g)?'other':(!g.codexSteer?'off':'turn'),lv};
+  return {busy:true,join:false,why:!g.followupEnabled?'off':'turn',lv};
 }
 /* 这个群眼下实际跑的是不是 Codex(按生效中的模型,含临时切换)—— 群卡「忙时跟进」开关显不显示、插话框说不说
    「去打开忙时跟进」,都按这一个判。两处各写一份,开关和说明就会对不上。 */
@@ -4311,10 +4311,11 @@ const I18N_EN=[
   ["已暂停：不接收本群新消息，配置与会话保留。", "Paused: no new group messages are accepted; configuration and sessions are retained."],
   ["恢复本群：重新接收本群消息，配置与会话保留。", "Resume this group: its messages are accepted again; configuration and sessions are retained."],
   ["恢复", "Resume"],
-  ["群成员的后续文字消息可加入当前任务；只有确认消息已进入模型后才算送达。控制台插话只在群空闲时可用，不加入当前任务；定时任务暂不可用。", "Followup text messages from group members can join the current task. Delivery is confirmed only when the model receives the message. Console messages work only while the group is idle and never join the current task; schedules are unavailable."],
+  ["Codex 与 Claude Code 默认开启忙时跟进；长命令执行期间的补充会在工具步骤之间读取。只有确认模型已读取才显示已加入；不支持此能力时排队。控制台插话仅空闲时可用。", "Busy-turn followups are on by default for Codex and Claude Code. Followups are read between tool steps; a long command must finish first. Joined means the model has read the message. Unsupported clients queue followups. Console messages require an idle group."],
   ["当前版本未接入预览服务。", "Preview services are unavailable in this version."],
   ["当前可查看模型配置与登录状态；各群的模型在「群·项目」里切换。添加或修改模型暂不可用。", "Model configuration and login status are shown here. Switch each group's model under Groups. Adding or changing models is unavailable."],
   ["可添加模型，修改型号、端点、密钥、思考深度与推理强度，测试、隐藏或拖动排序；各群的模型在「群·项目」里切换。改型号、后端或端点时，用它的群须空闲，并会开始新的一段对话；默认模型和群正在用的模型不能隐藏。移除模型暂不可用。", "Add models; change their model id, endpoint, key, thinking depth and reasoning effort; test, hide or drag to reorder them. Switch each group's model under Groups. Changing a model id, backend or endpoint needs the groups using it to be idle and starts a new conversation for them. The default model and models in use by a group cannot be hidden. Removing models is unavailable."],
+  ["默认开启 · 下轮生效", "On by default · Applies next turn"],
   ["当前只能添加或修改 Codex 或 Claude Code 模型", "Only Codex or Claude Code models can be added or changed right now."],
   ["默认模型须是列表中未隐藏的 Codex 或 Claude Code 模型", "The default model must be a visible Codex or Claude Code model from the list."],
   ["有群因未解决的故障暂停处理，它用的模型、后端或端点要等处理完并重启后才能改", "A group is held after an unresolved fault; the model, backend or endpoint it uses can change only after the fault is handled and the service restarts."],

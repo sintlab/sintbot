@@ -15,6 +15,7 @@
 
 const { spawn } = require('node:child_process')
 const { StringDecoder } = require('node:string_decoder')
+const { createClaudeFollowup } = require('./claudefollowup')
 const { ensureProxy, proxyBaseFor } = require('./visionproxy')
 
 // Always-on 群项目基础能力: auto-allowed regardless of preset (even read-only) so the
@@ -35,7 +36,7 @@ const closedRunnerErrors = new WeakSet()
 const isClosedRunnerError = error => !!error && typeof error === 'object' && closedRunnerErrors.has(error)
 const closedError = error => { closedRunnerErrors.add(error); return error }
 const PRE_INIT_HOOK_EVENTS = new Set(['hook_started', 'hook_response'])
-const DURABLE_EVENT_TYPES = new Set(['system', 'assistant', 'user', 'result', 'tool_result'])
+const DURABLE_EVENT_TYPES = new Set(['system', 'assistant', 'user', 'result', 'tool_result', 'turn_continue'])
 // Tool output is completion evidence only, never answer text.
 function durableToolResults(ev) {
   const results = Array.isArray(ev.results) ? ev.results : []
@@ -152,6 +153,8 @@ function runTurn({
   log = () => {}, // daemon logger — 与 codex runner 同一个口子(engine 两边都传 this.log)
   spawnFn = spawn, // 可注入,供单测驱动 spawn/解析环路(与 codexcode 同一形状)
   softStopGraceMs = 10000,
+  steer = false, onSteerReady, onSteerLanded,
+  steerReceiptTimeoutMs = 10000, steerHoldMs = 20000, interruptGraceMs = 2000,
   closeGraceMs = 3000, // short: the grace starts AFTER the answer, so we're only waiting for
   // the OS to close a possibly-clinging pipe (MCP browser children / cmd.exe shim). Claude
   // persists its session continuously, so killing ~3s post-answer is safe → the group frees
@@ -225,7 +228,7 @@ function runTurn({
       }
       // The binary owns the permission, tool allow/deny and argument policy.
       // Node only resolves capability and writes the project-scoped MCP file.
-      const args = claudeBuildArgs({ model, providerModel: provider.model, sessionId,
+      const args = claudeBuildArgs({ steer, model, providerModel: provider.model, sessionId,
         permissionMode, autocompactTokens, autocompactSupported,
         mcpConfigPath, allowedTools, pluginAllows, disallowedTools,
         appendSystemPrompt, workdir })
@@ -242,8 +245,14 @@ function runTurn({
       // Feed the prompt over stdin instead of as an argv element: cross-platform,
       // and it removes ALL Windows argv/cmd.exe escaping risk for arbitrary chat
       // text (quotes, &, |, %, newlines). Close stdin so `claude -p` starts.
-      child.stdin.on('error', () => { /* child may exit before the write drains */ })
-      child.stdin.end(prompt)
+      let followup = null
+      let stdinOpen = true
+      const endStdin = () => { if (stdinOpen) { stdinOpen = false; child.stdin.end() } }
+      const writeFrame = frame => {
+        if (!stdinOpen || childCloseObserved) throw new Error('Claude input is closed')
+        child.stdin.write(JSON.stringify(frame) + '\n')
+      }
+      child.stdin.on('error', error => { if (steer && !settled) followup?.fail(error) })
 
       let capturedSessionId = sessionId || null
       let lastResult = null
@@ -265,7 +274,7 @@ function runTurn({
       // Resolution is guarded (exactly once) because a close-grace timer can force the
       // turn to settle before the 'close' event fires — otherwise a lingering pipe would
       // wedge the per-group lock forever (never-hang invariant).
-      const finish = (fn) => { if (settled) return; settled = true; if (killTimer) clearTimeout(killTimer); if (closeTimer) clearTimeout(closeTimer); if (signal) signal.removeEventListener('abort', onAbort); fn() }
+      const finish = (fn) => { if (settled) return; settled = true; followup?.dispose(); if (killTimer) clearTimeout(killTimer); if (closeTimer) clearTimeout(closeTimer); if (signal) signal.removeEventListener('abort', onAbort); fn() }
       const resolveRun = result => {
         if (childCloseObserved) closedRunnerResults.add(result)
         resolve(result)
@@ -332,12 +341,21 @@ function runTurn({
           // Windows has no POSIX signals, and killing the cmd.exe shim would orphan
           // the real claude process underneath. taskkill /T /F ends the whole tree.
           try { spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore', windowsHide: true }) } catch {}
+        } else if (followup && stdinOpen) {
+          try { followup.stop() } catch { /* close proof remains authoritative */ }
+          killTimer = setTimeout(() => {
+            try { child.kill('SIGTERM') } catch {}
+            killTimer = setTimeout(() => { try { child.kill('SIGKILL') } catch {} }, softStopGraceMs)
+          }, interruptGraceMs)
         } else {
           try { child.kill('SIGTERM') } catch { /* already gone */ }
           killTimer = setTimeout(() => { try { child.kill('SIGKILL') } catch {} }, softStopGraceMs)
         }
         armCloseGrace() // even after a kill, 'close' can hang on a clinging pipe — bound it
       }
+      if (steer) followup = createClaudeFollowup({ write: writeFrame, end: endStdin,
+        onReady: onSteerReady, onLanded: onSteerLanded, onFailure: failDurableEvent,
+        receiptTimeoutMs: steerReceiptTimeoutMs, holdMs: steerHoldMs })
       if (signal) {
         if (signal.aborted) onAbort()
         else signal.addEventListener('abort', onAbort, { once: true })
@@ -370,6 +388,7 @@ function runTurn({
           if (!line) continue
           let raw
           try { raw = JSON.parse(line) } catch { continue } // skip non-JSON noise
+          if (followup && followup.protocol(raw)) continue
           if (onTurnAccepted && !turnAccepted) {
             // Locally configured session hooks report their own lifecycle before
             // init. They are not model output; skip them and keep waiting.
@@ -395,6 +414,9 @@ function runTurn({
               return
             }
             turnAccepted = true
+          }
+          if (followup && raw.type === 'system' && raw.subtype === 'init') {
+            if (followup.init(raw) === 'unavailable') log('当前模型程序未提供忙时跟进能力，本轮后续消息排队')
           }
           // key 错快速失败(1.0.3):claude 对 401 / 403 默认重试约 3 分钟才放弃,第一次重试时(实测 0.8 秒)就会先报一条
           // `system/api_retry` 带 error_status。只对 API key 型模型(有 baseUrl)当场收尾 —— 订阅登录的 401 可能是
@@ -422,6 +444,10 @@ function runTurn({
             // message.usage 里(2.1.222 真机核对),兜底走 usage.iterations 末元素(同一形状)。
             const last = lastMsgUsage || (ev.usage && Array.isArray(ev.usage.iterations) ? ev.usage.iterations[ev.usage.iterations.length - 1] : null)
             if (last) ev.contextTokens = (last.input_tokens || 0) + (last.cache_read_input_tokens || 0) + (last.cache_creation_input_tokens || 0)
+          }
+          if (followup && !aborted && ev.type === 'result') {
+            ev = followup.result(ev)
+            if (ev.type === 'turn_continue') lastMsgUsage = null
           }
           // Only transcript events reach the durable projection. Informational
           // stream additions (for example rate_limit_event) carry no answer.
@@ -469,6 +495,10 @@ function runTurn({
         if (onDurableEvent) durableWork.then(() => { if (!durableFailed) completeClose(code) })
         else completeClose(code)
       })
+      if (!aborted) {
+        if (followup) followup.start(prompt)
+        else child.stdin.end(prompt)
+      }
     }
   })
 }

@@ -18,7 +18,7 @@ const WRITE_PATHS = ['/api/login', '/api/logout', '/api/logout/all',
   '/api/ui/network', '/api/ui/public-url', '/api/ui/update-settings', '/api/feishu/admins',
   '/api/groups', '/api/groups/provider', '/api/fs/mkdir',
   '/api/groups/order', '/api/groups/policy', '/api/groups/redact',
-  '/api/groups/codex-steer', '/api/groups/pause', '/api/groups/stop',
+  '/api/groups/codex-steer', '/api/groups/steer', '/api/groups/pause', '/api/groups/stop',
   // A fresh session only for an idle, settled group (same rule as /new).
   '/api/groups/new', '/api/groups/interrupt',
   '/api/agent', '/api/provider-settings', '/api/codex/verify', '/api/usage/refresh',

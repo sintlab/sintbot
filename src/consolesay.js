@@ -86,7 +86,7 @@ function createConsoleSay({ getPlatform, getGroup, handle, locate, log = () => {
   }
 }
 
-// ── 持久处理流程(sintbot-v2)的插话,第 1 版:只接「空闲群 · 这句话进群 · 回复进群」 ──
+// ── 持久处理流程(sintbot-v2)的插话,这句话与回复进群，忙时沿用普通群消息的跟进/排队流程 ──
 //
 // 群里那行「【管理员】…」就是驱动这一轮的那条平台消息:它的 om_ 消息 id 就是这笔任务的来源身份
 // (source 'message'),与群成员自己发的一条消息同形 —— 收据、回复锚点、/stop、重启后的中断告知
@@ -97,7 +97,6 @@ function createConsoleSay({ getPlatform, getGroup, handle, locate, log = () => {
 // 第 1 版不做的,都在发群消息**之前**就拒,群里不留痕:
 //   · 静默插话(这句不进群):没有平台消息可锚,需要另一种来源和重启告知路径;
 //   · 不回复的插话(quiet):持久路径还不接静默收据;
-//   · 群正忙:不排队、也不加入当前任务;
 //   · 斜杠命令:群命令不走插话(停止、开新会话在概览里有按钮)。
 //
 // requestId:控制台每次提交带的 32 位十六进制幂等键(经 syntheticSource 校验并折成键)。发出那行字
@@ -128,9 +127,10 @@ function refusalOf(value) {
 //   route(msg, platform)       服务的统一入口(routeMessage):暂停 / 待人工 / 收尾中 / 升级中都在那里把关
 //   receiptState(chatId, id)   该群日志里这笔收据:'pending' | 'completed' | null
 function createDurableConsoleSay({ getPlatform, getGroup, gate, route, receiptState,
+  locate = () => ({ state: 'accepted' }),
   log = () => {}, now = () => Date.now(), sendTimeoutMs = SEND_TIMEOUT_MS,
   confirmMs = CONFIRM_MS, pollMs = POLL_MS, maxRequests = MAX_REQUESTS } = {}) {
-  for (const hook of [getPlatform, getGroup, gate, route, receiptState, log, now]) {
+  for (const hook of [getPlatform, getGroup, gate, route, receiptState, locate, log, now]) {
     if (typeof hook !== 'function') throw new TypeError('durable console say needs explicit hooks')
   }
   const posted = new Map() // 请求键 → 群里那行字的消息 id(按插入顺序,超过上限丢最早的)
@@ -171,7 +171,7 @@ function createDurableConsoleSay({ getPlatform, getGroup, gate, route, receiptSt
         return { ok: false, reason: 'shown-failed' }
       }
       remember(key, shownId)
-      // 发这行字的这会儿群里可能刚开始了别的任务:此时不注入(第 1 版忙时不排队、不加入)
+      // 发送期间再次检查暂停、停止、维护及容量，正常忙时仍走统一入口
       const late = gate(chatId)
       if (late) return { ok: false, reason: late === 'busy' ? 'busy-after-post' : late }
     }
@@ -186,12 +186,12 @@ function createDurableConsoleSay({ getPlatform, getGroup, gate, route, receiptSt
     if (first.admitted || first.timeout) {
       // 这一轮在后台继续;它之后的成败由该群自己的持久路径收尾,这里只留日志
       settled.then(({ error }) => { if (error) log('say: ' + (error && error.message)) })
-      return first.admitted ? { ok: true, where: { state: 'started' } } : { ok: false, reason: 'unconfirmed' }
+      return first.admitted ? { ok: true, where: locate(chatId, receiptId) } : { ok: false, reason: 'unconfirmed' }
     }
     const { value, error } = first
     if (value && value.duplicate) return { ok: true, where: { state: 'duplicate' } }
     const state = receiptState(chatId, receiptId)
-    if (state) return { ok: true, where: { state: state === 'completed' ? 'done' : 'started' } }
+    if (state) return { ok: true, where: state === 'completed' ? { state: 'done' } : locate(chatId, receiptId) }
     if (error) {
       log('say: ' + (error && error.message))
       return { ok: false, reason: 'inject-failed' }

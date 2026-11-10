@@ -229,6 +229,8 @@ function runTurn({
       // The binary owns the permission, tool allow/deny and argument policy.
       // Node only resolves capability and writes the project-scoped MCP file.
       const args = claudeBuildArgs({ steer, model, providerModel: provider.model, sessionId,
+        runtimeCommand: extraEnv?.SBOT_RUNTIME_ENTRY
+          ? require('../runtimefacts').runtimeCommand(extraEnv.SBOT_RUNTIME_ENTRY) : '',
         permissionMode, autocompactTokens, autocompactSupported,
         mcpConfigPath, allowedTools, pluginAllows, disallowedTools,
         appendSystemPrompt, workdir })

@@ -1,4 +1,4 @@
-# Install SintBot 1.4.12
+# Install SintBot 1.4.13
 
 English · [简体中文](./zh-CN/install.md)
 
@@ -10,7 +10,7 @@ You need a Mac, Node.js 22 or newer, and projects stored on that Mac. Install an
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-The installer checks the environment, installs `sintbot@1.4.12` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.12`. No sudo is needed.
+The installer checks the environment, installs `sintbot@1.4.13` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.13`. No sudo is needed.
 
 To preview, append `-s -- --dry-run`. To choose another location, set `SINTBOT_INSTALL_DIR` and adjust the executable paths below.
 
@@ -103,13 +103,21 @@ Send a command as a message of its own; except for `/issue` and `/model`, do not
 
 Busy follow-ups default on for both Codex and Claude Code. Set `steer: false` to queue them instead; an explicit `steer` value overrides the legacy Codex setting. Claude Code must advertise the required input capabilities, otherwise messages stay queued. Reading can wait until a long-running tool finishes. The reply card follows confirmed reading, and continuation answers are combined into one final reply. If a turn returns a model error or no result, only that group is asked to resend; there is no automatic retry. If a group's last result cannot be confirmed, such as a reply whose delivery is unknown, only that group is paused and answers new messages with a short notice; other groups keep working. Nothing is replayed or retried.
 
+When the reply card moves below a confirmed follow-up, its existing text is shown immediately and subsequent output continues from that point. Moving the card does not restart the task.
+
 ## 6. Console
 
 The overview combines group projects and concurrency. Each row shows the runner, state and elapsed time, project folder, model and configured reasoning effort, and the latest reported context usage. Select a group to view its tasks, then expand a task for tools, reply and usage. Context is a session sample, not cumulative token consumption; unknown capacity and older samples are labeled. Row icons provide console messages, stop and new-session controls according to the current group state.
 
 With `--ui`, open `http://127.0.0.1:4600` on this Mac. The console shows each group, stops tasks, starts a new conversation for an idle group, binds new groups, switches the model or project folder of an idle group, and adds or configures models. For LAN access, set a console password in its settings first, then enable LAN access.
 
-Settings → Software updates checks for new releases. In the foreground setup above it shows the upgrade steps: press Ctrl-C and wait for exit, rerun the one-line installer, then start again with the same command. If your own launchd agent starts SintBot, Upgrade now waits until every group is idle and settled, installs the new version into `~/.local/share/sintbot/releases/<version>` and switches the agent to it; if the new version does not connect every group within 90 seconds, the previous one is restored. A window shows each step, reconnects by itself while the service restarts and can be left running in the background. On the first start after an upgrade, each serving group gets one card listing what changed; to turn this off, clear "Announce upgrades in groups" under Settings → Software updates.
+The Message action also works while a group is busy. It follows the group’s follow-up setting: the message waits for model reading or joins the queue. “Accepted” does not yet confirm that the model has read it. New sessions and model changes still require an idle group.
+
+Settings → Software updates checks for new releases. In the foreground setup above it shows the upgrade steps: press Ctrl-C and wait for exit, rerun the one-line installer, then start again with the same command. If your own launchd agent starts SintBot, Upgrade now waits until every group is idle and settled, installs the new version into an isolated release directory and switches the agent to it; if the new version does not connect every group within 90 seconds, the previous one is restored. A window shows each step, reconnects by itself while the service restarts and can be left running in the background. On the first start after an upgrade, each serving group gets one card listing what changed; to turn this off, clear "Announce upgrades in groups" under The Message action also works while a group is busy. It follows the group’s follow-up setting: the message waits for model reading or joins the queue. “Accepted” does not yet confirm that the model has read it. New sessions and model changes still require an idle group.
+
+Settings → Software updates.
+
+If an installation fails, retry uses a fresh directory and preserves the failed attempt for diagnosis. It switches only after verification.
 
 You can also add a group without the console: add it to the configuration, stop the service and run `start` again; the new group is registered automatically. Bound groups cannot be removed or renamed by editing the configuration.
 

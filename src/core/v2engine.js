@@ -18,6 +18,8 @@ const { prepareC2RunnerInput } = require('./c2runnerinput')
 const { continueC2Successor } = require('./c2successorbridge')
 const { rejectC2Input } = require('./c2inputrejection')
 const progress = require('./turnprogress')
+const { modelContext } = require('../modelcontext')
+const { GROUP_COMMANDS, RUNTIME_ENTRY, runtimeCommand } = require('../runtimefacts')
 const NO_REPLY = 'NO_REPLY'
 const SYSTEM_APPENDIX = systemAppendix(NO_REPLY)
 const V2_NORMAL_ROUTE_MISSING = Object.freeze(['complete durable v2 authority'])
@@ -25,7 +27,7 @@ const V2_NORMAL_ROUTE_MISSING = Object.freeze(['complete durable v2 authority'])
 // the Codex read-only sandbox, 3 the fail-closed default. 0 is full access
 // and 2 an allow-listed tool set, which may still change files.
 const READ_ONLY_TIERS = Object.freeze([1, 3])
-const DURABLE_V2_COMMANDS = new Set(['/help', '/status', '/model', '/new', '/hud', '/issue'])
+const DURABLE_V2_COMMANDS = new Set(GROUP_COMMANDS.filter(cmd => !['/skip', '/stop'].includes(cmd)))
 function fmtWan(n) {
   n = Number(n) || 0
   if (n >= 100_000_000) return `${(n / 100_000_000).toFixed(1).replace(/\.0$/, '')}亿`
@@ -51,8 +53,7 @@ function cardDuration(ms) {
 }
 function cardModelInfo(group, provider) {
   if (!provider) return { model: '', effort: '' }
-  const model = group?.model || provider.model ||
-    (provider.runner === 'codex' ? '' : provider.env?.ANTHROPIC_MODEL) || ''
+  const { model } = modelContext(group, provider)
   const effort = provider.runner === 'codex'
     ? provider.reasoningEffort : provider.env?.CLAUDE_CODE_EFFORT_LEVEL
   const clean = value => String(value || '').replace(/\s+/g, ' ').trim()
@@ -224,10 +225,11 @@ function v2QueueSelection(queue) {
 function releaseSkillLines(platform) {
   const features = manifestFeatures({ ...(platform?.features || {}),
     boards: false, imagen: false, takeoverCard: false })
-  const lines = manifestSkills({ features,
+  const lines = manifestSkills({ features: { ...features, localAnswers: true },
     platformName: String(platform?.chatLabel || '飞书群').replace(/群$/, '') })
   const cron = lines.findIndex(line => line.startsWith('【定时任务】'))
-  return cron < 0 ? lines : lines.slice(0, cron)
+  return (cron < 0 ? lines : lines.slice(0, cron))
+    .map(line => line.replace(/sbot feishu/g, `${runtimeCommand()} feishu`))
 }
 
 // The group skills call `sbot feishu`. A machine can carry another `sbot` on
@@ -256,7 +258,7 @@ class Engine {
       durableV2NormalRoute = true, durableV2StreamFrames = false,
       durableV2AcquireCapacity = null, durableV2SealCapacity = null,
       durableV2SwitchProvider = null, durableV2UsageProbe = null, durableV2Issues = null,
-      durableV2Version = '' } = options
+      durableV2Version = '', durableV2DataDir = '', durableV2ConsoleEnabled = false } = options
     const sync = f => typeof f === 'function' && f.constructor?.name !== 'AsyncFunction'
     if (!cfg || !cfg.agent || !cfg.groups || !cfg.providers ||
         options.receiptJournal || options.unifiedStepHost ||
@@ -289,7 +291,8 @@ class Engine {
       durableV2StartTurn, durableV2ApplyLocalEffect, durableV2VerifyRunnerClosed,
       durableV2AssertWriterLock, durableV2Journal, durableV2NormalRoute,
       durableV2StreamFrames, durableV2AcquireCapacity, durableV2SealCapacity,
-      durableV2SwitchProvider, durableV2UsageProbe, durableV2Issues, durableV2Version })
+      durableV2SwitchProvider, durableV2UsageProbe, durableV2Issues, durableV2Version,
+      durableV2DataDir, durableV2ConsoleEnabled })
     this.projectMemory = options.projectMemory || null
     this.repoInfo = options.repoInfo || null
     this.activity = options.activity || null
@@ -433,6 +436,8 @@ baseSkillEnv(chatId) {
     const g = (this.cfg.groups || {})[chatId]
     const bin = releaseBinDir()
     return { ...(bin ? { PATH: [bin, process.env.PATH].filter(Boolean).join(path.delimiter) } : {}),
+      SBOT_RUNTIME_ENTRY: RUNTIME_ENTRY, SBOT_RUNTIME_VERSION: this.durableV2Version || '',
+      ...(this.durableV2DataDir ? { SBOT_DATA_DIR: this.durableV2DataDir } : {}),
       SBOT_CHAT_ID: chatId, ...(g && g.platform ? { SBOT_PLATFORM: g.platform } : {}), TZ: this.tz, ...(this.cfg._path ? { SBOT_CONFIG: this.cfg._path } : {}), ...(this.uiLocalUrl ? { SBOT_UI_URL: this.uiLocalUrl } : {}) }
   }
 
@@ -463,7 +468,7 @@ async _durableV2Command(msg, cmd, rest) {
     if (!group || group.paused) return reject('unsupported-command', T.unsupportedCommandWithModel)
     const { name, provider } = this._resolveProvider(msg.chatId, group)
     // A group may pin its own model; the runner uses it before the provider default.
-    const label = (n, p) => (group.model || p?.model) ? `${n} · ${group.model || p.model}` : n
+    const label = (n, p) => { const { model } = modelContext(group, p); return model ? `${n} · ${model}` : n }
     if (cmd === '/model') return this._durableV2ModelCommand(msg, rest, group)
     if (cmd === '/help') {
       const isCodex = provider?.runner === 'codex'
@@ -532,12 +537,15 @@ async _durableV2Command(msg, cmd, rest) {
 _durableV2ModelCommand(msg, want, group) {
     const reject = (reason, notice) =>
       rejectC2Input('C2 v2 model command answered before receipt', { reason, notice })
-    const label = (name, provider) => provider?.model ? `${name} · ${provider.model}` : name
+    const label = (name, provider, scope = {}) => {
+      const { model } = modelContext(scope, provider)
+      return model ? `${name} · ${model}` : name
+    }
     const available = Object.entries(this.cfg.providers || {})
       .filter(([, provider]) => provider && !provider.hidden &&
-        ['claude', 'codex'].includes(provider.runner))
+        ['claude', 'codex'].includes(provider.runner || 'claude'))
     const { name: currentName, provider: currentProvider } = this._resolveProvider(msg.chatId, group)
-    const current = label(currentName, currentProvider)
+    const current = label(currentName, currentProvider, group)
     const list = available.map(([name, provider]) => label(name, provider)).join(' / ')
     if (!want) {
       const example = available.find(([name]) => name !== currentName)?.[0] || currentName
@@ -1377,6 +1385,7 @@ stageDurableV2Message(msg, platform) {
     if (!rt.v2QueueReceiptIds) rt.v2QueueReceiptIds = []
     rt.v2QueueReceiptIds.push(receipt.id)
     this._observeActivity('receive', { chatId: msg.chatId, receiptId: receipt.id,
+      sourceMessageId: msg.msgId,
       text: msg.text, sender: msg.senderName || '', acceptedAt })
     return { receiptId: receipt.id, cursor: result.cursor, staged: true,
       ingressClosed: !!authority.blocked }
@@ -1778,18 +1787,22 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
           (!Number.isSafeInteger(timeoutDeadlineAt) || timeoutDeadlineAt <= 0)) {
         throw new Error('C2 v2 hard timeout deadline invalid')
       }
-      capTimer = timeoutDeadlineAt !== null
-        ? setTimeout(() => {
+      const onHardDeadline = () => {
           const elapsedAt = Date.now()
           if (rt.v2RunnerGeneration !== generation ||
               rt.v2Controller !== controller || rt.v2CancelControl ||
               rt.v2StreamQuiescing) return
-          if (elapsedAt >= timeoutDeadlineAt) {
-            rt.v2TimeoutProof = { receiptId, turnToken, generation,
-              deadlineAt: timeoutDeadlineAt, elapsedAt }
+          // Timers and Date.now need not tick together. An early callback (or
+          // a backward wall-clock adjustment) is not proof of elapsed time.
+          if (elapsedAt < timeoutDeadlineAt) {
+            capTimer = setTimeout(onHardDeadline, timeoutDeadlineAt - elapsedAt)
+            return
           }
+          rt.v2TimeoutProof = { receiptId, turnToken, generation,
+            deadlineAt: timeoutDeadlineAt, elapsedAt }
           controller.abort()
-        }, timeoutMs) : null
+      }
+      capTimer = timeoutDeadlineAt !== null ? setTimeout(onHardDeadline, timeoutMs) : null
       const input = prepareC2RunnerInput({ prompt,
         appendSystemPrompt: SYSTEM_APPENDIX, msg: job.msg, group: job.group,
         provider, config: this.cfg,
@@ -2213,21 +2226,25 @@ classifyDurableV2UnresolvedTurn({ chatId, receiptId, turnToken, effectId,
     const policy = manifestPolicy(group.permissionMode, provider.runner === 'codex',
       group.allowedTools, group.disallowedTools)
     const brand = this.cfg.brand || 'SintBot'
+    const groupTools = group.platform === 'feishu' && manifestFeatures(platform.features || {}).skills
     const info = group.repo && this.repoInfo ? this.repoInfo(group.workdir, group.repo) : null
     const manifest = [
       ...manifestHeader({ restrictedV2: true, brand, chatLabel: platform.chatLabel || '项目群',
         chatId: msg.chatId, groupName: group.name || msg.chatId,
         workdir: group.workdir, repo: group.repo || '', repoState: info?.state || '',
         repoOrigin: info?.origin || '未知', pushDenied: policy.pushDenied,
-        providerName, model: group.model || provider.model || '',
+        providerName, model: modelContext(group, provider).model,
+        runtimeVersion: this.durableV2Version || '', runtimeCommand: runtimeCommand(),
         noVision: provider.vision === false, platformName: platform.chatLabel || '项目群',
         permissionTier: policy.tier, tz: this.tz, publicUrl: '', uiUrl: '', lanUrl: '' }),
       ...manifestContext({ restrictedV2: true, brand, isCodex: provider.runner === 'codex',
+        groupCommands: GROUP_COMMANDS, groupTools,
+        consoleEnabled: this.durableV2ConsoleEnabled === true,
         pmem: this.projectMemory ? this.projectMemory(group.workdir,
           { full: policy.full, isCodex: provider.runner === 'codex' }) : null,
         unredactedPii: group.redactPii === false,
         cardPinned: platform.features?.cardPinned === true, plainSend: false }),
-      ...releaseSkillLines(platform),
+      ...(groupTools ? releaseSkillLines(platform) : []),
     ].join('\n')
     // Reinject current supported context each turn. No legacy feature menu,
     // external-message commands or v1 manifest refresh scheduler is included.

@@ -254,6 +254,8 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
             },
             durableV2UsageProbe: usageProbe, durableV2Issues: issues,
             durableV2Version: require('../package.json').version,
+            durableV2DataDir: stateDir,
+            durableV2ConsoleEnabled: uiEnabled,
             durableV2NormalRoute: true, durableV2StreamFrames: streamFrames(cfg) })
           return { journal, gate, runtime, engine, handles }
         } catch (error) { gate.stop(); throw error }
@@ -292,6 +294,7 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
         configPath: cfg._path, stateDir, host: uiHost, activity, store,
         getConfig: () => cfg, getBindings: () => service.bindings,
         getHeld: () => service.held, getCapacity: () => capacity.snapshot(),
+        acquireCapacity: options => capacity.acquire(options),
         getConnHealth: () => liveTransport?.platform.connHealth?.() || {},
         // Console injection enters through the same ingress as a group
         // message, posted and answered with that group's own adapter.

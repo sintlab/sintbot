@@ -129,7 +129,7 @@ function prepareCardTerminalPath({ runtime, payloadHandles, platform, replyCtx,
       const nextCtx = landedAnchor(anchor)
       if (phase !== 'open' || !card) return false
       if (activeAnchorCtx.messageId === nextCtx.messageId) return true
-      if (!lastCardText) throw new Error('C2 card move has no visible text to replay')
+      if (!lastCardText) throw new Error('C2 card move has no visible text to preserve')
       phase = 'relocating'
       try {
         if (await card.flush() !== true) throw new Error('C2 old card flush unconfirmed')
@@ -138,6 +138,7 @@ function prepareCardTerminalPath({ runtime, payloadHandles, platform, replyCtx,
         const fresh = await platform.createStreamingCard(nextCtx, {
           operationKey: `${receiptId}:followup:${anchor.receiptId}`,
           operationBoundary,
+          initialText: lastCardText,
         })
         if (!fresh || typeof fresh.update !== 'function' ||
             typeof fresh.flush !== 'function' || typeof fresh.recall !== 'function') {

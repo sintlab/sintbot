@@ -18,7 +18,7 @@ const { createLedger } = require('../core/ledger')
 const { normalizeTz, isValidTz, tzOffsetMin, tzParts } = require('../core/time')
 // Runner dispatch (Claude vs Codex by provider.runner) — so 测试/试跑 run codex
 // providers on the Codex CLI, not Claude. Same module the daemon/CLI use.
-const { runTurn, probeVersion } = require('../agent/runner')
+const { runTurn, probeVersion, isClosedRunnerResult, isClosedRunnerError } = require('../agent/runner')
 const codexstatus = require('../agent/codexstatus') // codex 订阅登录态 + 用量(卡片「验证登录」)
 const claudestatus = require('../agent/claudestatus') // Claude 订阅登录态(卡片「检测登录」· doctor 同源)
 const claudemodels = require('../agent/claudemodels') // Claude 模型候选(仅登录后给)
@@ -405,9 +405,9 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
   // each click doesn't spawn a `claude --version` child.
   let probeCache = null // { val, ts }
   const probeCached = async (bin) => {
-    if (probeCache && Date.now() - probeCache.ts < 60_000) return probeCache.val
+    if (probeCache && probeCache.bin === bin && Date.now() - probeCache.ts < 60_000) return probeCache.val
     const val = await probeVersion(bin)
-    probeCache = { val, ts: Date.now() }
+    probeCache = { val, bin, ts: Date.now() }
     return val
   }
   // Same 60s cache for the codex CLI probe — only run when a codex provider exists.
@@ -522,7 +522,8 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         icons: g.workdir ? design.projectIconCard(g.workdir) : null, crons: (Array.isArray(g.crons) ? g.crons : []).map((c) => ({ ...c, human: describeTask(c, nowTzStr), expired: cronExpired(c.at) })), exists: g.workdir ? fs.existsSync(g.workdir) : false }))
     // Console overview health — deliberately minimal: backend CLI 探针 + "有无可用模型/群"。
     // Codex CLI 行仅在配了 codex provider 时出现(与 doctor 一致);`sbot doctor` 保留全量。
-    const v = runtimePolicy ? null : await probeCached(cfg.agent.bin)
+    const hasClaude = providers.some((p) => !p.hidden && p.runner !== 'codex')
+    const v = !runtimePolicy || hasClaude ? await probeCached(cfg.agent.bin) : null
     const hasCodex = providers.some((p) => !p.hidden && p.runner === 'codex')
     const cv = hasCodex ? await probeCodexCached() : null
     // 「可用模型」= 能用的,不只是配了的(1.0.3;此前没登录的 Claude 订阅、试跑失败的 key 都算在内)。
@@ -684,14 +685,18 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
     const cfg = loadConfig(configPath); applyProxyEnv(cfg)
     const provider = cfg.providers[name]
     if (!provider) return { ok: false, error: `unknown provider '${name}'` }
+    if (provider.hidden) return { ok: false, error: '模型已隐藏，不能试运行' }
     if (provider.baseUrl && !provider.apiKey) return { ok: false, error: 'no apiKey' }
     const ac = new AbortController()
+    let lease, closed = false
+    try { lease = runtimePolicy ? await runtimePolicy.beginTrial(ac) : null }
+    catch (error) { return { ok: false, error: error.message } }
     // codex 跑整轮 GPT(冷启动 + reasoning)远慢于 Anthropic 的快问快答;给更长的测试超时。
     // 中止现在真生效(codexcode 强制收尾),超时到点能掐断,不会再干等到自然结束。
     const timer = setTimeout(() => ac.abort(), provider.runner === 'codex' ? 180000 : 60000)
     const t0 = Date.now()
     try {
-      const { result } = await runTurn({
+      const execution = await runTurn({
         bin: cfg.agent.bin,
         prompt: prompt || verify.TRIAL_PROMPT,
         provider,
@@ -699,13 +704,22 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         permissionMode: cfg.agent.permissionMode,
         signal: ac.signal, // a one-line reply — needs no tools, so no allow list
       })
+      closed = isClosedRunnerResult(execution)
+      const { result } = execution
+      if (lease && !closed) throw new Error('试运行进程关闭状态未知，结果未保存，并发名额已保留')
+      lease?.assertWritable()
       const ok = !(result && result.isError)
       verify.recordTurn(provider, ok, (result && result.text) || '', vopts) // doctor / 概览据此报「能用」或「key 不对」
       return { ok, model: provider.model, reply: (result && result.text) || '(no text)', ms: Date.now() - t0 }
     } catch (e) {
-      verify.recordTurn(provider, false, (e && e.message) || String(e), vopts)
+      closed ||= isClosedRunnerError(e)
+      if (!lease) verify.recordTurn(provider, false, (e && e.message) || String(e), vopts)
+      else if (closed) {
+        try { lease.assertWritable(); verify.recordTurn(provider, false, e.message || String(e), vopts) }
+        catch { /* lease loss must never write verification evidence */ }
+      }
       return { ok: false, error: (e && e.message) || String(e), ms: Date.now() - t0 }
-    } finally { clearTimeout(timer) }
+    } finally { clearTimeout(timer); lease?.finish(closed) }
   }
 
   // ── request handling ──────────────────────────────────────────────────────
@@ -1119,7 +1133,8 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
           const why = { 'no-daemon': '守护进程没在跑(纯配置模式)—— 插话需要它在线', paused: '这个群项目已暂停,先恢复再插话', unbound: '没有这个群项目', 'inject-failed': '注入失败(守护进程侧报错,看日志)',
             // 持久处理流程(第 1 版插话)的拒绝原因。shown-failed 之前的几条在发群消息之前就拒,群里没有任何字;
             // 从 shown-failed 起,群里可能已经有那行「【管理员】…」
-            busy: '该群有任务进行中,当前版本的插话不排队也不加入当前任务,等它结束再插',
+            busy: '该群正在停止、跳过或处理未结记录,请稍后再插话',
+            'queue-full': '该群等待处理的消息已满,请稍后再插话',
             held: '该群上一个任务结果不明,已暂停处理、等待人工确认;插话未执行',
             recovering: '该群上一个任务出错,正在收尾;插话未执行,请稍后再试',
             upgrading: '正在升级,插话未执行,请一分钟后再试',
@@ -1130,7 +1145,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
             'request-id': '这次提交缺少有效的提交编号,请刷新控制台后再试',
             empty: '内容不能为空',
             'shown-failed': '群里那行「【管理员】…」没能确认发出(失败或超时),插话未执行;即使群里随后出现这行,它也不会被处理',
-            'busy-after-post': '这行字发进群时该群刚好开始了别的任务,这句没有处理;等它结束后原样再点一次插入,会沿用群里已有的那行',
+            'busy-after-post': '这行字发进群时该群正在停止或处理未结记录,这句没有处理;稍后原样再点一次插入,会沿用群里已有的那行',
             refused: '该群拒收了这句(原因已回复在群里那行下面);插话未执行',
             quarantined: '这句的来源已被隔离,未执行',
             unconfirmed: '这行字已发进群,但没在 5 秒内确认登记,结果以群里和「实时活动」为准;原样再点一次插入不会重复处理' }[r.reason] || '插话失败'

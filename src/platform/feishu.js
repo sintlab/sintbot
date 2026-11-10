@@ -181,9 +181,10 @@ function createCardWriter({
   client, cardId, elementId = 'answer', log = () => {}, now = () => Date.now(),
   throttleMs = 0, streamWindowMs = STREAM_WINDOW_MS, setTimer = setTimeout, clearTimer = clearTimeout,
   operationBoundary = null, operationKey = null,
+  initialText = '', initialSequence = 1,
 } = {}) {
   const openedAt = now()
-  let seq = 1            // 流式与整卡更新共用的**唯一**序号分配器(混用同一张卡必须同源)
+  let seq = initialSequence // Includes any confirmed settings call before this writer opens.
   let streamOpen = true  // 飞书侧流式模式还开着吗
   // ⚠ 「已收尾」与「已冻结」是两件事,合成一个标记会吃掉一条兜底路径:撤回失败时调用方
   //   要退一句中性收尾(engine 的 dropAckCard),而 recall 若把 finish 一并封死,那张卡就
@@ -195,8 +196,9 @@ function createCardWriter({
   let pushes = 0         // 流式帧 cardElement.content
   let fulls = 0          // 整卡更新 card.update
   let closes = 0         // 关流式 card.settings
-  let lastSeen = ''      // 最近一次收到的累积文本(判重用)
-  let confirmedText = null // 只记录平台确认过的正文,不能把已派发当成已送达
+  const resumes = initialText ? 1 : 0 // Confirmed pre-writer streaming enable.
+  let lastSeen = initialText // Seed only after the snapshot's create/post have been confirmed.
+  let confirmedText = initialText || null // 只记录平台确认过的正文,不能把已派发当成已送达
   let chain = Promise.resolve()
   let finishResult = null
   let boundaryError = null
@@ -363,7 +365,7 @@ function createCardWriter({
           // ⚠ 这行必须打在**收尾之后**:收尾自己那一次调用(整卡更新 / 关流式)就发生在这个
           // 回调里。原先它打在回调外、且只报节流器的派发次数 ⇒ 降级后的整卡更新与收尾那次
           // 全在账外(实测漏计 ≈44 次/天)。注释写着「配额账可实测」,那就得真能对上账。
-          log(`card ops: ${pushes + fulls + closes} 次调用(流式 ${pushes} · 整卡 ${fulls} · 关流式 ${closes})`)
+          log(`card ops: ${pushes + fulls + closes + resumes} 次调用(流式 ${pushes} · 整卡 ${fulls} · 关流式 ${closes}${resumes ? ` · 恢复流式 ${resumes}` : ''})`)
         }
       }, { terminal: true })
       return finishResult
@@ -371,7 +373,7 @@ function createCardWriter({
     // recall:先断掉后续流式帧再去删消息。⚠ 只冻结不收尾 —— 撤不掉时调用方还要退一句中性收尾。
     markClosed() { frozen = true; flushedRevision = -1 },
     settle: () => chain.then((result) => { if (boundaryError) throw boundaryError; return result }),
-    stats: () => ({ pushes, fullUpdates: fulls, closes, calls: pushes + fulls + closes, streamOpen, seq }),
+    stats: () => ({ pushes, fullUpdates: fulls, closes, calls: pushes + fulls + closes + resumes, streamOpen, seq }),
   }
 }
 
@@ -858,9 +860,10 @@ function createFeishuPlatform({ appId, appSecret, botOpenId = null, onlyWhenMent
     // effect. `finish` flips streaming_mode off so the card settles.
     // All ops are serialized so the per-card `sequence` stays strictly increasing.
     async createStreamingCard(replyCtx, { title = 'sbot', operationBoundary = null,
-      operationKey = null } = {}) {
+      operationKey = null, initialText = '' } = {}) {
       const chatId = replyCtx && replyCtx.chatId
       if (!chatId) return null
+      if (typeof initialText !== 'string') throw new TypeError('card initial text must be a string')
       if (operationBoundary && (typeof operationBoundary !== 'function' ||
           typeof operationKey !== 'string' || !operationKey ||
           Buffer.byteLength(operationKey) > 256)) {
@@ -870,8 +873,8 @@ function createFeishuPlatform({ appId, appSecret, botOpenId = null, onlyWhenMent
       // No header — the reply card shows just the answer body (no "sbot" title line).
       const cardJson = {
         schema: '2.0',
-        config: { streaming_mode: true, summary: { content: '' }, streaming_config: { print_strategy: 'fast' } },
-        body: { elements: [{ tag: 'markdown', content: '', element_id: ELEM }] },
+        config: { streaming_mode: !initialText, summary: { content: '' }, streaming_config: { print_strategy: 'fast' } },
+        body: { elements: [{ tag: 'markdown', content: initialText, element_id: ELEM }] },
       }
 
       let cardId
@@ -900,6 +903,22 @@ function createFeishuPlatform({ appId, appSecret, botOpenId = null, onlyWhenMent
         const posted = await postCard(client, chatId, replyCtx && replyCtx.messageId, cardId,
           { operationBoundary, operationKey })
         msgId = posted
+        // A moved card is first delivered with its complete, static snapshot.
+        // Enable streaming only afterward: old text never enters the typewriter
+        // endpoint, and the next cumulative frame continues from this baseline.
+        if (initialText) {
+          const sequence = 1
+          const uuid = crypto.randomUUID()
+          await cardOperation(operationBoundary, operationKey, 'card.settings',
+            { cardId, sequence, uuid }, async () => {
+              const response = assertCardOk(await client.cardkit.v1.card.settings({
+                path: { card_id: cardId },
+                data: { settings: JSON.stringify({ config: { streaming_mode: true } }), sequence, uuid },
+              }), '恢复流式')
+              if (response?.code !== 0) throw new Error('恢复流式未确认:未返回 code=0')
+              return response
+            })
+        }
       } catch (e) {
         log('feishu card create error: ' + (e && e.message))
         if (operationBoundary) throw e
@@ -908,7 +927,8 @@ function createFeishuPlatform({ appId, appSecret, botOpenId = null, onlyWhenMent
 
       // 全部写操作交给写入器(流式窗口判断、序号分配、错误码检查都在它一处)。
       const writer = createCardWriter({ client, cardId, elementId: ELEM, log,
-        throttleMs: cardThrottleMs, operationBoundary, operationKey })
+        throttleMs: cardThrottleMs, operationBoundary, operationKey,
+        initialText, initialSequence: initialText ? 2 : 1 })
 
       return {
         durableTarget() {

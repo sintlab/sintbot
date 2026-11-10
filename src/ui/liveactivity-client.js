@@ -121,14 +121,14 @@ const activityPanel = (() => {
     state.dataset.status = g.held || g.queueFaulted ? 'attention' : g.busy ? 'running' : 'idle'
     if (g.busy) text(state, state.textContent + ' ' + Math.floor((g.sinceMs || 0)/1000) + 's')
     if (g.queue) text(state, state.textContent + ' · ' + tr('排队 ','Queued ') + g.queue)
-    text(b.children[0], g.model)
+    text(b.children[0], g.model || tr('执行器默认（未回报实际型号）','Executor default (actual model unknown)'))
     text(b.children[1], tr('思考深度 · ','Reasoning · ') + (g.reasoningEffort || tr('默认','Default')))
     b.children[1].title = tr('当前模型配置；未指定时使用模型默认值','Current model configuration; unspecified uses the model default')
     const blocked = !S?.live?.running || g.paused || g.held || g.queueFaulted
     const busy = g.busy || g.pending > 0 || g.queue > 0 || g.waitingForCapacity || g.finalizing
     for (const [action,zh,eng] of [['say','插话','Message'],['stop','停止任务','Stop task'],['new','新会话','New session']]) {
       const button = n.querySelector('[data-action='+action+']')
-      button.disabled = actionPending.has(g.chatId + ':' + action) || blocked || (action === 'stop' ? !busy : !!busy || action === 'say' && !!g.sayBlocked)
+      button.disabled = actionPending.has(g.chatId + ':' + action) || blocked || (action === 'stop' ? !busy : action === 'new' ? !!busy : !!g.sayBlocked)
       button.setAttribute('aria-label',tr(zh,eng) + ' · ' + g.name)
       button.title = tr(zh,eng) + ' · ' + (button.disabled ? tr('当前状态不可操作','Unavailable in the current state') : action === 'say' ? tr('这句话和回复都会发进该群','Your message and reply will be sent to this group') : action === 'new' ? tr('开始新会话，清除当前会话上下文','Start a new session with fresh context') : tr('停止当前任务，保留会话','Stop the task and keep the session'))
     }

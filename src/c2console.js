@@ -30,7 +30,7 @@ const WRITE_PATHS = ['/api/login', '/api/logout', '/api/logout/all',
   // one-off agent run); it does not take a group concurrency slot.
   '/api/test',
   '/api/inbox/dismiss', '/api/issues/status',
-  // Console injection, first version: an idle group only, the line shown in
+  // Console injection through the ordinary busy-followup ingress, the line shown in
   // the group and the reply delivered there. The posted line is the platform
   // message that drives the turn (see consolesay.createDurableConsoleSay).
   '/api/groups/say',
@@ -38,6 +38,8 @@ const WRITE_PATHS = ['/api/login', '/api/logout', '/api/logout/all',
   // manages this exact entry (the updater refuses every other run mode).
   '/api/update/check', '/api/update/start', '/api/update/ignore']
 const SUPPORTED_RUNNERS = ['claude', 'codex']
+const { modelContext } = require('./modelcontext')
+const { GROUP_COMMANDS } = require('./runtimefacts')
 
 function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = () => new Map(), activity = null, store = null,
   assertWriterLock, validateConfig, applyConfig, beforeWrite = () => true,
@@ -45,6 +47,7 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
   // Console injection reaches a group only through the service's own ingress
   // and that group's real platform adapter. Without them it is refused.
   getPlatform = null, routeMessage = null, isServing = () => false, isFrozen = () => false,
+  acquireCapacity = null,
   log = () => {} } = {}) {
   for (const callback of [getBindings, getCapacity, getConfig, getHeld, assertWriterLock,
     validateConfig, applyConfig, beforeWrite, appliedResets, now, isServing, isFrozen, log]) {
@@ -58,9 +61,12 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
     throw new TypeError('C2 console configuration hooks must be synchronous')
   }
   const startedAt = now()
+  const trials = require('./consoletrials').createConsoleTrials({ getCapacity, acquireCapacity,
+    assertWriterLock, isServing, isFrozen })
   const capabilities = Object.freeze({ mode: 'durable-v2',
+    groupCommands: GROUP_COMMANDS,
     reason: '此操作尚未接入当前版本的持久处理流程，未执行。',
-    summary: '实时状态、认证管理、停止任务、空闲群开新会话、空闲群的控制台插话、绑定新群、空闲群的模型切换（Codex / Claude Code）和项目目录修改、模型的添加与设置，以及后台运行时的软件升级已接入；该群有任务或未结记录时不能修改，也不能开新会话或插话；改模型的型号、后端或端点时，用它的群须空闲，并会开始新的一段对话。插话会把这句话（标着「管理员」）和回复都发进群，群忙时不排队、也不加入当前任务；静默插话和不回复的插话暂不支持。解除绑定、移除模型、定时任务和画布暂不可用。',
+    summary: '实时状态、认证管理、停止任务、空闲群开新会话、支持忙时跟进的控制台插话、绑定新群、空闲群的模型切换（Codex / Claude Code）和项目目录修改、模型的添加与设置，以及后台运行时的软件升级已接入；该群有任务或未结记录时不能修改，也不能开新会话；改模型的型号、后端或端点时，用它的群须空闲，并会开始新的一段对话。插话会把这句话（标着「管理员」）和回复都发进群，群忙时按该群的忙时跟进设置尝试加入当前任务，关闭或暂不支持时排队；确认模型读取后才显示已加入；静默插话和不回复的插话暂不支持。解除绑定、移除模型、定时任务和画布暂不可用。',
     allowed: { GET: READ_PATHS, POST: WRITE_PATHS } })
   function held() {
     if (assertWriterLock() !== true) throw new Error('服务写入权限已失效，操作未执行')
@@ -97,7 +103,7 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
     binding.engine.store.resetSessionAndStats(chatId)
     return true
   }
-  // Console injection, first version: an open, idle group only. Checked
+  // Console injection: an open group, idle or running. Checked
   // before the line is posted, so a refused group shows nothing, and again
   // right after; the service ingress remains the final authority.
   function sayGate(chatId) {
@@ -110,8 +116,13 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
     const binding = bindings().get(chatId)
     if (!binding || binding.runtime?.closed === true) return 'not-serving'
     const rt = binding.engine?.rts?.get(chatId)
-    if (groupBusy(chatId, binding) || rt?.v2RunningJobs || rt?.v2StopControl || rt?.v2SkipWaiter ||
-        (binding.journal?.consoleSnapshot?.() || binding.journal?.snapshot())?.state?.lanes?.stopIntent?.[chatId]) return 'busy'
+    const snapshot = binding.journal?.consoleSnapshot?.() || binding.journal?.snapshot()
+    if (rt?.v2StopControl || rt?.v2SkipWaiter || snapshot?.state?.lanes?.stopIntent?.[chatId]) return 'busy'
+    // A normal active turn may accept ordinary messages. Unowned pending work
+    // still refuses; it must not become a new execution path or bypass recovery.
+    if (!rt?.v2NormalRouteActive && !rt?.v2AdmissionPending && (groupBusy(chatId, binding) || rt?.v2RunningJobs)) return 'busy'
+    const queued = snapshot?.state?.lanes?.queue?.[chatId]?.queue?.length || 0
+    if (queued >= (rt?.v2AdmissionPending ? 3 : 2)) return 'queue-full'
     return null
   }
   function receiptState(chatId, receiptId) {
@@ -120,9 +131,22 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
     if (receipts?.completed?.some(item => item.id === receiptId)) return 'completed'
     return null
   }
+  function locateSay(chatId, receiptId) {
+    const binding = bindings().get(chatId)
+    const rt = binding?.engine?.rts?.get(chatId)
+    const state = receiptState(chatId, receiptId)
+    if (state === 'completed') return { state: 'done' }
+    const steer = rt?.v2SteerEntries?.get(receiptId)
+    if (steer) return { state: steer.accepted && steer.landed ? 'joined' : 'following' }
+    const queue = (binding?.journal?.consoleSnapshot?.() || binding?.journal?.snapshot())?.state?.lanes?.queue?.[chatId]?.queue || []
+    const index = queue.findIndex(item => item.id === `receipt:job:${receiptId}`)
+    if (index >= 0) return { state: 'queued', ahead: index, join: false }
+    if (rt?.v2RunningJobs?.some(job => job.msg?._c2ReceiptId === receiptId)) return { state: 'started' }
+    return { state: 'accepted' }
+  }
   const say = getPlatform ? createDurableConsoleSay({ getPlatform,
     getGroup: chatId => getConfig().groups?.[chatId] || null,
-    gate: sayGate, route: routeMessage, receiptState, log, now }) : null
+    gate: sayGate, route: routeMessage, receiptState, locate: locateSay, log, now }) : null
   function getLiveState() {
     const cfg = getConfig()
     const capacity = getCapacity()
@@ -198,7 +222,7 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
         ? { usedTokens: stats.ctx, windowTokens: null, measuredAt: null, quality: 'historical' } : null)
       return { chatId, name: group.name || chatId.slice(-8), project: path.basename(group.workdir || '') || '—',
         workdir: group.workdir || '', runner: provider.runner || 'claude',
-        model: group.model || provider.model || provider.env?.ANTHROPIC_MODEL || providerName,
+        ...modelContext(group, provider),
         reasoningEffort: (provider.runner === 'codex' ? provider.reasoningEffort : provider.env?.CLAUDE_CODE_EFFORT_LEVEL) || '',
         paused: !!group.paused, ...live.groups[chatId], context }
     })
@@ -209,6 +233,7 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
   }
   return {
     capabilities,
+    beginTrial: controller => trials.begin(controller),
     allows: (method, pathname) => (capabilities.allowed[method] || []).includes(pathname),
     // A provider without a runner field is Claude Code, as everywhere else.
     providerSupported: provider => SUPPORTED_RUNNERS.includes(provider?.runner || 'claude'),
@@ -221,6 +246,12 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
     appliedResets: () => appliedResets(),
     decorateState(state) {
       state.runtimeCapabilities = capabilities
+      for (const group of state.groups || []) {
+        const cfg = getConfig(), source = cfg.groups?.[group.chatId] || {}
+        const provider = cfg.providers?.[group.effectiveProvider || source.provider || cfg.defaultProvider]
+        const model = modelContext(source, provider)
+        Object.assign(group, { configuredModel: model.model, modelSource: model.source, actualModel: model.actualModel })
+      }
       state.previews = (state.previews || []).filter(item => getConfig().groups?.[item.chatId])
       state.leftovers = { supported: false, rows: [], error: null }
     },

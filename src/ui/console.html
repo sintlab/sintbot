@@ -2621,7 +2621,7 @@ const RUNTIME_UI_TEXT={
   "paused": "已暂停：不接收本群新消息，配置与会话保留。",
   "resume": "恢复本群：重新接收本群消息，配置与会话保留。",
   "resumeLabel": "恢复",
-  "steer": "Codex 与 Claude Code 默认开启忙时跟进；长命令执行期间的补充会在工具步骤之间读取。只有确认模型已读取才显示已加入；不支持此能力时排队。控制台插话仅空闲时可用。",
+  "steer": "Codex 与 Claude Code 默认开启忙时跟进；长命令执行期间的补充会在工具步骤之间读取。只有确认模型已读取才显示已加入；不支持此能力时排队。控制台插话同样支持忙时跟进；关闭或暂不支持时排队。",
   "preview": "当前版本未接入预览服务。",
   "providers": "可添加模型，修改型号、端点、密钥、思考深度与推理强度，测试、隐藏或拖动排序；各群的模型在「群·项目」里切换。改型号、后端或端点时，用它的群须空闲，并会开始新的一段对话；默认模型和群正在用的模型不能隐藏。移除模型暂不可用。",
   "providersView": "当前可查看模型配置与登录状态；各群的模型在「群·项目」里切换。添加或修改模型暂不可用。",
@@ -3339,18 +3339,17 @@ function sayPlan(chatId,reply){
 function runsCodex(g){const pr=(S.providers||[]).find(pp=>pp.name===g.effectiveProvider);return !!pr&&pr.runner==='codex';}
 function sayAge(ms){const m=Math.floor((ms||0)/60e3);if(m<1)return '不到 1 分钟';if(m<60)return m+' 分钟';return Math.floor(m/60)+' 小时'+(m%60?' '+(m%60)+' 分钟':'');}
 let sayRefresh=null; // 浮层开着时,概览的实时刷新顺手重算一遍(打字的这会儿任务可能刚好跑完)
-/* 持久处理流程(当前版本)的插话只有一种形态:空闲群、这句话进群、回复进群。群忙 / 待人工 / 升级中等
-   直接说明白、按钮不可点 —— 不再说「加入当前任务 / 排队」,那是旧流程的行为。原因由服务端实时状态
-   (live.groups[chatId].sayBlocked,与插话接口同一个判据)给出;没有实时状态时以接口回报为准。 */
+/* 插话按服务端准入显示阻塞原因；正常忙时允许提交，是否已加入只以模型读取确认判断。 */
 const SAY_V1={
-  ok:'当前版本的插话:这句话(标着「管理员」)和它做完的回复都会发进群;静默插话、不回复的插话和群忙时的插话暂不支持。',
-  busy:'该群有任务进行中,当前版本的插话不排队也不加入当前任务,等它结束再插。',
+  ok:'这句话(标着「管理员」)和回复都会发进群。任务进行中也可以插话；确认模型读取后才算已加入。',
+  busy:'该群正在停止、跳过或处理未结记录,请稍后再插话。',
+  'queue-full':'该群等待处理的消息已满,请稍后再插话。',
   held:'该群上一个任务结果不明,已暂停处理、等待人工确认;现在不能插话。',
   upgrading:'正在升级,现在不能插话,请一分钟后再试。',
   paused:'这个群项目已暂停,先恢复再插话。',
   closed:'服务正在启动或停止,或该群当前未开放;现在不能插话。'
 };
-function sayV1Blocked(chatId){const lv=((S.live||{}).groups||{})[chatId]||{};return lv.sayBlocked||(lv.busy?'busy':null);}
+function sayV1Blocked(chatId){const lv=((S.live||{}).groups||{})[chatId]||{};return lv.sayBlocked||null;}
 /* 每次提交一个 32 位十六进制幂等键:同一段文字没成功前重点一次,沿用同一个键,服务端据此不重复处理 */
 function sayRequestId(){const a=new Uint8Array(16);crypto.getRandomValues(a);return Array.from(a,b=>b.toString(16).padStart(2,'0')).join('');}
 /* 「向群里插一句」浮层。入口在概览「群·项目」每一行的 ✎ —— 动作长在对象身上,
@@ -3380,12 +3379,13 @@ function openSay(chatId){
   const v1=!!S.runtimeCapabilities; let sending=false, req=null;
   // 当前版本两个开关固定勾上:只支持「这句话进群 + 回复进群」,开关留着,让人看见这句会以什么样子出现
   if(v1){ for(const c of [sw,rp]){ c.checked=true; c.disabled=true; c.parentElement.title='当前版本固定:这句话和回复都发进群'; } }
-  const preview=()=>{ const a=sw.checked,b=rp.checked, plan=v1?null:sayPlan(chatId,b);
+  const preview=()=>{ const a=sw.checked,b=rp.checked, plan=sayPlan(chatId,b);
     if(v1){
       const why=sayV1Blocked(chatId), lv=((S.live||{}).groups||{})[chatId]||{};
-      bz.innerHTML=why==='busy'?`<span class="dot"></span>${lv.busy?'正在处理任务 · 已 '+sayAge(lv.sinceMs):'正在收尾'}`:why==='held'?'<span class="dot"></span>待人工确认':'';
-      pv.textContent=why?(SAY_V1[why]||SAY_V1.closed):SAY_V1.ok;
-      if(!sending){ go.disabled=!!why; goTxt.textContent=why?'暂不能插':'插入'; }
+      bz.innerHTML=lv.busy?`<span class="dot"></span><span>${lv.finalizing?'正在收尾':'正在处理任务'}</span> · ${fmtDur(lv.sinceMs)}`:why==='held'?'<span class="dot"></span>待人工确认':'';
+      const detail=lv.busy?(lv.followups?'将尝试跟进当前任务；长命令执行期间需等待工具步骤结束，实际进度请查看实时活动。':'当前任务暂不接收跟进，这句话会排队处理。'):'';
+      pv.innerHTML=why?esc(SAY_V1[why]||SAY_V1.closed):`<span>${esc(detail)}</span> <span>${esc(SAY_V1.ok)}</span>`;
+      if(!sending){ go.disabled=!!why; goTxt.textContent=why?'暂不能插':lv.busy?(lv.followups?'发送补充':'排队'):'插入'; }
       return;
     }
     const vis = a&&b ? '群里会看到:你插的这句话(标着「管理员」)和它做完的回复。'
@@ -3422,7 +3422,10 @@ function openSay(chatId){
       // 回报照实说清两件事:这句**落在哪**(服务端按引擎实际落点回报),以及群里会/不会出现什么 —— 只说「已插入」等于没说
       const vis = inj&&inj.show ? (inj.reply?'群里能看到这句话和回复':'群里只看到这句话') : (inj&&inj.reply?'群里只会出现回复':'群里不会有任何动静');
       const w=(inj&&inj.where)||{};
-      const head = w.state==='joined' ? '已加入当前任务'+(inj&&inj.show?' · 回复卡片会跟到这句话下面':'')
+      const head = w.state==='following' ? '已受理 · 等待模型读取，尚未确认加入'
+        : w.state==='accepted' ? '已受理 · 处理状态请查看实时活动'
+        : w.state==='done' ? '已处理'
+        : w.state==='joined' ? '已加入当前任务'+(inj&&inj.show?' · 回复卡片会跟到这句话下面':'')
         : w.state==='queued' ? (w.join ? '已排队 · 当前任务一就绪就会加入' : '群正忙,已排队'+(w.ahead?`(前面还有 ${w.ahead} 条)`:'')+' · 当前任务结束后处理')
         : '已插入';
       toast(head+' · '+vis,'ok');
@@ -4302,6 +4305,10 @@ updateThemeBtn();
 /* I18N_DICT_BEGIN —— 合并翻译片段时整块替换这两个数组,不要改此标记之外的代码
    ⚠ 正则一律 ^…$ 整串、不加 g 标志;更具体的条目必须排在泛化条之前。 */
 const I18N_EN=[
+  ["正在处理任务", "Task in progress"],
+  ["已受理", "Accepted"],
+  ["等待模型读取，尚未确认加入", "Waiting for the model to read it; not yet confirmed joined"],
+  ["处理状态请查看实时活动", "Check live activity for processing status"],
   ["需要处理", "Needs attention"],
   ["可绑定新群，修改模型、项目目录、权限、数据输出和忙时跟进；该群须没有进行中的任务和未结记录。切模型或项目会开始新的一段对话。停止任务和开新会话在「概览」，开新会话须等该群空闲。群里发 /model 也能切换模型。", "Bind new groups and change the model, project folder, permissions, data display and busy-turn followups of a group with no running task or unsettled record. Changing the model or project starts a new conversation. Stop tasks and start new sessions in Overview; a new session needs the group to be idle. Members can also switch models with /model in the group."],
   ["当前支持飞书文字消息、忙时跟进、任务回复和停止。定时任务、生图、群消息管理、画布与预览暂未接入。", "Feishu text messages, busy-turn followups, task replies and stopping are supported. Schedules, image generation, group message management, canvas and previews are unavailable."],
@@ -4311,7 +4318,7 @@ const I18N_EN=[
   ["已暂停：不接收本群新消息，配置与会话保留。", "Paused: no new group messages are accepted; configuration and sessions are retained."],
   ["恢复本群：重新接收本群消息，配置与会话保留。", "Resume this group: its messages are accepted again; configuration and sessions are retained."],
   ["恢复", "Resume"],
-  ["Codex 与 Claude Code 默认开启忙时跟进；长命令执行期间的补充会在工具步骤之间读取。只有确认模型已读取才显示已加入；不支持此能力时排队。控制台插话仅空闲时可用。", "Busy-turn followups are on by default for Codex and Claude Code. Followups are read between tool steps; a long command must finish first. Joined means the model has read the message. Unsupported clients queue followups. Console messages require an idle group."],
+  ["Codex 与 Claude Code 默认开启忙时跟进；长命令执行期间的补充会在工具步骤之间读取。只有确认模型已读取才显示已加入；不支持此能力时排队。控制台插话同样支持忙时跟进；关闭或暂不支持时排队。", "Busy-turn followups are on by default for Codex and Claude Code. Followups are read between tool steps; a long command must finish first. Joined means the model has read the message. Unsupported clients queue followups. Console messages also support busy-turn followups, or queue when followups are disabled or unavailable."],
   ["当前版本未接入预览服务。", "Preview services are unavailable in this version."],
   ["当前可查看模型配置与登录状态；各群的模型在「群·项目」里切换。添加或修改模型暂不可用。", "Model configuration and login status are shown here. Switch each group's model under Groups. Adding or changing models is unavailable."],
   ["可添加模型，修改型号、端点、密钥、思考深度与推理强度，测试、隐藏或拖动排序；各群的模型在「群·项目」里切换。改型号、后端或端点时，用它的群须空闲，并会开始新的一段对话；默认模型和群正在用的模型不能隐藏。移除模型暂不可用。", "Add models; change their model id, endpoint, key, thinking depth and reasoning effort; test, hide or drag to reorder them. Switch each group's model under Groups. Changing a model id, backend or endpoint needs the groups using it to be idle and starts a new conversation for them. The default model and models in use by a group cannot be hidden. Removing models is unavailable."],
@@ -4388,6 +4395,12 @@ const I18N_EN=[
   ["此群当前未开放，未开新会话","This group is not open right now; no new session was started."],
   ["还没有群项目 · 去「群·项目」配置","No group projects yet · set one up on the Groups · Projects page"],
   ["健康","Health"],
+  ["模型已隐藏，不能试运行","This model is hidden and cannot be tested."],
+  ["服务写入权限已失效，试运行结果未保存","The service lost write access; the trial result was not saved."],
+  ["服务未就绪或正在维护，暂不能试运行","The service is not ready or is under maintenance; trials are unavailable."],
+  ["试运行或模型并发名额已满，请稍后重试","The trial or model concurrency limit is reached. Try again later."],
+  ["当前服务未接入试运行并发准入","This service has no trial admission control."],
+  ["试运行进程关闭状态未知，结果未保存，并发名额已保留","Trial process closure is unknown; the result was not saved and its capacity slot remains reserved."],
   ["并发","Concurrency"],
   ["活动","Active"],
   ["· 无上限","· No limit"],
@@ -4986,6 +4999,14 @@ const I18N_EN=[
   ["输入文件夹名","Enter a folder name"],
   ["要它做什么,像跟人说话那样写…","What should it do? Write it the way you would tell a person…"],
   ["群里可见","Visible in the group"],
+  ["发送补充", "Send followup"],
+  ["将尝试跟进当前任务；长命令执行期间需等待工具步骤结束，实际进度请查看实时活动。", "Will try to follow up on the current task. Long commands must finish first; check live activity for progress."],
+  ["当前任务暂不接收跟进，这句话会排队处理。", "The current task is not accepting followups; this message will queue."],
+  ["已受理 · 等待模型读取，尚未确认加入", "Accepted · waiting for the model to read it; not yet confirmed joined"],
+  ["已受理 · 处理状态请查看实时活动", "Accepted · check live activity for processing status"],
+  ["该群等待处理的消息已满,请稍后再插话。", "The message queue is full. Try again shortly."],
+  ["该群等待处理的消息已满,请稍后再插话", "The message queue is full. Try again shortly."],
+  ["该群正在停止、跳过或处理未结记录,请稍后再插话", "This group is stopping, skipping, or settling pending records. Try again shortly."],
   ["你插的这句话本身要不要发进群(会标着「管理员」)","Whether the line you interject is itself posted in the group (marked \"admin\")"],
   ["插话","Interject"],
   ["它做完之后的回复要不要发进群;取消后连报错也不会说","Whether its reply is posted in the group when it finishes; untick and even errors stay silent"],
@@ -5000,8 +5021,8 @@ const I18N_EN=[
   ["什么都不会出现","shows nothing at all"],
   [",连出错也不会说 —— 状态去「实时活动」看。",", not even errors — check the status under \"Live activity\"."],
   ["插入中…","Inserting…"],
-  ["当前版本的插话:这句话(标着「管理员」)和它做完的回复都会发进群;静默插话、不回复的插话和群忙时的插话暂不支持。","In this version a console message always posts the line (marked \"admin\") and its reply to the group; silent messages, messages without a reply and messages to a busy group are unavailable."],
-  ["该群有任务进行中,当前版本的插话不排队也不加入当前任务,等它结束再插。","This group has a task in progress. In this version a console message neither queues nor joins the current task; send it once the task ends."],
+  ["这句话(标着「管理员」)和回复都会发进群。任务进行中也可以插话；确认模型读取后才算已加入。","The line (marked \"admin\") and its reply are posted to the group. You can send while a task is running; joined means the model has read it."],
+  ["该群正在停止、跳过或处理未结记录,请稍后再插话。","This group is stopping, skipping, or settling pending records. Try again shortly."],
   ["该群上一个任务结果不明,已暂停处理、等待人工确认;现在不能插话。","The outcome of this group's last task is unknown; the group is paused for operator review, so console messages are unavailable."],
   ["正在升级,现在不能插话,请一分钟后再试。","An upgrade is in progress; try the console message again in a minute."],
   ["这个群项目已暂停,先恢复再插话。","This group project is paused; resume it before sending a console message."],
@@ -5967,7 +5988,7 @@ function disableRuntimeControl(el,reason){
 function applyRuntimeCapabilities(){
   if(!S||!S.runtimeCapabilities)return;
   document.querySelectorAll(RUNTIME_DISABLED_SELECTORS).forEach(el=>disableRuntimeControl(el,RUNTIME_UI_TEXT.unavailable));
-  // 插话照服务端白名单放行(第 1 版只接空闲群,忙不忙在浮层里按实时状态说)
+  // 插话照服务端白名单放行(忙时去向在浮层里按实时状态说明)
   if(!runtimeAllows('POST','/api/groups/say'))document.querySelectorAll('[data-osay]').forEach(el=>disableRuntimeControl(el,RUNTIME_UI_TEXT.unavailable));
   if(!runtimeAllows('POST','/api/providers/order'))document.querySelectorAll('#pgrid .drag').forEach(el=>{el.draggable=false;el.title=trText(RUNTIME_UI_TEXT.unavailable);});
 }

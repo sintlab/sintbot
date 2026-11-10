@@ -20,7 +20,7 @@ const { redact } = require('./core/redact')
 const { fmtStamp, normalizeTz } = require('./core/time')
 
 const FEISHU_MESSAGE_ACTIONS = Object.freeze(['send-msg', 'send-notice', 'send-file', 'send-image',
-  'history', 'reply', 'edit', 'recall', 'delete', 'download', 'react'])
+  'history', 'answers', 'reply', 'edit', 'recall', 'delete', 'download', 'react'])
 
 const dim = (s) => `\x1b[2m${s}\x1b[0m`
 const green = (s) => `\x1b[32m${s}\x1b[0m`
@@ -44,6 +44,8 @@ function parseFeishuArgs(action, rawArgs) {
     else if (a.startsWith('--chat=')) o.chat = a.slice(7)
     else if (a === '--config') o.config = rawArgs[++i]
     else if (a.startsWith('--config=')) o.config = a.slice(9)
+    else if (a === '--data-dir') o.dataDir = rawArgs[++i]
+    else if (a.startsWith('--data-dir=')) o.dataDir = a.slice(11)
     else if (action === 'send-notice' && a === '--sub') o.subtitle = rawArgs[++i]
     else if (action === 'send-notice' && a === '--tone') o.tone = rawArgs[++i]
     else if (action === 'send-notice' && a === '--warn') o.warnings.push(rawArgs[++i])
@@ -102,6 +104,15 @@ async function runFeishuAction(args, deps = {}) {
   const out = deps.stdout || ((s) => process.stdout.write(s))
   const err = deps.stderr || ((s) => process.stderr.write(s))
   const p = opts.positionals
+  if (action === 'answers') {
+    if (!cfg.groups?.[chatId]) refuse('目标群没有绑定，不能读取本机答复记录')
+    const { readRecordedAnswers } = require('./recordedanswers')
+    const result = readRecordedAnswers({ dataDir: opts.dataDir || (deps.env || process.env).SBOT_DATA_DIR,
+      chatId, id: p[0] || '' })
+    out(JSON.stringify(result, null, 2) + '\n')
+    if (!result.answers.length) err('未找到本群匹配记录；可能已过保留范围或尚未落盘，不能推断原卡正文。\n')
+    return result
+  }
   // Usage errors before any network call, worded as the legacy entry did.
   let notice
   if (action === 'send-msg' && !p.join(' ').trim()) refuse('缺少消息内容 — sbot feishu send-msg "<文本>"')
@@ -200,6 +211,7 @@ function feishuUsage(cmd = 'sintbot') {
     + '    send-notice "<标题>" "<正文>"              发群通知卡(可加 --sub / --tone / --warn / --from)\n'
     + '    send-file <路径> · send-image <路径>       发文件 / 图片\n'
     + '    history [n]                              拉最近 n 条(默认 20,最多 50):每条带 message_id,并标 →@某某·未@bot / →@bot\n'
+    + '    answers [消息或轮次ID]                    只读本群本机答复记录；默认最近 10 轮，不代表完整飞书历史\n'
     + '    reply <message_id> "<文本>"              回复某条\n'
     + '    edit <message_id> "<文本>"               改自己发过的消息\n'
     + '    recall <message_id>                      撤回自己发过的消息(别名 delete)\n'

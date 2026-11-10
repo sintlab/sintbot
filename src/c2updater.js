@@ -289,16 +289,24 @@ function createC2Updater({ currentVersion, runMode, stateFile, dataDir, configPa
     const blocked = gate()
     if (blocked.includes('held')) return fail('有暂停的群，升级已取消；先处理暂停的群')
     if (blocked.length) { schedule(); return status() }
-    const prefix = path.join(releasesRoot, job.to)
+    let prefix = job.installed ? job.prefix : path.join(releasesRoot, job.to)
     if (!job.installed) {
       setJob({ state: 'installing', prefix }, `正在安装 v${job.to}`)
       try {
+        let reusable = false
         if (fs.existsSync(prefix)) {
-          // A directory left by an earlier attempt or a manual install is reused
-          // only when it verifies as exactly this version.
-          await verifyInstall({ version: job.to, prefix })
-        } else {
+          // Never repair an existing tree in place: another process may still
+          // use it. A failed check leaves it intact as evidence.
+          try { await verifyInstall({ version: job.to, prefix }); reusable = true }
+          catch { /* retry in an independent installation directory */ }
+        }
+        if (!reusable) {
           fs.mkdirSync(releasesRoot, { recursive: true, mode: 0o700 })
+          // The directory becomes eligible for switching only after validation.
+          // Keeping its unique path also avoids overwriting a concurrently
+          // installed or running release when a download is retried.
+          prefix = fs.mkdtempSync(path.join(releasesRoot, `${job.to}-`))
+          setJob({ prefix })
           await installVersion({ version: job.to, prefix, registry: job.registry })
           await verifyInstall({ version: job.to, prefix })
         }

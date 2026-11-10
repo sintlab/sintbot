@@ -34,11 +34,12 @@ function createLiveActivity({ file, now = Date.now, log = () => {}, canWrite = (
       for (const id of oldest.receiptIds) aliases.delete(key(oldest.chatId, id))
     }
   }
-  function receive({ chatId, receiptId, text, sender, acceptedAt }) {
+  function receive({ chatId, receiptId, sourceMessageId, text, sender, acceptedAt }) {
     if (locate(chatId, receiptId)) return
     const row = { id: receiptId, chatId, receiptIds: [receiptId], ts: acceptedAt || now(),
       status: 'queued', text: clean(text, 160), sender: clean(sender, 120),
-      messages: [{ id: receiptId, text: clean(text), sender: clean(sender, 120), state: 'accepted' }],
+      messages: [{ id: receiptId, sourceMessageId: typeof sourceMessageId === 'string' ? sourceMessageId : null,
+        text: clean(text), sender: clean(sender, 120), state: 'accepted' }],
       truncated: String(text || '').length > TEXT, reply: '', tools: [], milestones: [] }
     rows.set(key(chatId, receiptId), row); touch(row, true)
   }

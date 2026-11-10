@@ -17,4 +17,6 @@ function runTurn(opts) {
   return claudeAgent.runTurn(opts)
 }
 
-module.exports = { runTurn, probeVersion: claudeAgent.probeVersion }
+const isClosedRunnerResult = value => [claudeAgent, codexAgent, codexApp].some(agent => agent.isClosedRunnerResult(value))
+const isClosedRunnerError = value => [claudeAgent, codexAgent, codexApp].some(agent => agent.isClosedRunnerError(value))
+module.exports = { runTurn, probeVersion: claudeAgent.probeVersion, isClosedRunnerResult, isClosedRunnerError }

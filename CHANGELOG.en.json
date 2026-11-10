@@ -1,5 +1,44 @@
 [
   {
+    "version": "1.4.13",
+    "date": "2026-11-10",
+    "name": "Reliability and task follow-up improvements",
+    "items": [
+      {
+        "t": "Restore Claude Code health information",
+        "d": "Visible Claude Code models show executor version and probe results. Hidden models do not trigger extra probes."
+      },
+      {
+        "t": "Retry failed upgrades safely",
+        "d": "Keep failed installations for inspection. Retry in a separate directory and verify before switching, without overwriting existing installations."
+      },
+      {
+        "t": "Align runtime version, model and capability information",
+        "d": "Each turn receives the running service version and its exact tool entry. Distinguish service, global installation and available updates; consistently resolve group model overrides and defaults."
+      },
+      {
+        "t": "Read locally retained group replies",
+        "d": "Look up this group’s recorded replies by source message or turn, with explicit provenance, status, truncation and retention limits. Unreadable Feishu cards are never reconstructed by guesswork."
+      },
+      {
+        "t": "Apply concurrency and maintenance checks to trials",
+        "d": "Allow one console trial within shared model capacity. Refuse starts during maintenance, abort and skip saving after writer loss, and retain capacity when process closure is unknown."
+      },
+      {
+        "t": "Handle early timeout callbacks",
+        "d": "If a timer callback arrives before the deadline, wait for the remaining interval. Abort only with elapsed-time evidence so a normal timeout is not misclassified as a fault."
+      },
+      {
+        "t": "Send console messages while a task is running",
+        "d": "Project messages use the same followup or queue path as group messages. The console distinguishes acceptance, waiting for the model to read, and confirmed joining; repeated submissions are deduplicated."
+      },
+      {
+        "t": "Continue output after moving a reply card",
+        "d": "Busy follow-ups preserve already displayed text on the relocated card, then stream subsequent output without replaying the old text. Updates arriving during the move and the final answer remain ordered."
+      }
+    ]
+  },
+  {
     "version": "1.4.12",
     "date": "2026-11-10",
     "name": "Projects and live activity",

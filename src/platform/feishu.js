@@ -605,7 +605,7 @@ function createFeishuPlatform({ appId, appSecret, botOpenId = null, onlyWhenMent
   }
 
   return {
-    features: { cardQuota: true, noticeCard: true }, // 飞书支持通知卡;企微/Slack 退回文本
+    features: { cardQuota: true, noticeCard: true, cardPinned: true }, // 回复卡钉在触发消息下;补话落地后可搬到新消息下
     async start(onMessage, hooks = {}) {
       if (!botOpenId && !onlyWhenMentioned) log('warning: feishu.botOpenId not set — cannot tell @bot from @others; all group messages will be handled')
       if (hooks.onFatal !== undefined && typeof hooks.onFatal !== 'function') {

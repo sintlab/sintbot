@@ -1204,14 +1204,54 @@ class C2DurableRuntime {
   // Isolated v2 terminal boundary. The callback is registered before the
   // runner is exposed, and only this process can prove which pending receipt
   // was actually dispatched. No text or reply context enters the journal.
-  registerTerminalCallback({ receiptId, generation, registeredAt } = {}) {
+  registerTerminalCallback({ receiptId, generation, registeredAt, reuse = false } = {}) {
     this.#completionCapacity()
     const id = callbackRegistrationId({ receiptId, generation,
       domain: 'terminal', kind: 'finalizeEffectCommit' })
+    if (reuse) {
+      const prior = this.#journal.lookupRegistration(id)
+      if (prior) {
+        if (prior.receiptId !== receiptId || prior.generation !== generation ||
+            prior.domain !== 'terminal' || prior.kind !== 'finalizeEffectCommit' ||
+            prior.ordinal !== 0) throw new Error('C2 terminal registration identity differs')
+        return prior
+      }
+    }
     const result = this.#journal.registerCallback({ id, receiptId, generation,
       domain: 'terminal', kind: 'finalizeEffectCommit', ordinal: 0, registeredAt })
     if (this.#journal.byteLength >= this.#maxJournalBytes) this.#sealForCapacity()
     return result
+  }
+
+  assertClosedFailureReady({ receiptId, chatId, turnToken, generation,
+    verifyGeneration, assertWriterLock } = {}) {
+    const before = this.#completionCapacity()
+    const witness = this.#activeRuns.get(chatId)
+    const proof = this.#journal.lookupRunnerClosed(
+      `sbot-c2-runner-closed-v1:${receiptId}:${generation}`)
+    const receipt = before.receipts.pending.find(item => item.id === receiptId)
+    const dispatch = proof && this.#journal.effectDescriptor(proof.dispatchEffectId)
+    if (this.blocked || assertWriterLock?.() !== true ||
+        verifyGeneration?.({ receiptId, chatId, turnToken, generation }) !== true ||
+        receipt?.chatId !== chatId || witness?.receiptId !== receiptId ||
+        witness.turnToken !== turnToken || proof?.receiptId !== receiptId ||
+        proof.chatId !== chatId || proof.turnToken !== turnToken ||
+        proof.generation !== generation || dispatch?.type !== 'dispatch' ||
+        dispatch.scope !== chatId || dispatch.receiptId !== receiptId ||
+        dispatch.turnToken !== turnToken ||
+        this.#journal.effectStatus(proof.dispatchEffectId) !== 'acked' ||
+        !this.#journal.hasEvent(`sbot-c2-session-close-v1:${receiptId}:${generation}`) ||
+        before.state.lanes.session?.[chatId]?.closeSeen !== true ||
+        before.state.lanes.turn?.[chatId]?.active !== turnToken ||
+        before.state.lanes.handoff?.[chatId]?.phase !== 'running' ||
+        before.state.lanes.steer?.[chatId]?.entries?.some(item => item.status !== 'landed') ||
+        [...before.effects].some(([id, status]) =>
+          this.#journal.effectDescriptor(id)?.scope === chatId && status !== 'acked') ||
+        !isDeepStrictEqual(this.#coordinator.snapshot(), before.state)) {
+      this.close()
+      throw new Error('C2 failure terminal lacks settled durable proof')
+    }
+    return true
   }
 
   commitTerminalEffect({ receiptId, generation, turnToken, payload } = {}) {
@@ -2200,7 +2240,7 @@ class C2DurableRuntime {
   // this yet. It executes one externally visible reply only after a durable
   // attempt; a lost ACK leaves the receipt and effect ambiguous on restart.
   async executeTerminalEffect({ effectId, receiptId, chatId, turnToken, generation,
-    verifyGeneration, resolveTarget, perform, confirm } = {}) {
+    verifyGeneration, resolveTarget, perform, confirm, assertWriterLock = () => true } = {}) {
     const before = this.#completionCapacity()
     if (typeof effectId !== 'string' || !RECEIPT_ID.test(receiptId) ||
         typeof chatId !== 'string' || !chatId || !GENERATION.test(generation) ||
@@ -2242,7 +2282,8 @@ class C2DurableRuntime {
         descriptor.receiptId !== receiptId || descriptor.targetId !== null ||
         this.#journal.effectStatus(effectId) !== 'pending' ||
         registration?.generation !== generation || registration.receiptId !== receiptId ||
-        verifyGeneration({ chatId, receiptId, turnToken, generation }) !== true) {
+        verifyGeneration({ chatId, receiptId, turnToken, generation }) !== true ||
+        assertWriterLock() !== true) {
       throw new Error('C2 terminal effect lacks exact live authority')
     }
     if (expectedType === 'quietCompletion') {
@@ -2278,13 +2319,16 @@ class C2DurableRuntime {
         const reply = await perform({ effectId, target })
         confirmed = confirm(reply) === true &&
           this.#effectAuthorityReady &&
+          assertWriterLock() === true &&
           verifyGeneration({ chatId, receiptId, turnToken, generation }) === true
       } catch { /* External outcome is unknown after the durable attempt. */ }
       const now = this.#now()
       const resolvedAt = Number.isSafeInteger(now) && now > 0
         ? Math.max(attemptedAt, now) : attemptedAt
       if (!confirmed) {
-        this.#journal.recordEffectOutcome({ effectId, status: 'unknown', resolvedAt })
+        if (assertWriterLock() === true) {
+          this.#journal.recordEffectOutcome({ effectId, status: 'unknown', resolvedAt })
+        }
         this.close()
         throw new Error('C2 final reply outcome unknown; manual recovery required')
       }

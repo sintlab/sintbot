@@ -1,4 +1,4 @@
-# Install SintBot 1.4.8
+# Install SintBot 1.4.9
 
 English · [简体中文](./zh-CN/install.md)
 
@@ -10,7 +10,7 @@ You need a Mac, Node.js 22 or newer, and projects stored on that Mac. Install an
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-The installer checks the environment, installs `sintbot@1.4.8` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.8`. No sudo is needed.
+The installer checks the environment, installs `sintbot@1.4.9` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.9`. No sudo is needed.
 
 To preview, append `-s -- --dry-run`. To choose another location, set `SINTBOT_INSTALL_DIR` and adjust the executable paths below.
 

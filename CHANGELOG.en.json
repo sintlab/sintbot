@@ -1,5 +1,24 @@
 [
   {
+    "version": "1.4.9",
+    "date": "2026-11-10",
+    "name": "Failure completion and reply card improvements",
+    "items": [
+      {
+        "t": "Fix: a reply card could remain in progress after a failed task",
+        "d": "After a confirmed executor error and exit, the existing card shows a failure and the group can handle the next message. Without an open card, one failure notice is sent. Uncertain delivery remains held without automatic retries."
+      },
+      {
+        "t": "Improve: reply cards show the actual model and reasoning effort",
+        "d": "The final card shows the selected model and effort. If an unsupported effort falls back to the model default, it no longer shows that rejected effort. Long durations use minutes or hours, and absent usage no longer appears as zero tokens."
+      },
+      {
+        "t": "Fix: answers stayed at the old card position after a busy-turn follow-up",
+        "d": "After Codex confirms a follow-up landed, the reply card moves beneath that message. An open card is copied to the new position before the old one is recalled."
+      }
+    ]
+  },
+  {
     "version": "1.4.8",
     "date": "2026-11-10",
     "name": "Console interjections, upgrade notices, group messaging skills",

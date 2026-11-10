@@ -6,6 +6,9 @@
 // receive only the v2 decision and stable effect/receipt identities.
 const { C2DurableRuntime } = require('./c2durableruntime')
 const { C2PayloadHandles } = require('./c2payloadhandles')
+const { engineTerminalStep } = require('../agent/privatecore')
+
+const FAILURE_NOTICE = '本次任务执行失败。若已执行过工具，请先核对实际结果，再决定是否重试。'
 
 const RECEIPT_ID = /^[0-9a-f]{32}$/
 const GENERATION = /^[0-9a-f]{32}$/
@@ -22,6 +25,14 @@ function terminalReplyText(payload) {
       typeof payload.bufferText !== 'string' ||
       typeof payload.answerText !== 'string') {
     throw new TypeError('C2 terminal reply text fields invalid')
+  }
+  // The core classifies the result; the host supplies a fixed display string.
+  // Neither a provider error nor unfinished assistant text is a final answer.
+  if (payload.source === 'result' && payload.isError === true) {
+    const event = { ...payload, type: 'finalize' }
+    delete event.receiptId; delete event.turnToken; delete event.quiet
+    if (engineTerminalStep({ finalized: false, outcome: null }, event)
+      .state.outcome.status === 'error') return FAILURE_NOTICE
   }
   return (payload.answerText.trim() ? payload.answerText : payload.bufferText) ||
     payload.resultText
@@ -106,7 +117,7 @@ function prepareTerminalEffectBridge({ runtime, payloadHandles, receiptId, chatI
           }
         }
         const effect = { effectId: final.effectId, receiptId, chatId,
-          turnToken, generation, verifyGeneration }
+          turnToken, generation, verifyGeneration, assertWriterLock }
         if (final.type === 'quietCompletion') {
           if (replyText !== undefined || resolveTarget !== undefined ||
               sendReply !== undefined || confirmReply !== undefined) {

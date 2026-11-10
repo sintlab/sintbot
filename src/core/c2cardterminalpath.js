@@ -9,6 +9,7 @@ const { prepareTerminalEffectBridge, terminalReplyText } = require('./c2terminal
 const { stripMilestones } = require('./turnprogress')
 
 function prepareCardTerminalPath({ runtime, payloadHandles, platform, replyCtx,
+  cardAnchor = null, preferPlain = false,
   receiptId, chatId, turnToken, generation, verifyGeneration,
   applyLocalEffect, assertWriterLock, sendPlainReply = null, redactText = value => value,
   now = Date.now } = {}) {
@@ -20,7 +21,8 @@ function prepareCardTerminalPath({ runtime, payloadHandles, platform, replyCtx,
         typeof sendPlainReply !== 'function')) {
     throw new TypeError('C2 card terminal path needs one exact message target')
   }
-  if (sendPlainReply !== null && typeof sendPlainReply !== 'function') {
+  if (typeof preferPlain !== 'boolean' ||
+      sendPlainReply !== null && typeof sendPlainReply !== 'function') {
     throw new TypeError('C2 plain reply needs one strict sender')
   }
   if (typeof redactText !== 'function' ||
@@ -28,6 +30,27 @@ function prepareCardTerminalPath({ runtime, payloadHandles, platform, replyCtx,
     throw new TypeError('C2 card text redaction must be synchronous')
   }
   const targetCtx = Object.freeze({ ...replyCtx })
+  const landedAnchor = anchor => {
+    if (!anchor || !/^[0-9a-f]{32}$/.test(anchor.receiptId || '') ||
+        anchor.replyCtx?.chatId !== chatId ||
+        typeof anchor.replyCtx.messageId !== 'string' ||
+        !anchor.replyCtx.messageId) {
+      throw new TypeError('C2 card anchor needs one landed follow-up')
+    }
+    const snapshot = runtime.snapshot()
+    const steer = snapshot.state?.lanes?.steer?.[chatId]
+    const followup = snapshot.receipts?.pending?.find(item => item.id === anchor.receiptId)
+    if (steer?.parentReceiptId !== receiptId || steer.turnToken !== turnToken ||
+        steer.generation !== generation ||
+        !steer.entries?.some(item => item.receiptId === anchor.receiptId &&
+          item.status === 'landed') || followup?.chatId !== chatId ||
+        followup.source !== 'message' ||
+        followup.sourceId !== anchor.replyCtx.messageId) {
+      throw new Error('C2 card anchor differs from landed steer receipt')
+    }
+    return Object.freeze({ ...anchor.replyCtx })
+  }
+  let activeAnchorCtx = cardAnchor ? landedAnchor(cardAnchor) : targetCtx
   // Registration is durable before open() can expose any runner callback.
   const terminal = prepareTerminalEffectBridge({ runtime, payloadHandles,
     receiptId, chatId, turnToken, generation, verifyGeneration,
@@ -36,6 +59,7 @@ function prepareCardTerminalPath({ runtime, payloadHandles, platform, replyCtx,
     chatId, turnToken, generation, verifyGeneration })
   let phase = 'prepared'
   let card = null
+  let lastCardText = ''
   let suppressedCard = false
   const fail = error => { phase = 'closed'; runtime.close(); throw error }
   const canUsePlain = before => {
@@ -62,13 +86,13 @@ function prepareCardTerminalPath({ runtime, payloadHandles, platform, replyCtx,
       }
       phase = 'opening'
       const before = runtime.snapshot()
-      if (typeof platform.createStreamingCard !== 'function') {
+      if (preferPlain || typeof platform.createStreamingCard !== 'function') {
         if (!canUsePlain(before)) return fail(new Error('C2 plain reply lacks unopened card proof'))
         phase = 'plain'
         return false
       }
       try {
-        card = await platform.createStreamingCard(targetCtx,
+        card = await platform.createStreamingCard(activeAnchorCtx,
           { operationKey: receiptId, operationBoundary })
         if (!card && canUsePlain(before)) {
           phase = 'plain'
@@ -95,7 +119,37 @@ function prepareCardTerminalPath({ runtime, payloadHandles, platform, replyCtx,
       }
       if (suppressedCard) throw new Error('C2 suppressed card cannot stream an update')
       if (typeof text !== 'string') throw new TypeError('C2 card update needs process-local text')
-      if (card) card.update(redactText(text))
+      if (card) {
+        lastCardText = redactText(text)
+        card.update(lastCardText)
+      }
+    },
+    async relocate(anchor) {
+      const nextCtx = landedAnchor(anchor)
+      if (phase !== 'open' || !card) return false
+      if (activeAnchorCtx.messageId === nextCtx.messageId) return true
+      if (!lastCardText) throw new Error('C2 card move has no visible text to replay')
+      phase = 'relocating'
+      try {
+        if (await card.flush() !== true) throw new Error('C2 old card flush unconfirmed')
+        // A different operation key gives each card its own durable create,
+        // post, frame and delete identities under the same running turn.
+        const fresh = await platform.createStreamingCard(nextCtx, {
+          operationKey: `${receiptId}:followup:${anchor.receiptId}`,
+          operationBoundary,
+        })
+        if (!fresh || typeof fresh.update !== 'function' ||
+            typeof fresh.flush !== 'function' || typeof fresh.recall !== 'function') {
+          throw new Error('C2 moved card has no durable writer')
+        }
+        fresh.update(lastCardText)
+        if (await fresh.flush() !== true) throw new Error('C2 moved card text unconfirmed')
+        if (await card.recall() !== true) throw new Error('C2 old card delete unconfirmed')
+        card = fresh
+        activeAnchorCtx = nextCtx
+        phase = 'open'
+        return true
+      } catch (error) { return fail(error) }
     },
     async flushForTerminal() {
       if (phase !== 'open' || !card || await card.flush() !== true) {
@@ -131,7 +185,8 @@ function prepareCardTerminalPath({ runtime, payloadHandles, platform, replyCtx,
         return true
       } catch (error) { return fail(error) }
     },
-    async complete({ payload, replyText, paused = false, footer = '', milestones = [] } = {}) {
+    async complete({ payload, replyText, paused = false, footer = '',
+      footerDetail = '', milestones = [] } = {}) {
       if (phase !== 'open' && phase !== 'plain') {
         throw new Error('C2 card terminal path is not open')
       }
@@ -144,7 +199,8 @@ function prepareCardTerminalPath({ runtime, payloadHandles, platform, replyCtx,
             typeof terminalPayload.quiet !== 'boolean' || terminalPayload.quiet !== receipt.quiet ||
             typeof terminalPayload.resultText !== 'string' ||
             typeof terminalPayload.bufferText !== 'string' ||
-            typeof footer !== 'string' || !Array.isArray(milestones) ||
+            typeof footer !== 'string' || typeof footerDetail !== 'string' ||
+            !Array.isArray(milestones) ||
             !milestones.every(item => typeof item === 'string' && item.trim())) {
           throw new TypeError('C2 card terminal payload differs from running turn')
         }
@@ -190,7 +246,7 @@ function prepareCardTerminalPath({ runtime, payloadHandles, platform, replyCtx,
               // card's "process" fold; an answer that was only milestones shows
               // them as its body. The durable reply text stays exact.
               let shownText = visibleText
-              const finishOpts = { footer }
+              const finishOpts = { footer, footerDetail }
               if (milestones.length) {
                 const stripped = stripMilestones(visibleText)
                 if (stripped.trim()) {

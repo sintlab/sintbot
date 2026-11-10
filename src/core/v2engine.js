@@ -39,6 +39,31 @@ function humanDuration(ms) {
   if (minutes < 60) return `${minutes} 分 ${seconds % 60} 秒`
   return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`
 }
+// The final card is an accounting line: keep seconds for short turns and
+// switch to minutes/hours before a long turn becomes an unreadable number.
+function cardDuration(ms) {
+  const seconds = Math.max(0, Math.round(ms / 1000))
+  if (seconds < 60) return `${seconds} 秒`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return seconds % 60 ? `${minutes} 分 ${seconds % 60} 秒` : `${minutes} 分钟`
+  const hours = Math.floor(minutes / 60)
+  return minutes % 60 ? `${hours} 小时 ${minutes % 60} 分` : `${hours} 小时`
+}
+function cardModelInfo(group, provider) {
+  if (!provider) return { model: '', effort: '' }
+  const model = group?.model || provider.model ||
+    (provider.runner === 'codex' ? '' : provider.env?.ANTHROPIC_MODEL) || ''
+  const effort = provider.runner === 'codex'
+    ? provider.reasoningEffort : provider.env?.CLAUDE_CODE_EFFORT_LEVEL
+  const clean = value => String(value || '').replace(/\s+/g, ' ').trim()
+  return { model: clean(model), effort: clean(effort) }
+}
+function cardModelDetail(info, result) {
+  // A rejected configured effort may have been retried at the model default.
+  const fellBack = result?.effortFellBack || result?.result?.effortFellBack
+  return [info?.model, fellBack ? '' : info?.effort]
+    .filter(Boolean).join(' ')
+}
 // Group texts name the project by its folder only, never by a machine path.
 function projectName(group) {
   return String(group?.workdir || '').split(/[\\/]/).filter(Boolean).pop() || '（未设）'
@@ -104,9 +129,11 @@ const T = {
   skipPending: '正在跳过当前任务，这条消息没有处理，请稍后重发。',
   quotaFailure: 'Codex 订阅额度已用完，本次任务未完成。请恢复额度后重新发送；本次请求不会自动重试。',
   cardFooter: ({ ms, tokens }) => {
-    const parts = [`耗时 ${Math.max(0, Math.round(ms / 1000))} 秒`]
+    const parts = [`耗时 ${cardDuration(ms)}`]
     const tokenLabel = n => n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n)
-    if (tokens) parts.push(`tokens ↑${tokenLabel((tokens.in || 0) + (tokens.cr || 0) + (tokens.cw || 0))} ↓${tokenLabel(tokens.out || 0)}`)
+    if (tokens && ((tokens.in || 0) + (tokens.cr || 0) + (tokens.cw || 0) + (tokens.out || 0)) > 0) {
+      parts.push(`tokens ↑${tokenLabel((tokens.in || 0) + (tokens.cr || 0) + (tokens.cw || 0))} ↓${tokenLabel(tokens.out || 0)}`)
+    }
     return parts.join(' · ')
   },
 }
@@ -134,6 +161,20 @@ function supportedV2QuotaFailure(payload, runnerResult) {
   const outcome = engineTerminalStep({ finalized: false, outcome: null }, terminal).state.outcome
   return outcome.status === 'error' && outcome.quotaError === true &&
     outcome.sideEffects === false
+}
+
+// Admit only an observed, closed result on this release's no-retry route.
+// Error classification remains in the core; close/session/effect authority is
+// checked by the terminal path before any delivery can be attempted.
+function supportedV2ClosedFailure(payload, runnerResult) {
+  if (!payload || payload.source !== 'result' || payload.aborted ||
+      payload.sessionMissing || payload.transientNetwork || payload.hasQuota ||
+      payload.freshRetried || payload.resumedSessionCurrent ||
+      runnerResult?.aborted !== false) return false
+  const terminal = { ...payload, type: 'finalize' }
+  delete terminal.receiptId; delete terminal.turnToken; delete terminal.quiet
+  return engineTerminalStep({ finalized: false, outcome: null }, terminal)
+    .state.outcome.status === 'error'
 }
 
 function ordinaryV2Cohort(snapshot, jobs, binding, chatId, receiptId) {
@@ -781,7 +822,9 @@ async _runDurableV2Steer(rt, receiptId) {
         invoke: () => control.steerDurable({ msgId: job.msg.msgId, text }) })
       entry.accepted = accepted
       if (accepted) {
-        if (entry.landed) authority.commitSteerObservation({ ...identity, type: 'landed' })
+        if (entry.landed) {
+          authority.commitSteerObservation({ ...identity, type: 'landed' })
+        }
         return { receiptId, steered: true, accepted: true, landed: entry.landed, staged: true }
       }
       if (entry.landed) throw new Error('C2 rejected steer also landed; outcome inconsistent')
@@ -803,9 +846,20 @@ async _runDurableV2Steer(rt, receiptId) {
       return { receiptId, queued: true, staged: true, accepted: false }
     })()
     rt.v2QueueNoticePromise = work
-    try { return await work }
+    let outcome
+    try { outcome = await work }
     catch (error) { authority.close(); rt.v2Controller?.abort(); this.durableV2SealCapacity?.(error); throw error }
     finally { if (rt.v2QueueNoticePromise === work) rt.v2QueueNoticePromise = null }
+    try {
+      if (outcome.accepted && entry.landed) {
+        await rt.v2SteerLandedChain
+        await rt.v2MoveCard?.(entry)
+      }
+      return outcome
+    } catch (error) {
+      authority.close(); rt.v2Controller?.abort(); this.durableV2SealCapacity?.(error)
+      throw error
+    }
   }
 
 async runDurableV2Stop(msg, platform) {
@@ -1203,7 +1257,8 @@ async _drainDurableV2NormalChain(initial) {
       const outcome = engineTerminalStep({ finalized: false, outcome: null },
         terminal).state.outcome
       const quotaFailure = supportedV2QuotaFailure(payload, rt.v2RunnerResult)
-      if (['error', 'empty', 'stopped'].includes(outcome.status) && !quotaFailure) {
+      const closedFailure = supportedV2ClosedFailure(payload, rt.v2RunnerResult)
+      if (['error', 'empty', 'stopped'].includes(outcome.status) && !quotaFailure && !closedFailure) {
         const classified = this.classifyDurableV2UnresolvedTurn({ ...identity,
           payload })
         const error = new Error('C2 v2 ordinary result requires fault recovery')
@@ -1214,7 +1269,7 @@ async _drainDurableV2NormalChain(initial) {
       if (payload.source !== 'result' || payload.sessionMissing ||
           (payload.hasQuota && !quotaFailure) || payload.transientNetwork || payload.freshRetried ||
           payload.resumedSessionCurrent ||
-          (!['ok', 'no-reply'].includes(outcome.status) && !quotaFailure)) {
+          (!['ok', 'no-reply'].includes(outcome.status) && !quotaFailure && !closedFailure)) {
         authority.close()
         const error = new Error('C2 v2 ordinary result needs a retry or notice decision')
         error.code = 'C2_V2_UNRESOLVED_TURN'
@@ -1232,7 +1287,7 @@ async _drainDurableV2NormalChain(initial) {
       for (const settledReceiptId of completed.settledReceiptIds ||
         [identity.receiptId]) {
         settled.push({ receiptId: settledReceiptId,
-          status: quotaFailure ? 'error' : silent ? 'silent' : 'answered',
+          status: quotaFailure || closedFailure ? 'error' : silent ? 'silent' : 'answered',
           terminalEffectId: completed.terminalEffectId })
       }
       if (authority.blocked) {
@@ -1436,7 +1491,12 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
     rt.v2Doing = []
     rt.v2AutoMilestones = []
     rt.v2CardQuotaFailure = false
+    rt.v2CardModelInfo = null
     rt.v2CardBinding = null
+    rt.v2CardAnchor = null
+    rt.v2CardJoinedNames = []
+    rt.v2LastCardText = ''
+    rt.v2MoveCard = null
     rt.v2StreamRequested = false
     rt.v2StreamQuiescing = false
     rt.v2StreamChain = Promise.resolve()
@@ -1472,6 +1532,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
       if (!provider || (provider.baseUrl && !provider.apiKey)) {
         throw new Error('C2 v2 runner provider unavailable')
       }
+      rt.v2CardModelInfo = cardModelInfo(job.group, provider)
       rt.v2SteerControl = null
       rt.v2SteerEntries = new Map()
       rt.v2SteerClosing = false
@@ -1516,6 +1577,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
           if (rt.v2CardBinding?.opened) await rt.v2CardBinding.path.flushForTerminal()
           if (rt.v2RunnerGeneration !== generation) return
           authority.commitSteerObservation({ ...steerIdentity, receiptId: entry.identity.receiptId, type: 'landed' })
+          await rt.v2MoveCard?.(entry)
         })
         rt.v2SteerLandedChain = observation
         observation.catch(() => { authority.close(); controller?.abort() })
@@ -1531,6 +1593,8 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
       rt.v2RunnerNotStarted = false
       let streamChain = Promise.resolve()
       let streamFailure = null
+      const joinedLine = () => rt.v2CardJoinedNames.length
+        ? `\n\n↪ 已加入 ${rt.v2CardJoinedNames.join('、')} 的补充` : ''
       // Card progress (same mechanism and wording as the legacy engine): deterministic
       // milestones and "recently doing" from tool calls, an early "received" card
       // and a pulse line. All of it is process-local card text; the card itself is
@@ -1547,6 +1611,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
         rt.v2TerminalStarted || controller.signal.aborted || rt.v2CancelControl ||
         rt.v2StreamQuiescing || !!authority.scopeState('stopIntent', chatId)
       const enqueueCardText = text => {
+        rt.v2LastCardText = text
         rt.v2StreamRequested = true
         streamChain = streamChain.then(async () => {
           if (rt.v2QueueNoticePromise) await rt.v2QueueNoticePromise
@@ -1558,7 +1623,8 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
           if (!rt.v2CardBinding) {
             const path = prepareCardTerminalPath({ runtime: authority,
               payloadHandles: this.durableV2Payloads, platform: job.platform,
-              replyCtx: job.msg.replyCtx, receiptId, chatId, turnToken,
+              replyCtx: job.msg.replyCtx, cardAnchor: rt.v2CardAnchor,
+              receiptId, chatId, turnToken,
               generation, verifyGeneration,
               applyLocalEffect: this.durableV2ApplyLocalEffect,
               assertWriterLock: this.durableV2AssertWriterLock,
@@ -1573,13 +1639,40 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
             rt.v2CardBinding = { path, receiptId, turnToken,
               generation, opened }
           }
-          if (rt.v2CardBinding.opened) rt.v2CardBinding.path.update(text)
+          if (rt.v2CardBinding.opened) rt.v2CardBinding.path.update(text + joinedLine())
         })
         rt.v2StreamChain = streamChain
         streamChain.catch(error => {
           streamFailure = error
           try { controller.abort() } catch {}
         })
+      }
+      rt.v2MoveCard = entry => {
+        if (entry.movePromise) return entry.movePromise
+        const move = streamChain.then(async () => {
+          if (progressClosed() || job.platform.features?.cardPinned !== true) return false
+          const anchor = { receiptId: entry.identity.receiptId,
+            replyCtx: entry.job.msg.replyCtx }
+          const who = entry.job.msg.senderName || entry.job.msg.userId || 'user'
+          if (!rt.v2CardJoinedNames.includes(who)) rt.v2CardJoinedNames.push(who)
+          if (!rt.v2CardBinding) {
+            rt.v2CardAnchor = anchor
+            return true
+          }
+          if (!rt.v2CardBinding.opened) return false
+          rt.v2CardBinding.path.update((rt.v2LastCardText || progress.T.ackWorking) + joinedLine())
+          const moved = await rt.v2CardBinding.path.relocate(anchor)
+          if (moved) rt.v2CardAnchor = anchor
+          return moved
+        })
+        streamChain = move
+        rt.v2StreamChain = move
+        entry.movePromise = move
+        move.catch(error => {
+          streamFailure = error
+          try { controller.abort() } catch {}
+        })
+        return move
       }
       const enqueueFrame = event => {
         if (event.type !== 'assistant') return
@@ -1650,10 +1743,8 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
           const sofar = buffer.trim()
           const body = autoBlock() + (sofar && !NO_REPLY.startsWith(sofar)
             ? progress.renderMilestones(buffer) + '\n\n' : '')
-          try {
-            binding.path.update(body + progress.T.pulse(
-              progress.humanDur(Date.now() - pulseFrom), rt.v2Doing, stale))
-          } catch { /* a closed card never affects the turn */ }
+          enqueueCardText(body + progress.T.pulse(
+            progress.humanDur(Date.now() - pulseFrom), rt.v2Doing, stale))
         }, PULSE_MS)
         if (pulseTimer.unref) pulseTimer.unref()
       }
@@ -1872,6 +1963,7 @@ async completeDurableV2CardTurn({ chatId, receiptId, turnToken, effectId,
     const projected = rt?.v2TerminalProjection
     const resultText = projected?.payload?.resultText
     const quotaFailure = supportedV2QuotaFailure(payload, rt?.v2RunnerResult)
+    const closedFailure = supportedV2ClosedFailure(payload, rt?.v2RunnerResult)
     if (!/^[0-9a-f]{32}$/.test(receiptId || '') ||
         !Number.isSafeInteger(turnToken) || turnToken <= 0 ||
         typeof effectId !== 'string' || !effectId ||
@@ -1903,10 +1995,9 @@ async completeDurableV2CardTurn({ chatId, receiptId, turnToken, effectId,
           (!isDeepStrictEqual(payload.batchReceiptIds, cohort.receiptIds) ||
             payload.replyTargetReceiptId !== receiptId)) ||
         !isDeepStrictEqual(payload, projected.payload) ||
-        // Only successful answers and binary-classified, side-effect-free
-        // quota failures use this no-retry terminal bridge. Unknown failures
-        // and lost-session outcomes still need a separate recovery decision.
-        payload.source !== 'result' || payload.aborted || (payload.isError && !quotaFailure) ||
+        // A deterministic failure is delivered once, after the same durable
+        // close checks as success. Retry and unknown outcomes stay sealed.
+        payload.source !== 'result' || payload.aborted || (payload.isError && !quotaFailure && !closedFailure) ||
         payload.sessionMissing || (payload.hasQuota && !quotaFailure) || payload.transientNetwork ||
         payload.freshRetried || payload.resumedSessionCurrent ||
         (replyText !== undefined && replyText !== terminalReplyText(projected.payload)) ||
@@ -1920,6 +2011,9 @@ async completeDurableV2CardTurn({ chatId, receiptId, turnToken, effectId,
       value.generation === generation && rt.v2RunnerGeneration === generation
     try {
       const preopened = rt.v2CardBinding
+      if (closedFailure) authority.assertClosedFailureReady({ receiptId, chatId,
+        turnToken, generation, verifyGeneration,
+        assertWriterLock: this.durableV2AssertWriterLock })
       if (preopened && (preopened.receiptId !== receiptId ||
           preopened.turnToken !== turnToken ||
           preopened.generation !== generation)) {
@@ -1927,7 +2021,8 @@ async completeDurableV2CardTurn({ chatId, receiptId, turnToken, effectId,
       }
       const path = preopened?.path || prepareCardTerminalPath({ runtime: authority,
         payloadHandles: handles, platform: job.platform,
-        replyCtx: job.msg.replyCtx, receiptId, chatId, turnToken, generation,
+        replyCtx: job.msg.replyCtx, cardAnchor: rt.v2CardAnchor, preferPlain: closedFailure,
+        receiptId, chatId, turnToken, generation,
         verifyGeneration, applyLocalEffect: this.durableV2ApplyLocalEffect,
         assertWriterLock: this.durableV2AssertWriterLock,
         redactText: text => redact(quotaFailure
@@ -1942,6 +2037,8 @@ async completeDurableV2CardTurn({ chatId, receiptId, turnToken, effectId,
       for (const text of updates) path.update(text)
       const footer = T.cardFooter({ ms: Math.max(0, Date.now() - rt.v2StartedAt),
         tokens: rt.v2UsageDecision?.tokens || null })
+      const footerDetail = job.platform.features?.cardQuota === true
+        ? cardModelDetail(rt.v2CardModelInfo, rt.v2RunnerResult) : ''
       // Milestones from tool calls first, then the model's own `>> ` lines;
       // the card shows them in its "process" fold (display only).
       rt.v2CardQuotaFailure = !!quotaFailure
@@ -1950,7 +2047,8 @@ async completeDurableV2CardTurn({ chatId, receiptId, turnToken, effectId,
         ...progress.milestonesOf(payload.bufferText)]
         .filter((m, i, a) => a.indexOf(m) === i).map(redactMilestone)
         .filter(m => typeof m === 'string' && m.trim())
-      const completed = await path.complete({ payload, replyText, paused, footer, milestones })
+      const completed = await path.complete({ payload, replyText, paused,
+        footer, footerDetail, milestones })
       const after = authority.snapshot()
       const queue = after.state?.lanes?.queue?.[chatId]?.queue
       let successor = null
@@ -2064,7 +2162,7 @@ classifyDurableV2UnresolvedTurn({ chatId, receiptId, turnToken, effectId,
       }
       rt.v2TerminalStarted = true
       authority.registerTerminalCallback({ receiptId, generation,
-        registeredAt: Date.now() })
+        registeredAt: Date.now(), reuse: true })
       return authority.commitUnresolvedClassification({ receiptId, generation,
         turnToken, status, payload,
         verifyGeneration: value => value.chatId === chatId &&

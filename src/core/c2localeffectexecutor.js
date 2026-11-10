@@ -147,12 +147,11 @@ function createC2LocalEffectExecutor({ journal, store, resolveTurn,
     const chatId = descriptor.scope
     if (effect.type === 'verifyTurn' && effect.success === false) {
       const outcome = journal.snapshot().state.lanes.terminal?.[chatId]?.outcome
-      // A known quota failure says nothing about credential validity. The
+      // A failed task alone says nothing about credential validity. The
       // binary's failed verification intent is acknowledged without writing
       // a false success or altering the previous credential-health record.
-      if (outcome?.status !== 'error' || outcome.quotaError !== true ||
-          outcome.sideEffects !== false) {
-        throw new Error('C2 local effect payload differs: failed verification lacks a supported quota outcome')
+      if (outcome?.status !== 'error') {
+        throw new Error('C2 local effect payload differs: failed verification lacks a core error outcome')
       }
       return true
     }

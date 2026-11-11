@@ -1632,9 +1632,11 @@ const SVG_REFRESH_XS=IC.refresh;
 const usageRefreshBtn=(cx)=>`<button class="iconbtn xs" data-act="usage"${cx?' data-cx="1"':''} title="重新拉取额度">${SVG_REFRESH_XS}</button>`;
 function fmtContextTokens(n){return langOf()==='en'?(n>=1e6?(n/1e6).toFixed(2).replace(/\.00$/,'')+'M':(n/1e3).toFixed(1).replace(/\.0$/,'')+'k')+' tokens':(n/1e4).toFixed(2).replace(/\.00$/,'')+'万 token';}
 function providerWindowText(p,withSource=false){
-  const w=p.contextWindow||{};
-  if(!w.tokens)return '待上报';
-  return fmtContextTokens(w.tokens)+(withSource?(w.source==='reported'?' · 最近上报':w.source==='catalog'?' · 本机模型目录':p.runner==='codex'?' · OpenAI Docs':' · 官方型号')+(w.activeTokens&&w.activeTokens!==w.tokens?(p.runner==='codex'?' · Codex 当前窗口 ':' · 当前窗口 ')+fmtContextTokens(w.activeTokens):'')+(w.usableTokens&&w.usableTokens!==w.tokens?' · 当前可用 '+fmtContextTokens(w.usableTokens):''):'');
+  const w=p.contextWindow||{},en=langOf()==='en';
+  if(!w.tokens)return en?'Awaiting a report':'待上报';
+  const source=w.source==='reported'?(en?'Last reported':'最近上报'):w.source==='catalog'?(en?'Local model catalog':'本机模型目录'):p.runner==='codex'?'OpenAI Docs':(en?'Official model':'官方型号');
+  const active=p.runner==='codex'?(en?'Current Codex context':'Codex 当前窗口'):(en?'Active context':'当前窗口');
+  return fmtContextTokens(w.tokens)+(withSource?' · '+source+(w.activeTokens&&w.activeTokens!==w.tokens?' · '+active+' '+fmtContextTokens(w.activeTokens):'')+(w.usableTokens&&w.usableTokens!==w.tokens?' · '+(en?'Currently usable':'当前可用')+' '+fmtContextTokens(w.usableTokens):''):'');
 }
 function providerCompactText(p){
   const inherited=p.autocompactTokens==null;

@@ -25,10 +25,11 @@ const DEFAULTS = {
   // runs fully locked down (dontAsk ⇒ read-only safe set only), which is fail-closed.
   // maxTurnTimeMins defaults to 30: an uncapped runaway turn would
   // hold a concurrency slot and the group lock forever. 0 = explicitly off.
-  // autocompactTokens:上下文超过该值即让 CLI 原地压缩(claude --autocompact / codex
-  // model_auto_compact_token_limit)。多天连跑的群会话历史只增不减(2026-08-09 实测 4 天涨到
+  // autocompactTokens:传给 Claude --autocompact 的是压缩窗口,传给 Codex
+  // model_auto_compact_token_limit 的是请求阈值;两者均可能早于设置值触发。
+  // 多天连跑的群会话历史只增不减(2026-08-09 实测 4 天涨到
   // 96 万 token 且两家 CLI 默认都没触发任何压缩),不设上限 = 每轮驮全量历史 + 闲置后整段重写缓存。
-  // 0 = 关闭(交还 CLI 默认行为)。
+  // 0 = 不指定 SintBot 阈值,交还 CLI 默认压缩行为。
   // ackDelayMs:收到真人消息后迟迟没动静,先回一声「已收到」的等待毫秒数(0 = 不发;
   // engine 侧另有 == null ? 25s 兜底,直构 Engine 不经本层合并也不失默认)。
   agent: { bin: 'claude', permissionMode: 'dontAsk', maxTurnTimeMins: 30, maxConcurrent: 2, autocompactTokens: 400_000, ackDelayMs: 25_000 },

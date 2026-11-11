@@ -51,6 +51,7 @@
     "src/agent/codexapp.js",
     "src/agent/codexcode.js",
     "src/agent/codexstatus.js",
+    "src/agent/modelwindows.js",
     "src/agent/errtag.js",
     "src/agent/privatecore.js",
     "src/agent/privatecore.wasm",

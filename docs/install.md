@@ -107,15 +107,15 @@ When the reply card moves below a confirmed follow-up, its existing text is show
 
 ## 6. Console
 
+Model cards show the official context limit when known, otherwise the active executor window. These values are read-only. Set auto-compaction separately for each model: Codex uses a requested token threshold; Claude Code uses a compaction window and can compact before it fills. A value of `0` leaves timing to the executor; models without a per-model setting retain the legacy global value. The configured value is not a confirmed trigger point.
+
 The overview combines group projects and concurrency. Each row shows the runner, state and elapsed time, project folder, model and configured reasoning effort, and the latest reported context usage. Select a group to view its tasks, then expand a task for tools, reply and usage. Context is a session sample, not cumulative token consumption; unknown capacity and older samples are labeled. Row icons provide console messages, stop and new-session controls according to the current group state.
 
 With `--ui`, open `http://127.0.0.1:4600` on this Mac. The console shows each group, stops tasks, starts a new conversation for an idle group, binds new groups, switches the model or project folder of an idle group, and adds or configures models. For LAN access, set a console password in its settings first, then enable LAN access.
 
 The Message action also works while a group is busy. It follows the group’s follow-up setting: the message waits for model reading or joins the queue. “Accepted” does not yet confirm that the model has read it. New sessions and model changes still require an idle group.
 
-Settings → Software updates checks for new releases. In the foreground setup above it shows the upgrade steps: press Ctrl-C and wait for exit, rerun the one-line installer, then start again with the same command. If your own launchd agent starts SintBot, Upgrade now waits until every group is idle and settled, installs the new version into an isolated release directory and switches the agent to it; if the new version does not connect every group within 90 seconds, the previous one is restored. A window shows each step, reconnects by itself while the service restarts and can be left running in the background. On the first start after an upgrade, each serving group gets one card listing what changed; to turn this off, clear "Announce upgrades in groups" under The Message action also works while a group is busy. It follows the group’s follow-up setting: the message waits for model reading or joins the queue. “Accepted” does not yet confirm that the model has read it. New sessions and model changes still require an idle group.
-
-Settings → Software updates.
+Settings → Software updates checks for new releases. In the foreground setup above it shows the upgrade steps: press Ctrl-C and wait for exit, rerun the one-line installer, then start again with the same command. If your own launchd agent starts SintBot, Upgrade now waits until every group is idle and settled, installs the new version into an isolated release directory and switches the agent to it; if the new version does not connect every group within 90 seconds, the previous one is restored. A window shows each step, reconnects by itself while the service restarts and can be left running in the background. On the first start after an upgrade, each serving group gets one card listing what changed; to turn this off, clear "Announce upgrades in groups" under Settings → Software updates.
 
 If an installation fails, retry uses a fresh directory and preserves the failed attempt for diagnosis. It switches only after verification.
 

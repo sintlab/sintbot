@@ -20,6 +20,7 @@ const { normalizeTz, isValidTz, tzOffsetMin, tzParts } = require('../core/time')
 // providers on the Codex CLI, not Claude. Same module the daemon/CLI use.
 const { runTurn, probeVersion, isClosedRunnerResult, isClosedRunnerError } = require('../agent/runner')
 const codexstatus = require('../agent/codexstatus') // codex 订阅登录态 + 用量(卡片「验证登录」)
+const { codexCatalogWindows, windowForProvider } = require('../agent/modelwindows')
 const claudestatus = require('../agent/claudestatus') // Claude 订阅登录态(卡片「检测登录」· doctor 同源)
 const claudemodels = require('../agent/claudemodels') // Claude 模型候选(仅登录后给)
 const claudeusage = require('../agent/claudeusage') // Claude 订阅额度(oauth/usage,cc-hud 同源;v0.11.3)
@@ -484,6 +485,19 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
     // 给临时配置加了 codex,claude 当场从模型库消失,而 daemon 仍然认它)。
     // 「显示的 ≠ 实际生效的」是这类界面最贵的一种错。
     const provSrc = { ...DEFAULTS.providers, ...(raw.providers || {}) }
+    const reportedWindows = new Map()
+    try {
+      for (const g of runtimePolicy?.activityPage?.({ limit: 1 })?.groups || []) {
+        const name = (control?.providerOf?.(g.chatId)) || raw.groups?.[g.chatId]?.provider || raw.defaultProvider || cfg.defaultProvider
+        const provider = provSrc[name]
+        if (raw.groups?.[g.chatId]?.model && raw.groups[g.chatId].model !== provider?.model) continue
+        const configuredModel = raw.groups?.[g.chatId]?.model || provider?.model || provider?.env?.ANTHROPIC_MODEL || ''
+        const tokens = g.context?.windowTokens
+        if (provider && g.model === configuredModel && (!g.context?.sessionId || g.context.sessionId === g.sessionId) &&
+            Number.isSafeInteger(tokens) && tokens > 0) reportedWindows.set(name, tokens)
+      }
+    } catch { /* A missing live sample is not a model capacity. */ }
+    const codexWindows = codexCatalogWindows()
     // 一次性任务过期判断:at(群时区本地串)< 当前群时区时间串(YYYY-MM-DD HH:mm 字典序=时间序)
     const nowTzStr = (() => { try { const p = tzParts(Date.now(), normalizeTz(raw.timezone)); return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}` } catch { return '' } })()
     const cronExpired = (at) => { try { return !!at && normalizeAt(at) < nowTzStr } catch { return false } }
@@ -500,6 +514,8 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       toolQuality: p.toolQuality || '',
       effort: (p.env && p.env.CLAUDE_CODE_EFFORT_LEVEL) || '',
       reasoningEffort: p.reasoningEffort || '', // codex-only: -c model_reasoning_effort
+      autocompactTokens: p.autocompactTokens ?? null,
+      contextWindow: windowForProvider(p, reportedWindows.get(name), codexWindows),
       vision: p.vision !== false, // false = 纯文本模型 ⇒ 图片走 strip-proxy 降级
       hidden: !!p.hidden,
       configured: isConfigured(p), // usable: logged-in, or has a resolvable key
@@ -957,7 +973,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       }
       // upsert a provider (add or edit — the ⚙ config panel + 添加模型 both use this)
       if (p === '/api/providers/add' && req.method === 'POST') {
-        const { name, baseUrl, model, apiKey, env, toolQuality, effort, reasoningEffort, hidden, vision, modelClear, runner } = await body(req)
+        const { name, baseUrl, model, apiKey, env, toolQuality, effort, reasoningEffort, autocompactTokens, hidden, vision, modelClear, runner } = await body(req)
         if (!name || !/^[\w.-]+$/.test(name)) return sendJSON(res, 400, { error: '名称必填,且只用字母/数字/._-' })
         // 持久处理流程只跑 Codex / Claude Code:别的后端名不能被下面的白名单悄悄改写成 Claude 存进去。
         if (runtimePolicy && runner !== undefined && runner !== '' && !runtimePolicy.providerSupported({ runner })) {
@@ -981,6 +997,13 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         // (model/list 实测 gpt-5.6 系已到 xhigh/max/ultra),故按形状校验而非枚举白名单;
         // 传参走 argv 数组无 shell 展开,无注入面。坏形状清空(回模型默认),不炸轮。
         if (reasoningEffort !== undefined) { if (typeof reasoningEffort === 'string' && /^[a-z]{2,16}$/.test(reasoningEffort)) pr.reasoningEffort = reasoningEffort; else delete pr.reasoningEffort }
+        if (autocompactTokens !== undefined) {
+          if (!Number.isInteger(autocompactTokens) || autocompactTokens < 0 ||
+              (autocompactTokens > 0 && (autocompactTokens < 100_000 || autocompactTokens > 1_000_000))) {
+            return sendJSON(res, 400, { error: '模型压缩阈值须为 0(执行器默认)或 100000–1000000 之间的整数(token 数)' })
+          }
+          pr.autocompactTokens = autocompactTokens
+        }
         if (hidden !== undefined) { if (hidden) pr.hidden = true; else delete pr.hidden }
         // 识图能力:只存"没有"这一种情况(vision:false ⇒ spawn 时把 claude 挂到本地
         // strip-proxy,图片块降级成占位文本);有识图=默认透传,不写字段免得配置长毛。
@@ -1186,7 +1209,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         for (const k of ['permissionMode', 'maxConcurrent', 'maxTurnTimeMins']) if (k in patch) raw.agent[k] = patch[k]
         // 机器人自称(顶层 brand):空或默认名就不落盘,和安装向导 --full 的写法一致
         if ('brand' in patch) { const b = String(patch.brand || '').trim().slice(0, 40); if (b && b !== 'SintBot') raw.brand = b; else delete raw.brand }
-        // 长会话自动压缩阈值:0 = 关,否则限 10万–100万(CLI 旗子的文档区间;区间外它会拒参数,
+        // 旧全局压缩阈值:0 = 交给执行器默认,否则限 10万–100万(CLI 旗子的文档区间;区间外它会拒参数,
         // 每轮必死 ⇒ 存前就挡住,别让坏值落盘)。
         if ('autocompactTokens' in patch) {
           const n = Number(patch.autocompactTokens)

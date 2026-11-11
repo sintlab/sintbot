@@ -1630,6 +1630,18 @@ async function autoVerifyCodex(){const cxs=((S&&S.providers)||[]).filter(p=>p.ru
    不存在。cx=1 的走 codex 自家通道(/api/codex/verify force),其余走 /api/usage/refresh。 */
 const SVG_REFRESH_XS=IC.refresh;
 const usageRefreshBtn=(cx)=>`<button class="iconbtn xs" data-act="usage"${cx?' data-cx="1"':''} title="重新拉取额度">${SVG_REFRESH_XS}</button>`;
+function fmtContextTokens(n){return langOf()==='en'?(n>=1e6?(n/1e6).toFixed(2).replace(/\.00$/,'')+'M':(n/1e3).toFixed(1).replace(/\.0$/,'')+'k')+' tokens':(n/1e4).toFixed(2).replace(/\.00$/,'')+'万 token';}
+function providerWindowText(p,withSource=false){
+  const w=p.contextWindow||{};
+  if(!w.tokens)return '待上报';
+  return fmtContextTokens(w.tokens)+(withSource?(w.source==='reported'?' · 最近上报':w.source==='catalog'?' · 本机模型目录':p.runner==='codex'?' · OpenAI Docs':' · 官方型号')+(w.activeTokens&&w.activeTokens!==w.tokens?(p.runner==='codex'?' · Codex 当前窗口 ':' · 当前窗口 ')+fmtContextTokens(w.activeTokens):'')+(w.usableTokens&&w.usableTokens!==w.tokens?' · 当前可用 '+fmtContextTokens(w.usableTokens):''):'');
+}
+function providerCompactText(p){
+  const inherited=p.autocompactTokens==null;
+  const n=inherited?(S.agent?.autocompactTokens??400000):p.autocompactTokens;
+  if(!n)return '执行器默认';
+  return fmtContextTokens(n);
+}
 function claudeChip(){
   const s=S.claudeStatus;
   if(!s) return '<span class="chip" title="点卡片右上角「配置」里的「检测登录」确认这台机器的 Claude 登录态">订阅登录·未验证</span>';
@@ -1645,6 +1657,8 @@ function renderProviders(){
       <div class="ph"><div class="pn"><span class="drag" draggable="true" title="拖动排序">${IC.grip}</span>${esc(p.name)}${p.runner==='codex'?'<span class="cli-tag codex" title="GPT 经 Codex CLI 后端 · 订阅登录">Codex CLI</span>':'<span class="cli-tag claude" title="经 Claude Code CLI · 模型大脑按 env 切换">Claude Code CLI</span>'}</div>
         <div class="inline" style="gap:8px">${chip}<button class="iconbtn cfg" data-act="edit" title="配置模型">${IC.settings}</button></div></div>
       <div class="kv"><span class="kk">model</span><span class="vv" title="${esc(p.model||(p.loggedIn&&p.runner!=='codex'?'未指定 ⇒ spawn 时不设 ANTHROPIC_MODEL,用 Claude Code 自己的默认模型':''))}">${esc(p.model||(p.loggedIn&&p.runner!=='codex'?'跟随 Claude Code 默认':'—'))}</span></div>
+      <div class="kv"><span class="kk">${p.contextWindow?.source==='official'?'模型上限':'当前窗口'}</span><span class="vv" title="${esc(providerWindowText(p,true))} · 只读，不会改变模型容量">${esc(providerWindowText(p))}</span></div>
+      <div class="kv"><span class="kk">${p.runner==='codex'?'压缩阈值':'压缩窗口'}</span><span class="vv" title="${esc(providerCompactText(p))} · ${p.autocompactTokens==null?'沿用旧全局设置':'逐模型设置'} · ${p.runner==='codex'?'Codex 可能按当前窗口提前压缩':'Claude Code 在压缩窗口满前触发，设置值受模型窗口限制'}">${esc(providerCompactText(p))}</span></div>
       <div class="kv"><span class="kk">endpoint</span><span class="vv" title="${esc(p.runner==='codex'?'Codex CLI(codex exec · 订阅登录)':(p.baseUrl||'本机 Claude Code 的登录态 —— 无需 baseUrl / API key'))}">${esc(p.runner==='codex'?'Codex CLI (订阅登录)':(p.baseUrl?p.baseUrl.replace('https://',''):'Claude 订阅登录'))}</span></div>
       ${p.effort?`<div class="kv"><span class="kk">思考深度</span><span class="vv">${esc(p.effort)}</span></div>`:''}
       ${p.vision===false?'<div class="kv"><span class="kk">识图</span><span class="vv" title="纯文本模型:送给它的图片(群里发的图/网页截图/读取的图片文件)自动降级成占位文本,不会 400 崩掉整轮">不支持 · 图片自动降级</span></div>':''}
@@ -1801,6 +1815,10 @@ function openProviderModal(name,opts){
     :isClaudeLogin?`<div class="field" id="clModelWrap"><label class="f">模型 model</label>
       <div class="hint">检测登录中…</div></div>`
     :`<div class="field"><label class="f">模型 model</label><input id="amModel" value="${edit?esc(p.model):''}" placeholder="如 glm-5.2[1m]"/></div>`}
+    <div class="field"><label class="f">模型窗口</label><div class="dim" id="amWindow" style="padding:9px 11px;border:1px solid var(--line-hi);border-radius:8px">${edit?esc(providerWindowText(p,true)):'添加后按模型目录或会话上报显示'}</div>
+      <div class="hint" style="margin-top:5px">只读 · 有官方上限时显示上限；否则显示当前执行器窗口。可用容量可能更低。</div></div>
+    <div class="field"><label class="f">${isCodex?'自动压缩阈值(token)':'自动压缩窗口(token)'}</label><input id="amComp" type="number" min="0" max="1000000" step="10000" value="${edit?(p.autocompactTokens??S.agent?.autocompactTokens??400000):(S.agent?.autocompactTokens??400000)}"/>
+      <div class="hint" style="margin-top:5px">${isCodex?'0 = 使用 Codex 默认；否则填 10万–100万。Codex 可能按当前窗口提前压缩。':'0 = 使用 Claude Code 默认；否则填 10万–100万压缩窗口。实际压缩会在窗口满前触发。'}${edit&&p.autocompactTokens==null?'<span>当前沿用旧全局设置，保存后改为本模型独立设置。</span>':''}</div></div>
     ${isClaudeLogin?`<div class="field"><label class="f">Claude 订阅登录</label>
       <div id="clStatus" style="border:1px solid var(--line-hi);border-radius:8px;padding:9px 11px;font-size:13px">${clStatusHtml()}</div>
       <button class="btn" id="clVerify" style="margin-top:8px">检测登录</button>
@@ -1821,6 +1839,13 @@ function openProviderModal(name,opts){
       ${edit?'<button class="btn ghost" id="amDel">移除</button>':'<span></span>'}
       <div class="inline" style="gap:8px"><button class="btn" id="amCancel">取消</button><button class="btn primary" id="amSave">${edit?'保存':'添加'}</button></div></div>`;
   $('#modalBg').classList.add('show');
+  $('#modal').oninput=null;$('#modal').onchange=null;
+  if(edit){
+    const refreshWindow=()=>{const sel=$('#amModelSel'),input=$('#amModel');const selected=sel&&sel.value!=='__custom__'?sel.value:input?.value?.trim();
+      const box=$('#amWindow');if(box)box.textContent=selected===(p.model||'')?providerWindowText(p,true):'新型号保存后刷新';};
+    $('#modal').oninput=e=>{if(e.target.id==='amModel'||e.target.id==='amModelSel')refreshWindow();};
+    $('#modal').onchange=e=>{if(e.target.id==='amModel'||e.target.id==='amModelSel')refreshWindow();};
+  }
   if(!edit){const apply=()=>{const key=$('#amPreset').value,pr=PRESETS[key]||{};
     // ⚠ codex 形态是**结构性**的(没有端点/key/思考深度,多出模型下拉与订阅额度),
     //   靠显隐凑不出来 ⇒ 切换时原地重开一次面板,把选中的预设带过去。
@@ -1904,7 +1929,9 @@ function openProviderModal(name,opts){
     const selModel=(isCodex||isClaudeLogin)
       ?(hasModelCtl?(()=>{const sv=($('#amModelSel')||{}).value;return (sv==null||sv==='__custom__')?(($('#amModel')||{}).value||'').trim():sv;})():null)
       :$('#amModel').value.trim();
-    const b={name:nm};
+    if(!$('#amComp').value.trim()){toast('请填写压缩阈值，使用执行器默认请填 0','err');return;}
+    const b={name:nm,autocompactTokens:Number($('#amComp').value)};
+    if(!Number.isInteger(b.autocompactTokens)||b.autocompactTokens<0||(b.autocompactTokens>0&&(b.autocompactTokens<100000||b.autocompactTokens>1000000))){toast('压缩阈值须为 0 或 10万–100万 token','err');return;}
     if(selModel)b.model=selModel;
     if(isCodex){b.model=selModel||'';b.reasoningEffort=$('#amRE').value;
       // ⚠ 新建时必须显式带 runner —— 少了它建出来的是个"没有端点没有 key 的 claude provider",
@@ -3584,8 +3611,6 @@ function renderSettings(){
           <div class="hint" style="margin-top:5px">单轮超此即中止 · 0 = 关</div></div>
         <div class="field" style="flex:1;margin-bottom:0"><label class="f">回执等待(秒)</label><input id="aAck" type="number" min="0" value="${(a.ackDelayMs??25000)/1000}"/>
           <div class="hint" style="margin-top:5px">超此秒数仍无输出才回「已收到」 · 0 = 不发</div></div></div>
-      <div class="field" style="margin:12px 0 0;max-width:320px"><label class="f">会话压缩阈值(token)</label><input id="aComp" type="number" min="0" step="10000" value="${a.autocompactTokens??400000}"/>
-        <div class="hint" style="margin-top:5px">群会话上下文超过该值即自动压缩久远内容 · 范围 10万–100万(默认 40万)· 0 = 关,仅在模型窗口边缘压 · 全部群生效</div></div>
       <div class="field" style="margin:12px 0 0;max-width:320px"><label class="f">群时间</label><input id="aTz" placeholder="Asia/Shanghai" value="${esc(S.timezone||'')}"/>
         <div class="hint" style="margin-top:5px">群内理解/表述时间的时区 · 留空 = 北京时间 · 与服务器时区无关</div></div>
       <button class="btn primary" id="aSave" style="margin-top:14px">保存</button>
@@ -3641,7 +3666,7 @@ function renderSettings(){
   bindFxFolds();
   const lo=$('#logoutBtn');if(lo)lo.onclick=async()=>{try{await api('/api/logout','POST',{});}catch{}dropToken();TOKEN='';location.reload();};
   const la=$('#logoutAllBtn');if(la)la.onclick=async()=>{try{const r=await api('/api/logout/all','POST',{});toast('已退出 '+(r.n||0)+' 个登录','ok');}catch(e){toast(e.message,'err');return;}dropToken();TOKEN='';setTimeout(()=>location.reload(),600);};
-  $('#aSave').onclick=async()=>{const patch={maxConcurrent:+$('#aConc').value,maxTurnTimeMins:+$('#aWall').value,autocompactTokens:+$('#aComp').value,ackDelayMs:Math.round((+$('#aAck').value||0)*1000),timezone:$('#aTz').value.trim()};
+  $('#aSave').onclick=async()=>{const patch={maxConcurrent:+$('#aConc').value,maxTurnTimeMins:+$('#aWall').value,ackDelayMs:Math.round((+$('#aAck').value||0)*1000),timezone:$('#aTz').value.trim()};
     try{S=await api('/api/agent','POST',patch);toast('已保存','ok');renderGroups();renderSettings();startClock();}catch(e){toast(e.message,'err');}};
   $('#fSave').onclick=async()=>{const b={botOpenId:$('#fBot').value.trim(),onlyWhenMentioned:$('#fGate').value==='1'};const id=$('#fId').value.trim();if(id)b.appId=id;const sec=$('#fSecret').value.trim();if(sec)b.appSecret=sec; // 空 appId 不回传:env: 引用时字段渲染为空,回传空串会清掉凭据
     try{S=await api('/api/feishu','POST',b);toast('飞书已保存','ok');renderAll();}catch(e){toast(e.message,'err');}}; // 管理员单独管理(见下)
@@ -4324,6 +4349,34 @@ const I18N_EN=[
   ["可添加模型，修改型号、端点、密钥、思考深度与推理强度，测试、隐藏或拖动排序；各群的模型在「群·项目」里切换。改型号、后端或端点时，用它的群须空闲，并会开始新的一段对话；默认模型和群正在用的模型不能隐藏。移除模型暂不可用。", "Add models; change their model id, endpoint, key, thinking depth and reasoning effort; test, hide or drag to reorder them. Switch each group's model under Groups. Changing a model id, backend or endpoint needs the groups using it to be idle and starts a new conversation for them. The default model and models in use by a group cannot be hidden. Removing models is unavailable."],
   ["默认开启 · 下轮生效", "On by default · Applies next turn"],
   ["当前只能添加或修改 Codex 或 Claude Code 模型", "Only Codex or Claude Code models can be added or changed right now."],
+  ["模型上限", "Model limit"],
+  ["当前窗口", "Active context"],
+  ["压缩阈值", "Compaction limit"],
+  ["压缩窗口", "Compaction window"],
+  ["模型窗口", "Model context"],
+  ["Codex 当前窗口", "Current Codex context"],
+  ["当前可用", "Currently usable"],
+  ["自动压缩阈值(token)", "Auto-compaction limit (tokens)"],
+  ["自动压缩窗口(token)", "Auto-compaction window (tokens)"],
+  ["待上报", "Awaiting a report"],
+  ["本机模型目录", "Local model catalog"],
+  ["最近上报", "Last reported"],
+  ["官方型号", "Official model"],
+  ["执行器默认", "Executor default"],
+  ["沿用旧全局设置", "Inherited legacy setting"],
+  ["逐模型设置", "Per-model setting"],
+  ["只读，不会改变模型容量", "Read-only; does not change model capacity"],
+  ["只读 · 有官方上限时显示上限；否则显示当前执行器窗口。可用容量可能更低。", "Read-only · Shows the official model limit when known; otherwise the active executor context. Usable capacity may be lower."],
+  ["添加后按模型目录或会话上报显示", "Shown from the model catalog or a session report after adding"],
+  ["新型号保存后刷新", "Updates after saving the new model ID"],
+  ["0 = 交给执行器默认；否则填 10万–100万。逐模型生效，实际触发点不会超过执行器的窗口限制。", "0 = executor default; otherwise enter 100k–1M. Applies per model; the executor still limits the actual trigger to its context window."],
+  ["当前沿用旧全局设置，保存后改为本模型独立设置。", "Currently inherits the old global value; saving makes it a setting for this model."],
+  ["请填写压缩阈值，使用执行器默认请填 0", "Enter a compaction limit, or 0 for the executor default"],
+  ["本模型的设置值；执行器仍会按自身模型窗口限制实际触发点", "This model's configured value; the executor still caps the actual trigger by its context window"],
+  ["Codex 可能按当前窗口提前压缩", "Codex may compact earlier based on its active context window"],
+  ["Claude Code 在压缩窗口满前触发，设置值受模型窗口限制", "Claude Code compacts before this window fills; the value is capped by the model context"],
+  ["0 = 使用 Codex 默认；否则填 10万–100万。Codex 可能按当前窗口提前压缩。", "0 = Codex default; otherwise enter 100k–1M. Codex may compact earlier based on its active context."],
+  ["0 = 使用 Claude Code 默认；否则填 10万–100万压缩窗口。实际压缩会在窗口满前触发。", "0 = Claude Code default; otherwise enter a 100k–1M compaction window. Compaction starts before the window fills."],
   ["默认模型须是列表中未隐藏的 Codex 或 Claude Code 模型", "The default model must be a visible Codex or Claude Code model from the list."],
   ["有群因未解决的故障暂停处理，它用的模型、后端或端点要等处理完并重启后才能改", "A group is held after an unresolved fault; the model, backend or endpoint it uses can change only after the fault is handled and the service restarts."],
   ["当前版本暂不支持此操作。", "This operation is unavailable in the current version."],
@@ -5496,6 +5549,11 @@ const I18N_EN=[
   ["bot 不在任何群 / 未配飞书", "The bot is in no group, or Feishu isn't configured"],
 ];
 const I18N_EN_RX=[
+  [/^Codex 当前窗口 (\d+(?:\.\d+)?)万 token$/,(_all,n)=>'Current Codex context '+(+n>=100?(+n/100).toFixed(2).replace(/\.00$/,'')+'M':(+n*10).toFixed(1).replace(/\.0$/,'')+'k')+' tokens'],
+  [/^当前窗口 (\d+(?:\.\d+)?)万 token$/,(_all,n)=>'Active context '+(+n>=100?(+n/100).toFixed(2).replace(/\.00$/,'')+'M':(+n*10).toFixed(1).replace(/\.0$/,'')+'k')+' tokens'],
+  [/^当前可用 (\d+(?:\.\d+)?)万 token$/,(_all,n)=>'Currently usable '+(+n>=100?(+n/100).toFixed(2).replace(/\.00$/,'')+'M':(+n*10).toFixed(1).replace(/\.0$/,'')+'k')+' tokens'],
+  [/^(\d+(?:\.\d+)?)万 token(?: → 约 (\d+(?:\.\d+)?)万 token)?$/,(_all,a,b)=>{const f=n=>(+n>=100?(+n/100).toFixed(2).replace(/\.00$/,'')+'M':(+n*10).toFixed(1).replace(/\.0$/,'')+'k')+' tokens';return f(a)+(b?' → about '+f(b):'')}],
+  [/^(\d+(?:\.\d+)?)万 → 约 (\d+(?:\.\d+)?)万 token$/,(_all,a,b)=>{const f=n=>(+n>=100?(+n/100).toFixed(2).replace(/\.00$/,'')+'M':(+n*10).toFixed(1).replace(/\.0$/,'')+'k');return f(a)+' → about '+f(b)+' tokens'}],
   // ── 10-24 英文界面核对补齐 ──
   // 插件可达性探测的结果句(src/plugins.js probeMcp 的全部句式),控制台拼在插件行的悬停提示里
   [/^(.+):(\d+) 在听$/,"$1:$2 listening"],

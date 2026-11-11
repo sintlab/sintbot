@@ -24,7 +24,7 @@ function run(args, options = {}) {
 
 test('installed entry reports this release and its supported commands', () => {
   const pkg = require('../package.json')
-  assert.equal(pkg.version, '1.4.14')
+  assert.equal(pkg.version, '1.4.15')
   assert.equal(pkg.bin.sintbot, 'bin/sintbot-v2.js')
   assert.equal(pkg.bin.sbot, pkg.bin.sintbot)
   const version = run([entry, '--version'])

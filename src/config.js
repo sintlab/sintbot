@@ -25,14 +25,9 @@ const DEFAULTS = {
   // runs fully locked down (dontAsk ⇒ read-only safe set only), which is fail-closed.
   // maxTurnTimeMins defaults to 30: an uncapped runaway turn would
   // hold a concurrency slot and the group lock forever. 0 = explicitly off.
-  // autocompactTokens:传给 Claude --autocompact 的是压缩窗口,传给 Codex
-  // model_auto_compact_token_limit 的是请求阈值;两者均可能早于设置值触发。
-  // 多天连跑的群会话历史只增不减(2026-08-09 实测 4 天涨到
-  // 96 万 token 且两家 CLI 默认都没触发任何压缩),不设上限 = 每轮驮全量历史 + 闲置后整段重写缓存。
-  // 0 = 不指定 SintBot 阈值,交还 CLI 默认压缩行为。
   // ackDelayMs:收到真人消息后迟迟没动静,先回一声「已收到」的等待毫秒数(0 = 不发;
   // engine 侧另有 == null ? 25s 兜底,直构 Engine 不经本层合并也不失默认)。
-  agent: { bin: 'claude', permissionMode: 'dontAsk', maxTurnTimeMins: 30, maxConcurrent: 2, autocompactTokens: 400_000, ackDelayMs: 25_000 },
+  agent: { bin: 'claude', permissionMode: 'dontAsk', maxTurnTimeMins: 30, maxConcurrent: 2, ackDelayMs: 25_000 },
   // 时间口径(IANA 时区名):群内一切时间表述/消息时间戳/spawn 出去的 TZ 都按它,
   // 默认北京时间 —— 主机系统时区不参与(海外主机部署照样说北京时间)。
   timezone: DEFAULT_TZ,
@@ -87,6 +82,21 @@ function loadConfig(explicit) {
   return normalizeConfig(user, p)
 }
 
+// Collapse an explicit legacy global compression value into model settings at
+// the configuration boundary. Read-only until an authorized config write;
+// preserve per-model overrides, secret references, and every unrelated field.
+function migrateModelSettings(raw) {
+  if (!raw?.agent || !Object.hasOwn(raw.agent, 'autocompactTokens')) return raw
+  const n = Number(raw.agent.autocompactTokens) || 0
+  const compact = n > 0 ? Math.min(1_000_000, Math.max(100_000, Math.floor(n))) : 0
+  const agent = { ...raw.agent }
+  delete agent.autocompactTokens
+  const providers = Object.fromEntries(Object.entries({ ...DEFAULTS.providers, ...(raw.providers || {}) })
+    .map(([name, provider]) => [name, provider && typeof provider === 'object'
+      ? { ...provider, autocompactTokens: provider.autocompactTokens ?? compact } : provider]))
+  return { ...raw, agent, providers }
+}
+
 // The console validates proposed JSON before replacing the live file. Keep
 // normalization identical to disk loading without mutating the proposed object
 // or changing the live redaction registry during validation.
@@ -94,7 +104,7 @@ function normalizeConfig(raw, p = null, { registerSecrets = true } = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new TypeError('Configuration must be a JSON object')
   }
-  const user = JSON.parse(JSON.stringify(raw))
+  const user = migrateModelSettings(JSON.parse(JSON.stringify(raw)))
   const cfg = {
     agent: { ...DEFAULTS.agent, ...(user.agent || {}) },
     timezone: normalizeTz(user.timezone || DEFAULTS.timezone), // 写错回退默认,不漂到主机时区
@@ -293,4 +303,4 @@ function chatPlatform(cfg, chatId) {
   return live.length === 1 ? live[0] : null
 }
 
-module.exports = { loadConfig, normalizeConfig, findConfigPath, defaultConfigPath, DEFAULTS, applyProxyEnv, deriveNoProxy, resolveSecret, platformsConfigured, inferChatPlatform, normalizeGroupPlatforms, chatPlatform, PLATFORMS }
+module.exports = { loadConfig, normalizeConfig, migrateModelSettings, findConfigPath, defaultConfigPath, DEFAULTS, applyProxyEnv, deriveNoProxy, resolveSecret, platformsConfigured, inferChatPlatform, normalizeGroupPlatforms, chatPlatform, PLATFORMS }

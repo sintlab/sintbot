@@ -10,7 +10,7 @@ const crypto = require('node:crypto')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { loadConfig, applyProxyEnv, deriveNoProxy, DEFAULTS, resolveSecret } = require('../config')
+const { loadConfig, migrateModelSettings, applyProxyEnv, deriveNoProxy, DEFAULTS, resolveSecret } = require('../config')
 const verify = require('../core/verify') // 凭据最近一次验证的记录:模型测试 / 平台预检写,概览读
 const projectsroot = require('../projectsroot') // 项目根目录围栏:目录浏览 / 保存绑定 / 风格提炼三处同一份判据
 const { atomicWriteJSON } = require('../core/store')
@@ -293,7 +293,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
     if (!fs.existsSync(p)) return {}
     // A corrupted config must SURFACE, never be silently replaced — returning {}
     // here would let the next writeRaw wipe the whole file (FR11.1).
-    try { return JSON.parse(fs.readFileSync(p, 'utf8')) }
+    try { return migrateModelSettings(JSON.parse(fs.readFileSync(p, 'utf8'))) }
     catch (e) { throw new Error(`配置文件损坏(${e.message}),已拒绝读写 — 请先手工修复 ${p}`) }
   }
   const writeRaw = (obj) => {
@@ -514,7 +514,10 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       toolQuality: p.toolQuality || '',
       effort: (p.env && p.env.CLAUDE_CODE_EFFORT_LEVEL) || '',
       reasoningEffort: p.reasoningEffort || '', // codex-only: -c model_reasoning_effort
-      autocompactTokens: p.autocompactTokens ?? null,
+      autocompactTokens: p.autocompactTokens ?? 0,
+      reportedContextTokens: reportedWindows.get(name) || null,
+      contextWindowTokens: p.runner === 'codex' ? (p.contextWindowTokens || 0) : null,
+      contextWindowMax: p.runner === 'codex' ? (codexWindows.get(p.model)?.maxTokens || null) : null,
       contextWindow: windowForProvider(p, reportedWindows.get(name), codexWindows),
       vision: p.vision !== false, // false = 纯文本模型 ⇒ 图片走 strip-proxy 降级
       hidden: !!p.hidden,
@@ -644,7 +647,6 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         permissionMode: cfg.agent.permissionMode,
         maxConcurrent: cfg.agent.maxConcurrent,
         maxTurnTimeMins: cfg.agent.maxTurnTimeMins,
-        autocompactTokens: cfg.agent.autocompactTokens, // 长会话自动压缩阈值(默认 40 万经 config 层合并)
         ackDelayMs: cfg.agent.ackDelayMs, // 回执等待毫秒(默认 25s 经 config 层合并;界面按秒显示)
       },
       proxy: raw.proxy && raw.proxy.http ? { http: raw.proxy.http, noProxy: raw.proxy.noProxy || '' } : null,
@@ -973,7 +975,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       }
       // upsert a provider (add or edit — the ⚙ config panel + 添加模型 both use this)
       if (p === '/api/providers/add' && req.method === 'POST') {
-        const { name, baseUrl, model, apiKey, env, toolQuality, effort, reasoningEffort, autocompactTokens, hidden, vision, modelClear, runner } = await body(req)
+        const { name, baseUrl, model, apiKey, env, toolQuality, effort, reasoningEffort, autocompactTokens, contextWindowTokens, hidden, vision, modelClear, runner } = await body(req)
         if (!name || !/^[\w.-]+$/.test(name)) return sendJSON(res, 400, { error: '名称必填,且只用字母/数字/._-' })
         // 持久处理流程只跑 Codex / Claude Code:别的后端名不能被下面的白名单悄悄改写成 Claude 存进去。
         if (runtimePolicy && runner !== undefined && runner !== '' && !runtimePolicy.providerSupported({ runner })) {
@@ -1013,6 +1015,19 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         // 可执行文件(src/agent/runner.js 的派发),存进去一个随便的字符串等于给自己开一道门。
         // 不传 ⇒ 保持原值(编辑已有 codex provider 的常态,别把它降级成 claude 后端)。
         if (runner !== undefined) { if (runner === 'codex') pr.runner = 'codex'; else delete pr.runner }
+        if (contextWindowTokens !== undefined) {
+          if (pr.runner !== 'codex') return sendJSON(res, 400, { error: '上下文窗口设置仅适用于 Codex' })
+          if (!Number.isSafeInteger(contextWindowTokens) || contextWindowTokens < 0 ||
+              (contextWindowTokens > 0 && (contextWindowTokens < 100_000 || contextWindowTokens > 1_050_000))) {
+            return sendJSON(res, 400, { error: '上下文窗口须为 0 或 100000–1050000 之间的整数' })
+          }
+          pr.contextWindowTokens = contextWindowTokens
+        }
+        if (pr.runner !== 'codex') delete pr.contextWindowTokens
+        if (pr.contextWindowTokens > 0) {
+          const maximum = codexCatalogWindows().get(pr.model)?.maxTokens
+          if (maximum && pr.contextWindowTokens > maximum) return sendJSON(res, 400, { error: `上下文窗口超过当前模型目录上限 ${maximum} token` })
+        }
         raw.providers[name] = pr
         const defaultChange = settleDefault(raw); writeRaw(raw)
         // 变更联动(仅编辑已有 provider 时):受影响群 = 用着它(显式或经 defaultProvider)
@@ -1209,15 +1224,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         for (const k of ['permissionMode', 'maxConcurrent', 'maxTurnTimeMins']) if (k in patch) raw.agent[k] = patch[k]
         // 机器人自称(顶层 brand):空或默认名就不落盘,和安装向导 --full 的写法一致
         if ('brand' in patch) { const b = String(patch.brand || '').trim().slice(0, 40); if (b && b !== 'SintBot') raw.brand = b; else delete raw.brand }
-        // 旧全局压缩阈值:0 = 交给执行器默认,否则限 10万–100万(CLI 旗子的文档区间;区间外它会拒参数,
-        // 每轮必死 ⇒ 存前就挡住,别让坏值落盘)。
-        if ('autocompactTokens' in patch) {
-          const n = Number(patch.autocompactTokens)
-          if (!Number.isInteger(n) || n < 0 || (n > 0 && (n < 100_000 || n > 1_000_000))) {
-            return sendJSON(res, 400, { error: '压缩阈值须为 0(关闭)或 100000–1000000 之间的整数(token 数)' })
-          }
-          raw.agent.autocompactTokens = n
-        }
+        if ('autocompactTokens' in patch) return sendJSON(res, 400, { error: '请在模型卡片中设置压缩策略' })
         // 回执等待:非负整数毫秒即可,0 = 不发。不设上限 —— 大于单轮超时只是永不触发,无害。
         if ('ackDelayMs' in patch) {
           const n = Number(patch.ackDelayMs)

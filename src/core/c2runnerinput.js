@@ -34,9 +34,9 @@ function prepareC2RunnerInput({ prompt, appendSystemPrompt, msg, group, provider
         typeof onSteerLanded !== 'function'))) {
     throw new TypeError('C2 follow-up needs durable control callbacks')
   }
-  // A model card can override the old global setting. Missing means legacy
-  // configs keep their previous behavior; explicit zero delegates to the CLI.
-  const rawCompact = Number(provider.autocompactTokens ?? config.agent.autocompactTokens) || 0
+  // Model settings are resolved once at the configuration boundary.
+  // Missing or zero leaves compaction to the executor.
+  const rawCompact = Number(provider.autocompactTokens) || 0
   const autocompactTokens = rawCompact > 0
     ? Math.min(1_000_000, Math.max(100_000, Math.floor(rawCompact))) : 0
   return {

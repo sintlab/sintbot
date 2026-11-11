@@ -83,8 +83,10 @@ function buildPrompt(prompt, appendSystemPrompt, isResume) {
 // 2026-07-07): resume takes `resume <id>`, REJECTS `--sandbox` (use `-c sandbox_mode=`)
 // and `--cd` (relies on process cwd); fresh accepts `--sandbox` + `--cd`. Prompt rides
 // on stdin (trailing `-`), dodging Windows argv mangling of arbitrary chat text.
-function buildArgs({ sessionId, model, workdir, permissionMode, reasoningEffort, autocompactTokens }) {
-  return codexBuildArgs({ sessionId, model, workdir, permissionMode, reasoningEffort, autocompactTokens })
+function buildArgs({ sessionId, model, workdir, permissionMode, reasoningEffort, autocompactTokens, contextWindowTokens }) {
+  const args = codexBuildArgs({ sessionId, model, workdir, permissionMode, reasoningEffort, autocompactTokens })
+  if (Number.isSafeInteger(contextWindowTokens) && contextWindowTokens > 0) args.unshift('-c', `model_context_window=${contextWindowTokens}`)
+  return args
 }
 
 // A codex turn.failed / error result whose offending param is the reasoning effort —
@@ -191,7 +193,7 @@ function runOnce(opts, effort) {
     // so no collision with codex's own env. read-only sandbox can't run the command anyway.
     if (extraEnv) Object.assign(env, extraEnv)
 
-    const args = buildArgs({ sessionId, model: model || provider.model, workdir, permissionMode, reasoningEffort: effort, autocompactTokens })
+    const args = buildArgs({ sessionId, model: model || provider.model, workdir, permissionMode, reasoningEffort: effort, autocompactTokens, contextWindowTokens: provider.contextWindowTokens })
     const { file, spawnArgs, fallback } = resolveSpawn(bin, args)
     if (fallback) log(`配置的 agent 路径 '${bin}' 不存在,本轮改用 ${fallback} —— 请把配置改回正确路径`) // 与 claude runner 同一条兜底
     const child = spawnFn(file, spawnArgs, {

@@ -78,6 +78,7 @@ function runTurn(opts = {}) {
     delete env.CLAUDECODE
     delete env.OPENAI_API_KEY // 只使用机器现有的 ChatGPT 订阅登录态，与 codex exec 一致。
     const args = ['app-server', '-c', 'approval_policy=never']
+    if (Number.isSafeInteger(provider.contextWindowTokens) && provider.contextWindowTokens > 0) args.push('-c', `model_context_window=${provider.contextWindowTokens}`)
     if (autocompactTokens > 0) args.push('-c', `model_auto_compact_token_limit=${autocompactTokens}`)
     const { file, spawnArgs, fallback } = resolveSpawn(bin, args)
     if (fallback) log(`配置的 agent 路径 '${bin}' 不存在,本轮改用 ${fallback}`)

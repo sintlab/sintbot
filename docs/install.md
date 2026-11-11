@@ -1,4 +1,4 @@
-# Install SintBot 1.4.14
+# Install SintBot 1.4.15
 
 English · [简体中文](./zh-CN/install.md)
 
@@ -10,7 +10,7 @@ You need a Mac, Node.js 22 or newer, and projects stored on that Mac. Install an
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-The installer checks the environment, installs `sintbot@1.4.14` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.14`. No sudo is needed.
+The installer checks the environment, installs `sintbot@1.4.15` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.15`. No sudo is needed.
 
 To preview, append `-s -- --dry-run`. To choose another location, set `SINTBOT_INSTALL_DIR` and adjust the executable paths below.
 
@@ -107,7 +107,7 @@ When the reply card moves below a confirmed follow-up, its existing text is show
 
 ## 6. Console
 
-Model cards show the official context limit when known, otherwise the active executor window. These values are read-only. Set auto-compaction separately for each model: Codex uses a requested token threshold; Claude Code uses a compaction window and can compact before it fills. A value of `0` leaves timing to the executor; models without a per-model setting retain the legacy global value. The configured value is not a confirmed trigger point.
+Model cards distinguish requested settings from runtime reports; expand Capacity and runtime details for reference limits. Codex context and per-model compaction each offer Executor default or Custom. Numeric inputs appear only for Custom. Changes apply next turn without resetting the session; known catalog context limits are enforced. Compaction means a threshold for Codex and a window for Claude Code, and may start earlier. Explicit legacy global compaction values are converted into independent settings for existing models, preserving per-model overrides. New models use executor defaults. Reading does not rewrite the file; the converted settings are persisted on the next normal configuration save.
 
 The overview combines group projects and concurrency. Each row shows the runner, state and elapsed time, project folder, model and configured reasoning effort, and the latest reported context usage. Select a group to view its tasks, then expand a task for tools, reply and usage. Context is a session sample, not cumulative token consumption; unknown capacity and older samples are labeled. Row icons provide console messages, stop and new-session controls according to the current group state.
 

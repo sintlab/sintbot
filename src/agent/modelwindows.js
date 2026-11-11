@@ -1,6 +1,7 @@
 'use strict'
 
-// Console display only. Official limits and active executor windows are
+// Model metadata for console display and executor override validation.
+// Official limits and active executor windows are
 // separate values; neither changes the server-side capacity of a model.
 const fs = require('node:fs')
 const os = require('node:os')
@@ -38,7 +39,7 @@ function codexCatalogWindows(home = process.env.CODEX_HOME || path.join(os.homed
     const percent = model.effective_context_window_percent
     if (typeof id !== 'string' || !Number.isSafeInteger(full) || full <= 0 ||
         (percent != null && (!Number.isSafeInteger(percent) || percent < 1 || percent > 100))) continue
-    windows.set(id, { tokens: full, usableTokens: Math.floor(full * (percent || 100) / 100) })
+    windows.set(id, { maxTokens: Number.isSafeInteger(model.max_context_window) && model.max_context_window >= full ? model.max_context_window : full, tokens: full, usableTokens: Math.floor(full * (percent || 100) / 100) })
   }
   return windows
 }
@@ -49,7 +50,13 @@ function windowForProvider(provider, reported, codexWindows) {
   const gateway = provider.baseUrl || provider.env?.ANTHROPIC_BASE_URL
   const official = provider.runner === 'codex' ? OPENAI_API_WINDOWS.get(model)
     : gateway ? null : CLAUDE_WINDOWS.get(model)
-  // The catalog's context_window is the supported maximum. Runtime reports
+  // The catalog window is a default, not proof that an explicit override is active.
+  // With an override, only a real runtime sample can describe the active window.
+  if (provider.runner === 'codex' && provider.contextWindowTokens > 0) return {
+    tokens: official || null, source: official ? 'official' : 'unknown',
+    ...(Number.isSafeInteger(reported) && reported > 0 ? { activeTokens: reported } : {}),
+  }
+  // Runtime reports
   // may instead contain its effective (reserved) portion.
   if (catalog && (!Number.isSafeInteger(reported) || reported <= 0 ||
       reported === catalog.tokens || reported === catalog.usableTokens)) return {

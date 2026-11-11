@@ -2,7 +2,7 @@
 
 [English](./CONTRIBUTING.md) · 简体中文
 
-本仓包含 SintBot 1.4.14 的平台集成、文档及带内置核心的运行产物。本版支持 macOS、1–32 个飞书群、每群选用 Codex 或 Claude Code、群内命令与本机控制台。
+本仓包含 SintBot 1.4.15 的平台集成、文档及带内置核心的运行产物。本版支持 macOS、1–32 个飞书群、每群选用 Codex 或 Claude Code、群内命令与本机控制台。
 
 ## 验证修改
 

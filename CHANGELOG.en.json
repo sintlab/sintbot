@@ -1,5 +1,24 @@
 [
   {
+    "version": "1.4.15",
+    "date": "2026-11-11",
+    "name": "Simpler model settings",
+    "items": [
+      {
+        "t": "Configure the Codex context window",
+        "d": "Choose the executor default or a custom window on each model card. Validate known limits and distinguish requested settings from runtime reports."
+      },
+      {
+        "t": "Keep compaction settings per model",
+        "d": "Remove global inheritance. Choose the executor default or a custom value. Existing explicit global values become independent settings on existing models; new models use the executor default."
+      },
+      {
+        "t": "Streamline model configuration",
+        "d": "Group model and reasoning, context and compaction, and connection settings. Show numeric inputs only when needed and collapse capacity details. Model trials now use the model compaction setting."
+      }
+    ]
+  },
+  {
     "version": "1.4.14",
     "date": "2026-11-11",
     "name": "Model context and per-model compaction",

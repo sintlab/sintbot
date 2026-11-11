@@ -9,6 +9,11 @@ const codexApp = require('./codexapp')
 const { routeBackend } = require('./privatecore')
 
 function runTurn(opts) {
+  // One-off console trials use the same model settings as group turns.
+  // Explicit turn values (including zero) remain authoritative.
+  const compact = Number(opts.autocompactTokens ?? opts.provider?.autocompactTokens) || 0
+  opts = { ...opts, autocompactTokens: compact > 0
+    ? Math.min(1_000_000, Math.max(100_000, Math.floor(compact))) : 0 }
   const route = routeBackend(opts && opts.provider && opts.provider.runner, opts && opts.codexApp, opts && opts.codexSteer, opts && opts.codexProjectDocFallback)
   if (route !== 'claude') {
     const codexOpts = { ...opts, bin: (opts.provider && opts.provider.bin) || 'codex' }

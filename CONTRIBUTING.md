@@ -2,7 +2,7 @@
 
 English · [简体中文](./CONTRIBUTING.zh-CN.md)
 
-This repository contains platform integration, documentation and runtime artifacts for SintBot 1.4.13 with its built-in core. The release supports macOS, 1–32 Feishu groups, Codex or Claude Code per group, chat commands and the local console.
+This repository contains platform integration, documentation and runtime artifacts for SintBot 1.4.14 with its built-in core. The release supports macOS, 1–32 Feishu groups, Codex or Claude Code per group, chat commands and the local console.
 
 ## Check a change
 

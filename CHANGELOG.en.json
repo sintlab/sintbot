@@ -1,5 +1,24 @@
 [
   {
+    "version": "1.4.14",
+    "date": "2026-11-11",
+    "name": "Model context and per-model compaction",
+    "items": [
+      {
+        "t": "Read model context limits clearly",
+        "d": "Model cards distinguish known official model limits from the active executor window and usable capacity. Reported Claude windows do not replace known model limits."
+      },
+      {
+        "t": "Set compaction per model",
+        "d": "Configure a Codex compaction threshold or a Claude Code compaction window for each model. Models without an override retain the legacy setting; zero uses the executor’s settings. A requested value is not a confirmed trigger point."
+      },
+      {
+        "t": "Keep model details consistent",
+        "d": "Remove unverified compaction-point estimates and fix model-dialog refresh and English window descriptions. Installation guides explain the settings and remove a duplicated paragraph."
+      }
+    ]
+  },
+  {
     "version": "1.4.13",
     "date": "2026-11-10",
     "name": "Reliability and task follow-up improvements",

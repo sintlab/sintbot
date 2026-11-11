@@ -39,7 +39,7 @@ function createC2MultiGroupService({ routes, assertWriterLock,
   createTransport, createBinding, onFatal = () => {}, closeCapacity = () => {},
   quarantine = null, stopTimeoutMs = 2_000, drainTimeoutMs = 12_000,
   createRecoveryAuthority = null, holds = new Map(), sharedFault = () => null,
-  ingressWaitMs = 60_000, now = Date.now, log = () => {} } = {}) {
+  ingressWaitMs = 60_000, onModelCard = null, now = Date.now, log = () => {} } = {}) {
   if (!Array.isArray(routes) || !routes.length ||
       new Set(routes.map(route => route.chatId)).size !== routes.length ||
       routes.some(route => !route || typeof route.chatId !== 'string' ||
@@ -392,6 +392,26 @@ function createC2MultiGroupService({ routes, assertWriterLock,
       throw error
     }
   }
+  // Taps on the /model card only. They write the configuration through the
+  // same validated writer as the console and never touch a journal, receipt
+  // or session; every other card callback stays unsupported. The return
+  // value is the platform's synchronous answer (toast and replacement card).
+  function cardAction(event) {
+    let value = event?.action?.value
+    if (typeof value === 'string') { try { value = JSON.parse(value) } catch { value = null } }
+    if (typeof onModelCard !== 'function' || !value || value.a !== 'mc' || !allowed(event?.chatId)) {
+      return unsupported('card action')(event)
+    }
+    if (maintenance) return { toast: { type: 'info', content: '正在升级，稍后再点' } }
+    if (suspended.has(event.chatId)) return { toast: { type: 'warning', content: '本群暂停处理中，请管理员处理后再改' } }
+    const binding = bindings.get(event.chatId)
+    if (!binding) return { ignored: true }
+    return Promise.resolve().then(() => onModelCard({ ...event, action: { ...event.action, value } }, binding))
+      .catch(error => {
+        log(`model card ${event.chatId}: ${error?.message || String(error)}`)
+        return { toast: { type: 'error', content: '没改成 —— 请稍后再试' } }
+      })
+  }
   function unsupported(source) {
     return event => {
       // An event without group identity cannot safely be attributed. It has
@@ -507,7 +527,7 @@ function createC2MultiGroupService({ routes, assertWriterLock,
       transportStarted = true
       await transport.platform.start(routeMessage, { onFatal: fatal,
         onRecall: recall, onReaction: unsupported('reaction'),
-        onCardAction: unsupported('card action'), onBoardUpdated: unsupported('board update') })
+        onCardAction: cardAction, onBoardUpdated: unsupported('board update') })
       held()
       if (stopPromise) throw new Error('C2 service stopped during connection')
       return { groups: bindings.size, connected: true, ...(suspended.size ? { held: heldGroups() } : {}) }

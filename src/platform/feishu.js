@@ -848,6 +848,23 @@ function createFeishuPlatform({ appId, appSecret, botOpenId = null, onlyWhenMent
       return sendText(chatId, content)
     },
 
+    // One interactive reply under a group command (the /model card). Like
+    // replyOnce it is best-effort and never retried; the caller falls back
+    // to the text reply when this does not confirm.
+    async replyCardOnce(replyCtx, card) {
+      const mid = replyCtx && replyCtx.messageId
+      if (typeof mid !== 'string' || !/^om_[A-Za-z0-9_-]{1,124}$/.test(mid) ||
+          !card || typeof card !== 'object') {
+        throw new TypeError('Feishu card reply needs exact message target and a card')
+      }
+      return client.im.message.reply({ path: { message_id: mid },
+        data: { msg_type: 'interactive', content: JSON.stringify(card) } })
+    },
+
+    // open_id → display name (cached; null when unknown). The model card's
+    // receipt says who changed it; a card callback only carries the open_id.
+    nameOf: (openId) => senderNameOf(openId),
+
     // 发一张静态富卡,返回 { msgId, cardId }(msgId=按钮/表情命中锚点;cardId=实体更新回填用)。
     // 文本已由调用方在构卡时逐字段 redact(卡是 JSON 不能整体脱敏),故这里不再包 redact。
     async sendCard(chatId, cardJson) {

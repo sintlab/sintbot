@@ -64,7 +64,7 @@ function itemEvent(method, item) {
 // App Server 的请求和通知共用一条 stdout 流；单轮独立进程使关闭成为续接边界。
 function runTurn(opts = {}) {
   const {
-    bin = 'codex', prompt, provider = {}, model, workdir, sessionId,
+    bin = 'codex', prompt, provider = {}, model, effort: wantEffort, workdir, sessionId,
     permissionMode, autocompactTokens, appendSystemPrompt, codexApp, codexProjectDocFallback, extraEnv,
     onEvent, onDurableEvent, onSteerReady, onSteerLanded, onTurnAccepted, onSpawnFailed, signal, log = () => {},
     softStopGraceMs = 10000, spawnFn = spawn,
@@ -102,7 +102,8 @@ function runTurn(opts = {}) {
     let childCloseObserved = false
     let settled = false
     let completed = false
-    let effort = provider.reasoningEffort || ''
+    const configuredEffort = wantEffort || provider.reasoningEffort || ''
+    let effort = configuredEffort
     let retriedEffort = false
     let pendingTurnStart = false
     let acceptedTurnId = null
@@ -350,7 +351,7 @@ function runTurn(opts = {}) {
       else if (action === 3) { aborted = true; lastResult = null }
       else lastResult = { type: 'result', subtype: 'success', text: lastAgentText, usage: totalUsage, usageCumulative: !!totalUsage,
         contextTokens, contextWindowTokens, contextCompacted }
-      if (lastResult && retriedEffort) lastResult.effortFellBack = provider.reasoningEffort || ''
+      if (lastResult && retriedEffort) lastResult.effortFellBack = configuredEffort
       if (lastResult) emit(lastResult)
       // 让服务端自行落盘退出；收到完成通知就强杀会破坏下一轮 resume。
       try { child.stdin.end() } catch {}

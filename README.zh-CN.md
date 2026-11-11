@@ -31,7 +31,7 @@ SintBot 按 [PolyForm Shield 1.0.0 许可](./LICENSE) 分发。
 <p align="center"><img src="https://raw.githubusercontent.com/sintlab/sintbot/main/docs/assets/how-it-works-zh.svg" alt="群(飞书、Slack 或企业微信)→ 你机器上的 SintBot → 项目目录里的 Claude Code 或 Codex → 这个群选的模型;进度与结果回到群里" width="880"></p>
 
 - **一群一项目。** 每个群各有自己的项目目录、会话、排队、权限和定时任务。
-- **同一套 agent,任意大脑。** 群里发 `/model` 就能换模型。项目文件及 `CLAUDE.md`、`AGENTS.md` 中的共享记录可以延续。换模型会开新对话，重要决定先写进项目。
+- **同一套 agent,任意大脑。** 群里发 `/model` 点选后端、型号和思考深度。换型号或调深度接着当前对话；换后端会开新对话，项目文件及 `CLAUDE.md`、`AGENTS.md` 中的共享记录可以延续，重要决定先写进项目。
 - **数据留在本机。** 项目、会话、记忆、日志都在你自己的硬盘上,不经过任何 SintBot 服务器。提示词和模型读到的代码照常发给你选的模型服务商。
 - **不要公网 IP。** 每个平台都是机器主动往外连的长连接(Slack 用 Socket Mode)。一个守护进程可以同时接飞书、Slack、企业微信。
 

@@ -108,7 +108,7 @@ function isEffortRejection(result) {
  * @returns {Promise<import('../core/interfaces').RunTurnResult>}
  */
 function runTurn(opts = {}) {
-  const wantEffort = (opts.provider && opts.provider.reasoningEffort) || ''
+  const wantEffort = opts.effort || (opts.provider && opts.provider.reasoningEffort) || ''
   if (!wantEffort) return runOnce(opts, '')
   // Attempt 1 with the configured effort. Hold back only ERROR result events so a
   // recoverable effort-rejection can't finalize the turn early (the engine finalizes on

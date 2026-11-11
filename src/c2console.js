@@ -13,10 +13,11 @@ const READ_PATHS = ['/api/state', '/api/events', '/api/inbox', '/api/activity', 
   '/api/plugins', '/api/design/styles', '/api/design/icons', '/api/fs/listdir',
   '/api/feishu/admin-candidates', '/api/feishu/org-users', '/api/feishu/resolve-contact',
   '/api/feishu/chats', '/api/feishu/chat-members', '/api/update', '/api/claude/models',
+  '/api/groups/model-options',
   START_PATH, CALLBACK_PATH]
 const WRITE_PATHS = ['/api/login', '/api/logout', '/api/logout/all',
   '/api/ui/network', '/api/ui/public-url', '/api/ui/update-settings', '/api/feishu/admins',
-  '/api/groups', '/api/groups/provider', '/api/fs/mkdir',
+  '/api/groups', '/api/groups/provider', '/api/groups/brain', '/api/fs/mkdir',
   '/api/groups/order', '/api/groups/policy', '/api/groups/redact',
   '/api/groups/codex-steer', '/api/groups/steer', '/api/groups/pause', '/api/groups/stop',
   // A fresh session only for an idle, settled group (same rule as /new).
@@ -38,8 +39,17 @@ const WRITE_PATHS = ['/api/login', '/api/logout', '/api/logout/all',
   // manages this exact entry (the updater refuses every other run mode).
   '/api/update/check', '/api/update/start', '/api/update/ignore']
 const SUPPORTED_RUNNERS = ['claude', 'codex']
-const { modelContext } = require('./modelcontext')
+const { groupBrain } = require('./core/brain')
+const { codexCatalogWindows, windowForProvider } = require('./agent/modelwindows')
 const { GROUP_COMMANDS } = require('./runtimefacts')
+
+// What a group runs on one backend, for console rows: configured values only;
+// what the executor finally selected is reported by the run itself.
+function brainFields(group, name, provider, cfg) {
+  const b = groupBrain(group, name, provider, { defaultProvider: cfg.defaultProvider })
+  return { model: b.model, reasoningEffort: b.effort, groupModel: b.groupModel, groupEffort: b.groupEffort,
+    source: b.groupModel ? 'group' : b.defaultModel ? 'provider' : 'default', actualModel: null }
+}
 
 function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = () => new Map(), activity = null, store = null,
   assertWriterLock, validateConfig, applyConfig, beforeWrite = () => true,
@@ -222,8 +232,7 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
         ? { usedTokens: stats.ctx, windowTokens: null, measuredAt: null, quality: 'historical' } : null)
       return { chatId, name: group.name || chatId.slice(-8), project: path.basename(group.workdir || '') || '—',
         workdir: group.workdir || '', runner: provider.runner || 'claude',
-        ...modelContext(group, provider),
-        reasoningEffort: (provider.runner === 'codex' ? provider.reasoningEffort : provider.env?.CLAUDE_CODE_EFFORT_LEVEL) || '',
+        ...brainFields(group, providerName, provider, cfg),
         paused: !!group.paused, ...live.groups[chatId], context }
     })
     const rows = getActivity().filter(row => (!query.chatId || row.chatId === query.chatId) && (!query.status || row.status === query.status))
@@ -249,8 +258,13 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
       for (const group of state.groups || []) {
         const cfg = getConfig(), source = cfg.groups?.[group.chatId] || {}
         const provider = cfg.providers?.[group.effectiveProvider || source.provider || cfg.defaultProvider]
-        const model = modelContext(source, provider)
-        Object.assign(group, { configuredModel: model.model, modelSource: model.source, actualModel: model.actualModel })
+        const name = group.effectiveProvider || source.provider || cfg.defaultProvider
+        const fields = brainFields(source, name, provider, cfg)
+        Object.assign(group, { configuredModel: fields.model, modelSource: fields.source,
+          actualModel: null, brain: { provider: name, model: fields.model, effort: fields.reasoningEffort,
+            groupModel: fields.groupModel, groupEffort: fields.groupEffort },
+          providerPrefs: source.providerPrefs || null,
+          contextWindow: provider ? windowForProvider({ ...provider, model: fields.model }, null, codexCatalogWindows()) : null })
       }
       state.previews = (state.previews || []).filter(item => getConfig().groups?.[item.chatId])
       state.leftovers = { supported: false, rows: [], error: null }
@@ -290,6 +304,8 @@ function createC2Console(options = {}) {
     throw new TypeError('C2 console requires explicit installation paths')
   }
   const facade = createC2ConsoleFacade(options)
+  // The process-wide model list (also used by /model), when the service has one.
+  facade.modelCatalog = typeof options.modelCatalog === 'function' ? options.modelCatalog : null
   const ui = createUiServer({ configPath, host, log, getConnHealth, updater: options.updater || null,
     onHostChange: options.onHostChange,
     getLiveState: facade.getLiveState, control: facade.control, runtimePolicy: facade,

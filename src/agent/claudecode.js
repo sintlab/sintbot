@@ -55,7 +55,7 @@ function durableToolResults(ev) {
 // replaces provider.baseUrl for ANTHROPIC_BASE_URL — used to point `claude` at
 // the local vision strip-proxy for text-only providers. The auth
 // token is unchanged: the proxy forwards it verbatim to the real upstream.
-function buildEnv(provider = {}, baseUrlOverride, extraEnv) {
+function buildEnv(provider = {}, baseUrlOverride, extraEnv, effort = '') {
   const env = { ...process.env }
 
   // The spawn env is defined ENTIRELY by the provider:
@@ -83,6 +83,8 @@ function buildEnv(provider = {}, baseUrlOverride, extraEnv) {
   delete env.CLAUDECODE
 
   if (provider.env) Object.assign(env, provider.env)
+  // The group's own thinking depth wins over a card-level value.
+  if (effort) env.CLAUDE_CODE_EFFORT_LEVEL = effort
   // Engine-injected non-provider context (e.g. SBOT_CHAT_ID for the feishu base skill).
   // Applied last but namespaced (SBOT_*), so it never collides with provider ANTHROPIC_* env.
   if (extraEnv) Object.assign(env, extraEnv)
@@ -137,6 +139,7 @@ function runTurn({
   prompt,
   provider = {},
   model,
+  effort = '',
   workdir,
   sessionId,
   permissionMode,
@@ -238,7 +241,7 @@ function runTurn({
       const { file, spawnArgs, fallback } = resolveSpawn(bin, args)
       if (fallback) log(`配置的 agent 路径 '${bin}' 不存在,本轮改用 ${fallback} —— 请把配置改回正确路径`) // 兜底只救急,配置仍是错的
       const child = spawnFn(file, spawnArgs, {
-        env: buildEnv(provider, baseUrlOverride, extraEnv),
+        env: buildEnv(provider, baseUrlOverride, extraEnv, effort),
         cwd: workdir || process.cwd(),
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,

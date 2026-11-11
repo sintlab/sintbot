@@ -31,7 +31,7 @@ SintBot is distributed under the [PolyForm Shield License 1.0.0](./LICENSE).
 <p align="center"><img src="https://raw.githubusercontent.com/sintlab/sintbot/main/docs/assets/how-it-works.svg" alt="Group (Slack, Feishu or WeCom) → SintBot on your machine → Claude Code or Codex in the project directory → the model chosen for that group; progress and results flow back to the group" width="880"></p>
 
 - **One group, one project.** Each group gets its own project directory, session, queue, permissions and scheduled tasks.
-- **Same agent, any brain.** Switch models with `/model` in the chat. Project files and shared notes in `CLAUDE.md` and `AGENTS.md` carry over. Switching starts a new conversation; save important decisions in the project first.
+- **Same agent, any brain.** Pick the backend, model and thinking depth with `/model` in the chat. A model or depth change continues the conversation; a backend change starts a new one, while project files and shared notes in `CLAUDE.md` and `AGENTS.md` carry over, so save important decisions in the project first.
 - **Stays on your machine.** Projects, sessions, memory and logs live on your disk and never pass through a SintBot server. Prompts and the code the model reads still go to the provider you chose.
 - **No public IP.** Every platform uses an outbound long connection (Socket Mode on Slack). One daemon can serve Slack, Feishu and WeCom at the same time.
 

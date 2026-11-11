@@ -8,20 +8,24 @@ const { loadInstallationFromRaw, assertJournalScope, assertRunnerExecutable,
   MANIFEST, VALIDATORS, SUPPORTED_RUNNERS } = require('./c2install')
 const { C2DurableJournal } = require('./core/c2durablejournal')
 const { assertNoLegacyGroupState } = require('./c2migration')
+const { applyBrainChange } = require('./groupbrain')
 
 const GLOBAL_TASK_KEYS = ['agent', 'timezone', 'brand']
-const RESET_KEYS = ['provider', 'model', 'workdir', 'codexApp']
+// A group's model and depth (providerPrefs, legacy model) are not here: the
+// executors resume the same session with another model of the same backend.
+const RESET_KEYS = ['provider', 'workdir', 'codexApp']
 const EFFORT_ENV = 'CLAUDE_CODE_EFFORT_LEVEL'
 
-// What a group's session belongs to: backend, executable, endpoint, model and
-// the environment the backend starts with. Effort, reasoning effort, tool
-// quality, key, image support, visibility and order apply from the next turn.
-function sessionIdentity(provider, group) {
+// What a group's session belongs to: backend, executable, endpoint and the
+// environment the backend starts with. Model, depth, tool quality, key, image
+// support, visibility and order apply from the next turn in the same session:
+// both executors resume a session with another model of the same backend.
+function sessionIdentity(provider) {
   if (!provider || typeof provider !== 'object') return null
   const env = { ...(provider.env && typeof provider.env === 'object' ? provider.env : {}) }
   delete env[EFFORT_ENV]
-  return { runner: provider.runner, bin: provider.bin || '', baseUrl: provider.baseUrl || '',
-    model: group?.model || provider.model || '', env }
+  delete env.ANTHROPIC_MODEL
+  return { runner: provider.runner, bin: provider.bin || '', baseUrl: provider.baseUrl || '', env }
 }
 
 // Synchronous validation/application around one atomic configuration write.
@@ -134,8 +138,8 @@ function createC2ConfigControl({ installation, getBindings, getHeld = () => new 
       // A model library or default change reaches every group that runs
       // the edited provider, even though its own settings stay the same.
       const providerMoved = !isDeepStrictEqual(
-        sessionIdentity(cfg.providers?.[effective(route.chatId, route.group, cfg)], route.group),
-        sessionIdentity(next.cfg.providers?.[effective(route.chatId, target.group, next.cfg)], target.group))
+        sessionIdentity(cfg.providers?.[effective(route.chatId, route.group, cfg)]),
+        sessionIdentity(next.cfg.providers?.[effective(route.chatId, target.group, next.cfg)]))
       if (heldGroups.has(route.chatId)) {
         // Edits elsewhere proceed; the held group keeps its exact settings.
         if (!isDeepStrictEqual(route.group, target.group)) {
@@ -272,18 +276,25 @@ function createC2ConfigControl({ installation, getBindings, getHeld = () => new 
     return raw
   }
 
-  function switchGroupProvider(chatId, name) {
-    return writeConfig(raw => {
-      const group = raw.groups?.[chatId]
-      if (!group) throw new Error('Unknown group')
-      if (!cfg.providers?.[name]) throw new Error('Unknown model')
-      group.provider = name
-      // A pinned model id belongs to the previous provider.
-      delete group.model
+  // Backend · model · depth of one group (console, /model, model card). The
+  // writer validates, resets the session only when the backend changes, and
+  // goes live. Returns the change summary; throws on refusal.
+  function setGroupBrain(chatId, change = {}) {
+    let summary = null
+    writeConfig(raw => {
+      if (!raw.groups?.[chatId]) throw new Error('Unknown group')
+      const result = applyBrainChange(raw, chatId, change)
+      if (result.error) throw new Error({ 'unknown-provider': 'Unknown model',
+        'bad-model': 'Invalid model id', 'bad-effort': 'Invalid thinking depth' }[result.error] || 'Unknown group')
+      summary = result
     })
+    return summary
+  }
+  function switchGroupProvider(chatId, name) {
+    return setGroupBrain(chatId, { provider: name })
   }
 
-  return { validateConfig, beforeWrite, applyConfig, writeConfig, switchGroupProvider,
+  return { validateConfig, beforeWrite, applyConfig, writeConfig, switchGroupProvider, setGroupBrain,
     // Groups whose session the last applied write reset (for the console).
     appliedResets: () => [...appliedResets] }
 }

@@ -17,15 +17,16 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 
-// 当前主力档 + 上一代 Opus。刻意不铺满历史版本 —— 它是挑选快捷方式,不是权威清单;
-// 4.8 留着是因为它仍在服务且额度池与 Opus 5 分开(operator 点名要能选,2026-08-05)。
-// ⚠ id 是不带日期后缀的固定串(`claude-opus-4-8`,不是 `claude-opus-4-8-2026xxxx`)。
+// Fallback candidates, used only when the live list from the CLI handshake
+// has never been obtained. Names follow core/modelname.js display names.
+// Ids carry no date suffix and use hyphens for versions (claude-opus-5-5).
 const BUILTIN = [
   { id: '', name: '默认(跟随 Claude Code)', note: '推荐 · 不指定型号' },
-  { id: 'claude-opus-5', name: 'Claude Opus 5', note: '最强 · 复杂改码 / 长链路' },
-  { id: 'claude-opus-4-8', name: 'Claude Opus 4.8', note: '上一代 Opus · 额度池独立' },
-  { id: 'claude-sonnet-5', name: 'Claude Sonnet 5', note: '速度与智能平衡' },
-  { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5', note: '最快最省 · 简单任务' },
+  { id: 'claude-opus-5-5', name: 'Opus 5.5', note: '最新 Opus · 复杂改码 / 长链路' },
+  { id: 'claude-opus-5', name: 'Opus 5', note: '上一代 Opus' },
+  { id: 'claude-sonnet-5-5', name: 'Sonnet 5.5', note: '速度与智能平衡' },
+  { id: 'claude-haiku-5-5', name: 'Haiku 5.5', note: '最快最省 · 简单任务' },
+  { id: 'claude-opus-4-8', name: 'Opus 4.8', note: '更早一代 Opus · 额度池独立' },
 ]
 
 // CLI 登录后写在 ~/.claude.json 的账号额外可选模型(本机这台是 Fable 5)。
@@ -57,4 +58,74 @@ function listModels({ loggedIn, home } = {}) {
   return { loggedIn: true, models: mergeModels(extra), source: extra.length ? 'account' : 'builtin' }
 }
 
-module.exports = { listModels, mergeModels, parseExtraModels, readExtraModels, BUILTIN }
+// Live list: Claude Code's own initialize handshake. Start
+// `claude -p --input-format stream-json --output-format stream-json`, send one
+// control_request { subtype: 'initialize' }; the response's models are the
+// CLI's /model menu for this machine and account: official display names,
+// descriptions and the depths each model supports. No question is asked and
+// no turn starts, so no quota is used, and the login token is never read.
+// Only for subscription cards: endpoint/model variables are removed first so a
+// third-party endpoint exported in the service shell cannot redirect it.
+// Unavailable (signed out, CLI too old, timeout) ⇒ null; callers then use the
+// last saved list or the built-in candidates.
+function parseInitModels(models) {
+  if (!Array.isArray(models)) return null
+  const out = [], aliasOf = {}
+  let recommended = ''
+  const seen = new Set()
+  for (const m of models) {
+    if (!m || typeof m.value !== 'string' || !m.value) continue
+    const id = typeof m.resolvedModel === 'string' && m.resolvedModel ? m.resolvedModel : m.value
+    if (m.value === 'default') { recommended = id; continue }
+    // An alias (opus → claude-opus-5-5) is stored as the concrete model, so a
+    // later CLI upgrade does not silently move the group to another generation.
+    if (m.value !== id) aliasOf[m.value] = id
+    if (seen.has(id)) continue
+    seen.add(id)
+    const efforts = Array.isArray(m.supportedEffortLevels) ? m.supportedEffortLevels.filter((e) => typeof e === 'string') : []
+    out.push({ id, name: String(m.displayName || '').trim() || id, note: String(m.description || '').slice(0, 60), efforts, effort: m.supportsEffort !== false })
+  }
+  if (!out.length) return null
+  return { models: out, aliasOf, recommended: recommended || out[0].id }
+}
+
+function probeModels(bin = 'claude', { timeoutMs = 20000, cwd = os.tmpdir(), spawnFn = null } = {}) {
+  return new Promise((resolve) => {
+    const spawn = spawnFn || require('node:child_process').spawn
+    const { resolveSpawn } = require('./winexec')
+    const env = { ...process.env }
+    delete env.ANTHROPIC_BASE_URL; delete env.ANTHROPIC_AUTH_TOKEN; delete env.ANTHROPIC_MODEL; delete env.CLAUDECODE
+    let child, buf = '', settled = false, timer = null
+    const done = (v) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      try { child.stdin.end() } catch {}
+      try { child.kill() } catch {}
+      resolve(v)
+    }
+    try {
+      const { file, spawnArgs } = resolveSpawn(bin, ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose'])
+      child = spawn(file, spawnArgs, { cwd, env, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true })
+    } catch { return resolve(null) }
+    timer = setTimeout(() => done(null), timeoutMs)
+    if (timer.unref) timer.unref()
+    child.on('error', () => done(null))
+    child.on('close', () => done(null))
+    child.stdout.on('data', (d) => {
+      buf += d.toString('utf8')
+      let i
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i); buf = buf.slice(i + 1)
+        let o; try { o = JSON.parse(line) } catch { continue }
+        if (o && o.type === 'control_response') {
+          const r = o.response && (o.response.response || o.response)
+          return done(parseInitModels(r && r.models))
+        }
+      }
+    })
+    try { child.stdin.write(JSON.stringify({ type: 'control_request', request_id: 'sintbot-models', request: { subtype: 'initialize' } }) + '\n') } catch { done(null) }
+  })
+}
+
+module.exports = { listModels, mergeModels, parseExtraModels, readExtraModels, BUILTIN, parseInitModels, probeModels }

@@ -43,6 +43,9 @@ const { platformsConfigured, chatPlatform, inferChatPlatform, PLATFORMS } = requ
 const { feishuClient, fetchBotOpenId, fetchAppIdentity, fetchChats, createChat, fetchChatMembers, addChatMembers, deleteChat, sendChatText, larkErrMsg, feishuPrecheck, fetchAdminCandidates, resolveContactToOpenId, fetchOrgUsers } = require('../platform/feishu')
 const { slackPrecheck, fetchSlackChannels, sendSlackText } = require('../platform/slack') // Slack:控制台侧只用这三个助手(收发在 daemon 里)
 const { getUsage, refreshUsage } = require('../usage')
+const brainMod = require('../core/brain') // a group's model and depth on one backend: the single resolver
+const { applyBrainChange, auditRow } = require('../groupbrain')
+const { effortsFor, fillPicks } = require('../core/modelcmd')
 
 // 反馈本默认落点(与 CLI / 群命令同一个文件 —— 三个入口一本账,不许各记各的)
 const DEFAULT_ISSUES_FILE = () => path.join(os.homedir(), '.sbot', 'issues.jsonl')
@@ -50,6 +53,11 @@ const DEFAULT_ISSUES_FILE = () => path.join(os.homedir(), '.sbot', 'issues.jsonl
 const DEFAULT_SESSIONS_FILE = () => path.join(os.homedir(), '.sbot', 'ui-sessions.json')
 
 const CONSOLE_HTML = path.join(__dirname, 'console.html')
+// Model display names: the same function as group replies and cards, injected
+// into the page (with a plain fallback when the page is opened directly).
+const MODELNAME_SLOT = "/*__SBOT_MODELNAME__*/(s=>String(s==null?'':s))"
+const MODELNAME_SRC = '(' + require('../core/modelname').modelDisplayName.toString() + ')'
+const { knownModelNames } = require('../core/modelname')
 const LIVE_ACTIVITY_JS = fs.readFileSync(path.join(__dirname, 'liveactivity-client.js'), 'utf8')
 const BROWSER_HTML = path.join(__dirname, 'browser.html') // 接管浏览器页(自包含单文件,群成员凭一次性链接也能进)
 const takeover = require('./takeover') // 接管链接的票据与 cookie(纯逻辑)
@@ -311,6 +319,71 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
   // 悄悄换到另一个后端并重置会话(拖一下排序、加一个不相干的模型都会触发)⇒ 那里**只在默认模型
   // 已不存在**(文件和内置都没有这个名字)时补一个,其余一律不动;隐藏默认模型由写入方直接拒绝。
   // 返回 { from, to } = 这次自动改了默认模型(调用方据此如实报告),null = 没改。
+  // ── Backend · model · depth of one group (group card; the old provider route
+  // forwards here). The same change logic as the chat /model command
+  // (src/groupbrain.js). Only a backend change resets the session.
+  const catalogFor = async (name, prov) => {
+    const c = runtimePolicy && runtimePolicy.modelCatalog
+    if (!c || !prov) return null
+    try { return await c(name, prov) } catch { return null }
+  }
+  // The target backend of a change as the file says now ({} when unknown).
+  const brainTarget = (raw, chatId, change) => {
+    const g = raw.groups && raw.groups[chatId]
+    if (!g) return {}
+    const defName = raw.defaultProvider || DEFAULTS.defaultProvider
+    const home = g.provider || defName
+    const target = change.provider || home
+    return { g, defName, home, target, tProv: { ...DEFAULTS.providers, ...(raw.providers || {}) }[target] }
+  }
+  async function changeGroupBrain(chatId, change, by = 'console') {
+    // The model list may need a CLI handshake: fetch it first, then read,
+    // decide and write with no await in between, so a /model change made
+    // meanwhile is never overwritten by a stale copy.
+    const first = brainTarget(readRaw(), chatId, change)
+    const cat = first.tProv ? await catalogFor(first.target, first.tProv) : null
+    const raw = readRaw()
+    const { g, defName, home, target, tProv } = brainTarget(raw, chatId, change)
+    if (!g) return { status: 404, body: { error: 'no such group' } }
+    if (!tProv) return { status: 400, body: { error: `未知模型 '${target}'` } }
+    if (target !== first.target) return { status: 409, body: { error: '这个群的后端刚被改过,请刷新后再改' } }
+    if (change.provider && change.provider !== home && (tProv.hidden || (runtimePolicy && !runtimePolicy.providerSupported(tProv)))) {
+      return { status: 400, body: { error: `「${target}」已隐藏或不受支持,不能选` } }
+    }
+    const switching = target !== home
+    const tBrain = brainMod.groupBrain(g, target, tProv, { defaultProvider: defName })
+    let model = change.model, effort = change.effort
+    if (model !== undefined && model !== '' && tProv.baseUrl) return { status: 400, body: { error: '这个模型的型号是连接设置,请在「模型」页修改' } }
+    if (model !== undefined && model !== '' && !brainMod.isModel(model)) return { status: 400, body: { error: '型号格式不对' } }
+    if (effort !== undefined && effort !== '' && !brainMod.isEffort(effort)) return { status: 400, body: { error: '思考深度格式不对' } }
+    if (model === tBrain.model) model = undefined
+    if (effort === tBrain.effort && model === undefined) effort = undefined
+    const f = fillPicks({ switching, model, effort, currentModel: tBrain.model, currentEffort: tBrain.effort, third: !!tProv.baseUrl, cat })
+    model = f.model; effort = f.effort
+    const nextModel = model === undefined ? tBrain.model : model
+    if (effort) {
+      const known = cat && Array.isArray(cat.models) ? cat.models.find((m) => m.id === nextModel) : null
+      if (known && Array.isArray(known.efforts) && !known.efforts.length) return { status: 400, body: { error: '这个型号不支持调思考深度' } }
+      const effs = cat ? effortsFor(cat, nextModel) : []
+      if (change.effort !== undefined && effs.length && !effs.includes(effort)) return { status: 400, body: { error: `这个型号没有「${effort}」这档深度(可选:${effs.join(' · ')})` } }
+    }
+    if (tProv.runner === 'codex' && tProv.contextWindowTokens > 0 && nextModel) {
+      const maximum = codexCatalogWindows().get(nextModel)?.maxTokens
+      if (maximum && tProv.contextWindowTokens > maximum) return { status: 400, body: { error: `「${target}」的自定义上下文窗口超过这个型号的上限 ${maximum} token,先在「模型」页调小` } }
+    }
+    const r = applyBrainChange(raw, chatId, { provider: switching ? target : undefined, model, effort })
+    if (r.error) return { status: 400, body: { error: r.error } }
+    if (!r.changed) return { status: 200, body: { ...(await buildState()), brainChange: { changed: false } } }
+    try { writeRaw(raw) } catch (e) {
+      const m = (e && e.message) || String(e)
+      return { status: 400, body: { error: /settled|unresolved|未结/.test(m) ? '该群有任务进行中或记录未结账，等它结束后再改' : m } }
+    }
+    audit.append(auditRow(chatId, r, { source: 'console', by }))
+    const resets = runtimePolicy && runtimePolicy.appliedResets ? runtimePolicy.appliedResets() : []
+    return { status: 200, body: { ...(await buildState()), brainChange: { changed: true, switching: r.switching,
+      modelChanged: r.modelChanged, effortChanged: r.effortChanged, filled: f.filled, provider: target,
+      model: r.after.model, effort: r.after.effort, reset: resets.includes(chatId) } } }
+  }
   const settleDefault = (raw) => {
     if (!runtimePolicy) { fixDefault(raw); return null }
     const current = raw.defaultProvider || DEFAULTS.defaultProvider
@@ -625,6 +698,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       health,
       providers,
       defaultProvider: raw.defaultProvider || cfg.defaultProvider,
+      modelNames: knownModelNames(), // official names registered from the live model lists
       groups,
       // 项目根目录:绑群弹窗的路径提示用 projectsRoots(生效值);设置页那张卡用 projectsRootsInfo
       //(每条根在不在 · 配置原文 · 被忽略的值与原因 · 哪些群在根外)。与围栏同一份判据。
@@ -699,6 +773,14 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
     return state
   }
 
+  // A card without its own model (subscription) is tried with the catalog's
+  // recommendation, the same one a newly bound group starts with.
+  async function recommendedModel(name, provider) {
+    if (!provider || provider.baseUrl) return undefined
+    const cat = await catalogFor(name, provider)
+    return (cat && cat.recommended && cat.recommended.model) || undefined
+  }
+
   async function testProvider(name, prompt) {
     const cfg = loadConfig(configPath); applyProxyEnv(cfg)
     const provider = cfg.providers[name]
@@ -718,7 +800,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         bin: cfg.agent.bin,
         prompt: prompt || verify.TRIAL_PROMPT,
         provider,
-        model: provider.model,
+        model: provider.model || await recommendedModel(name, provider),
         permissionMode: cfg.agent.permissionMode,
         signal: ac.signal, // a one-line reply — needs no tools, so no allow list
       })
@@ -728,7 +810,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       lease?.assertWritable()
       const ok = !(result && result.isError)
       verify.recordTurn(provider, ok, (result && result.text) || '', vopts) // doctor / 概览据此报「能用」或「key 不对」
-      return { ok, model: provider.model, reply: (result && result.text) || '(no text)', ms: Date.now() - t0 }
+      return { ok, model: provider.model || '', reply: (result && result.text) || '(no text)', ms: Date.now() - t0 }
     } catch (e) {
       closed ||= isClosedRunnerError(e)
       if (!lease) verify.recordTurn(provider, false, (e && e.message) || String(e), vopts)
@@ -873,7 +955,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         //   隧道对端哪天被写成 127.0.0.1:4600,也不会退化成「公网全员免密」;伪造这两个头只会让自己失去免密,方向安全。
         const localBypass = !loopbackBind && isLoopbackReq(req) && !req.headers['x-forwarded-for'] && !req.headers['x-forwarded-proto']
         const injectTok = (authConfigured() && !localBypass) ? '' : token
-        return fs.readFile(CONSOLE_HTML, 'utf8', (e, html) => e ? (res.writeHead(500), res.end('console.html missing')) : (res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }), res.end(html.replace('__SBOT_TOKEN__', injectTok).replace('__SBOT_VERSION__', PKG_VERSION).replace('__SBOT_FEISHU_LOGIN__', feishuLoginInfo().ready ? '1' : '').replace('/*__LIVE_ACTIVITY__*/', () => LIVE_ACTIVITY_JS))))
+        return fs.readFile(CONSOLE_HTML, 'utf8', (e, html) => e ? (res.writeHead(500), res.end('console.html missing')) : (res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }), res.end(html.replace('__SBOT_TOKEN__', injectTok).replace('__SBOT_VERSION__', PKG_VERSION).replace('__SBOT_FEISHU_LOGIN__', feishuLoginInfo().ready ? '1' : '').replace('/*__LIVE_ACTIVITY__*/', () => LIVE_ACTIVITY_JS).replace(MODELNAME_SLOT, () => MODELNAME_SRC))))
       }
       // 接管浏览器页。群成员的一次性链接是 /browser#k=<票>:票在 URL 片段里,服务端根本收不到 ⇒ 不进任何日志、链接预览的
       //   裸 GET 也抓不走;页面脚本读片段、人点「开始接管」后 POST /api/browser/claim 换 cookie。这里只分发页面:
@@ -975,7 +1057,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       }
       // upsert a provider (add or edit — the ⚙ config panel + 添加模型 both use this)
       if (p === '/api/providers/add' && req.method === 'POST') {
-        const { name, baseUrl, model, apiKey, env, toolQuality, effort, reasoningEffort, autocompactTokens, contextWindowTokens, hidden, vision, modelClear, runner } = await body(req)
+        let { name, baseUrl, model, apiKey, env, toolQuality, effort, reasoningEffort, autocompactTokens, contextWindowTokens, hidden, vision, modelClear, runner } = await body(req)
         if (!name || !/^[\w.-]+$/.test(name)) return sendJSON(res, 400, { error: '名称必填,且只用字母/数字/._-' })
         // 持久处理流程只跑 Codex / Claude Code:别的后端名不能被下面的白名单悄悄改写成 Claude 存进去。
         if (runtimePolicy && runner !== undefined && runner !== '' && !runtimePolicy.providerSupported({ runner })) {
@@ -986,6 +1068,13 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         const prev = raw.providers[name] ? { model: raw.providers[name].model || '', re: raw.providers[name].reasoningEffort || '' } : null
         const pr = { ...(raw.providers[name] || {}) }
         if (baseUrl !== undefined) pr.baseUrl = baseUrl || undefined
+        // Durable hosts: model and depth belong to each group (group card / /model).
+        // A subscription card takes neither; a third-party endpoint keeps its
+        // model as connection configuration and takes no depth.
+        if (runtimePolicy) {
+          effort = undefined; reasoningEffort = undefined
+          if (!pr.baseUrl) { model = undefined; modelClear = undefined }
+        }
         if (model) pr.model = model
         // 「默认(跟随 Claude Code)」= 不指定型号 ⇒ spawn 时不设 ANTHROPIC_MODEL,用 CLI 自己的默认。
         // 空 model 与「没传 model」要分开,所以用显式的 modelClear,而不是 `model !== undefined`
@@ -1025,8 +1114,16 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         }
         if (pr.runner !== 'codex') delete pr.contextWindowTokens
         if (pr.contextWindowTokens > 0) {
-          const maximum = codexCatalogWindows().get(pr.model)?.maxTokens
-          if (maximum && pr.contextWindowTokens > maximum) return sendJSON(res, 400, { error: `上下文窗口超过当前模型目录上限 ${maximum} token` })
+          // Check every model a group runs on this card (and the card's own, if any).
+          const windows = codexCatalogWindows()
+          const defName = raw.defaultProvider || DEFAULTS.defaultProvider
+          const models = new Set([pr.model, ...Object.entries(raw.groups || {})
+            .filter(([id, g]) => id !== 'oc_example_chat_id' && g && (g.provider || defName) === name)
+            .map(([, g]) => brainMod.groupBrain(g, name, pr, { defaultProvider: defName }).model)].filter(Boolean))
+          for (const m of models) {
+            const maximum = windows.get(m)?.maxTokens
+            if (maximum && pr.contextWindowTokens > maximum) return sendJSON(res, 400, { error: `上下文窗口超过型号 ${m} 的目录上限 ${maximum} token` })
+          }
         }
         raw.providers[name] = pr
         const defaultChange = settleDefault(raw); writeRaw(raw)
@@ -1733,6 +1830,18 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         // Fail here, not at the first task: a binding to a missing
         // directory would only surface when a turn tries to run in it.
         if (!fs.existsSync(workdir)) return sendJSON(res, 400, { error: `workdir 不存在: ${workdir}` })
+        // The model list is fetched before the read below, so no await sits
+        // between reading and writing the file (a /model change made meanwhile
+        // must not be overwritten).
+        let preName = '', preCat = null
+        if (runtimePolicy) {
+          try {
+            const r0 = readRaw()
+            preName = provider || (r0.groups && r0.groups[chatId] && r0.groups[chatId].provider) || r0.defaultProvider || DEFAULTS.defaultProvider
+            const p0 = { ...DEFAULTS.providers, ...(r0.providers || {}) }[preName]
+            if (p0) preCat = await catalogFor(preName, p0)
+          } catch { /* the read below reports a broken file */ }
+        }
         const raw = readRaw(); raw.groups = raw.groups || {}; delete raw.groups.oc_example_chat_id
         // 已绑定的群重存:旧对象在下面整个展开再覆盖(见 next),这里只是取出来比目录有没有改
         const prev = raw.groups[chatId] || {}
@@ -1762,6 +1871,20 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         // ⚠ 不按「那个平台配了凭据没」拒绝:纯配置模式(先绑群、后填凭据)一直是允许的;没配的平台由 doctor 的群行报「收不到消息」
         next.platform = PLATFORMS.includes(platform) ? platform : chatPlatformOf(raw, chatId)
         raw.groups[chatId] = next
+        if (runtimePolicy) {
+          // A new binding or another backend starts with the recommended model
+          // and depth where the group has not chosen (same rule as /model).
+          const defName = raw.defaultProvider || DEFAULTS.defaultProvider
+          const tName = next.provider || defName
+          const tProv = { ...DEFAULTS.providers, ...(raw.providers || {}) }[tName]
+          if (tProv && (isNewBinding || tName !== (prev.provider || defName))) {
+            brainMod.migrateLegacyModel(next, defName)
+            const b = brainMod.groupBrain(next, tName, tProv, { defaultProvider: defName })
+            const f = fillPicks({ switching: true, currentModel: b.model, currentEffort: b.effort,
+              third: !!tProv.baseUrl, cat: tName === preName ? preCat : null })
+            if (f.model !== undefined || f.effort !== undefined) applyBrainChange(raw, chatId, { model: f.model, effort: f.effort })
+          }
+        }
         writeRaw(raw)
         // First-time binding: drop a confirmation into the group (best-effort) so a
         // fresh chat is immediately alive and members know how to use it.
@@ -2268,6 +2391,19 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       }
       // real-time per-group model switch: persist to config (+ hot-reload) AND set
       // the live runtime override so it takes effect on the very next turn.
+      if (p === '/api/groups/brain' && req.method === 'POST') {
+        const { chatId, provider, model, effort } = await body(req)
+        const pick = (v) => (v === undefined || v === null ? undefined : String(v))
+        const out = await changeGroupBrain(chatId, { provider: pick(provider) || undefined, model: pick(model), effort: pick(effort) })
+        return sendJSON(res, out.status, out.body)
+      }
+      if (p === '/api/groups/provider' && req.method === 'POST' && runtimePolicy) {
+        // Older console pages: same writer as the group card.
+        const { chatId, provider } = await body(req)
+        const out = await changeGroupBrain(chatId, { provider: provider ? String(provider) : undefined })
+        if (out.status === 200 && out.body.brainChange) out.body.switched = { chatId, provider, live: true }
+        return sendJSON(res, out.status, out.body)
+      }
       if (p === '/api/groups/provider' && req.method === 'POST') {
         const { chatId, provider } = await body(req); const raw = readRaw()
         if (!raw.groups || !raw.groups[chatId]) return sendJSON(res, 404, { error: 'no such group' })
@@ -2344,6 +2480,17 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       }
       // Claude 模型下拉的候选。**未登录不给任何型号**(产品决定:没登录就别列)。
       // 已登录时 = 内置候选 + 本机账号的额外可选项;为什么不是官方实时清单,见 claudemodels.js 头部。
+      // What one backend offers on the group card: models (official names,
+      // supported depths), recommendation. models:null = a third-party
+      // endpoint whose model is set on the model card.
+      if (p === '/api/groups/model-options' && req.method === 'GET') {
+        const name = url.searchParams.get('provider') || ''
+        const raw = readRaw()
+        const prov = { ...DEFAULTS.providers, ...(raw.providers || {}) }[name]
+        if (!prov) return sendJSON(res, 404, { error: `未知模型 '${name}'` })
+        const cat = await catalogFor(name, prov)
+        return sendJSON(res, 200, cat || { ok: false, models: prov.baseUrl ? null : [], efforts: [], recommended: { model: '', effort: '' } })
+      }
       if (p === '/api/claude/models' && req.method === 'GET') {
         const cfg = loadConfig(configPath)
         const login = await claudestatus.cachedLoginStatus(cfg.agent.bin)
@@ -2396,7 +2543,8 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
             bin: cfg.agent.bin,
             prompt,
             provider,
-            model: provider.model,
+            model: (pgGroup && brainMod.groupBrain(pgGroup, provName, provider, { defaultProvider: cfg.defaultProvider }).model) || provider.model || await recommendedModel(provName, provider),
+            effort: (pgGroup && brainMod.groupBrain(pgGroup, provName, provider, { defaultProvider: cfg.defaultProvider }).effort) || '',
             workdir: workdir || undefined,
             sessionId: sessionId || undefined,
             permissionMode: (pgGroup && pgGroup.permissionMode) || 'dontAsk', // 试跑继承匹配群的模式(无全局默认,unset ⇒ dontAsk)

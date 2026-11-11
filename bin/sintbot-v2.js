@@ -48,6 +48,50 @@ async function startService(rest) {
   return startMultiGroupService({ installation, preflightOnly, uiEnabled, uiHost, uiPort })
 }
 
+// Model and depth used to live on model cards; they now belong to each group.
+// Once every group is connected (a console upgrade can no longer roll back
+// onto this configuration), copy each card's value into the groups that have
+// not chosen and remove it from the card, in one validated write. Effective
+// values do not change, so no session resets. The file is backed up first;
+// a group still running is retried later.
+function scheduleCardDefaultsMigration({ service, configControl, updater, cfg, stateDir, log,
+  delayMs = 15_000, tries = 40 } = {}) {
+  const fs = require('node:fs')
+  const { fillGroupPicks, stripCardDefaults } = require('../src/groupbrain')
+  const pending = () => {
+    const probe = JSON.parse(fs.readFileSync(cfg._path, 'utf8'))
+    const filled = fillGroupPicks(probe).changed
+    return stripCardDefaults(probe).changed || filled
+  }
+  try { if (!pending()) return } catch (error) { log(`card defaults migration skipped: ${error?.message || String(error)}`); return }
+  let left = tries
+  const attempt = () => {
+    left -= 1
+    try {
+      if (!service.serving || service.held.size || service.inMaintenance ||
+          updater?.status?.()?.job?.state === 'switching') throw new Error('service not settled')
+      if (!pending()) return
+      const dir = path.join(stateDir, 'config-backups')
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
+      const backup = path.join(dir, `${new Date().toISOString().replace(/[:.]/g, '-')}-group-model.json`)
+      fs.copyFileSync(cfg._path, backup)
+      fs.chmodSync(backup, 0o600)
+      let summary = null
+      configControl.writeConfig(raw => {
+        const filled = fillGroupPicks(raw)
+        const stripped = stripCardDefaults(raw)
+        summary = { groups: filled.groups.length, providers: stripped.providers }
+      })
+      log(`model and depth moved from model cards into groups: ${summary.groups} group(s), cards ${summary.providers.join(', ') || '-'}; backup ${path.basename(backup)}`)
+    } catch (error) {
+      if (left > 0) { const t = setTimeout(attempt, delayMs * 4); t.unref?.() }
+      else log(`card defaults migration not applied: ${error?.message || String(error)}`)
+    }
+  }
+  const timer = setTimeout(attempt, delayMs)
+  timer.unref?.()
+}
+
 async function startMultiGroupService({ installation, preflightOnly, uiEnabled = false, uiHost, uiPort }) {
   const { stateDir, cfg, routes } = installation
   const { assertPrivateDirectory, assertJournalScope } = require('../src/c2install')
@@ -72,6 +116,21 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
   const issues = require('../src/core/issues').createIssues(path.join(stateDir, 'issues.jsonl'),
     { withFileLock: require('../src/core/store').withFileLock,
       log: message => process.stderr.write(`C2 multi-group · ${message}\n`) })
+  // Backend · model · depth: one live model list per process (also used by the
+  // console), and every effective change is audited.
+  const modelCatalog = require('../src/modelcatalog').createModelCatalog({
+    codexstatus: require('../src/agent/codexstatus'), claudemodels: require('../src/agent/claudemodels'),
+    claudeBin: cfg.agent?.bin || 'claude', cacheFile: path.join(stateDir, 'model-lists.json'),
+    log: message => process.stderr.write(`C2 multi-group · ${message}\n`) })
+  const groupBrainMod = require('../src/groupbrain')
+  const { buildModelCard } = require('../src/platform/modelcard')
+  const audit = require('../src/core/ledger').createLedger(path.join(stateDir, 'audit.jsonl'),
+    message => process.stderr.write(`C2 multi-group · ${message}\n`))
+  const setGroupBrain = (chatId, change, { by = '', source = 'console' } = {}) => {
+    const result = configControl.setGroupBrain(chatId, change)
+    if (result?.changed) audit.append(groupBrainMod.auditRow(chatId, result, { source, by }))
+    return result
+  }
   const runner = require('../src/agent/runner')
   const validators = { validateState: validatePersistentState,
     validateReceipts: validatePersistentReceipts, validateRelation: validatePersistentRelation }
@@ -173,6 +232,18 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
       // Faults in a shared resource stop every group; others hold one group.
       sharedFault: () => capacity.snapshot().closed ? 'model concurrency closed' : null,
       log: message => process.stderr.write(`C2 multi-group · ${message}\n`),
+      // /model card taps: the engine decides, the reply replaces the card.
+      onModelCard: async (event, binding) => {
+        let who = event.operator?.name || ''
+        const adapter = liveTransport?.platform.forChat(event.chatId)
+        if (!who && adapter?.nameOf && event.operator?.openId) { try { who = (await adapter.nameOf(event.operator.openId)) || '' } catch {} }
+        const out = await binding.engine.handleModelCard({ chatId: event.chatId, who,
+          value: event.action.value || {}, option: event.action.option })
+        const resp = {}
+        if (out?.toast) resp.toast = out.toast
+        if (out?.state) resp.card = { type: 'raw', data: buildModelCard(out.state) }
+        return Object.keys(resp).length ? resp : undefined
+      },
       onFatal: (error, result) => {
         process.stderr.write(`C2 multi-group failure: ${error?.message || String(error)}\n`)
         finish(result)
@@ -250,8 +321,14 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
             },
             durableV2SwitchProvider: (chatId, name) => {
               if (chatId !== route.chatId) throw new Error('Model switch targets another group')
-              configControl.switchGroupProvider(chatId, name)
+              setGroupBrain(chatId, { provider: name }, { source: 'command' })
             },
+            durableV2SetBrain: (chatId, change, meta) => {
+              if (chatId !== route.chatId) throw new Error('Model change targets another group')
+              return setGroupBrain(chatId, change, meta)
+            },
+            durableV2ModelCatalog: (name, provider) => modelCatalog(name, provider),
+            durableV2ModelCard: state => buildModelCard(state),
             durableV2UsageProbe: usageProbe, durableV2Issues: issues,
             durableV2Version: require('../package.json').version,
             durableV2DataDir: stateDir,
@@ -301,7 +378,7 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
         getPlatform: chatId => liveTransport?.platform.forChat(chatId) || null,
         routeMessage: (msg, adapter) => service.routeMessage(msg, adapter),
         isServing: () => service.serving, isFrozen: () => service.inMaintenance,
-        assertWriterLock, ...configControl, updater,
+        assertWriterLock, ...configControl, setGroupBrain, modelCatalog, updater,
         log: message => process.stderr.write(`Console · ${message}\n`) })
       await new Promise((resolve, reject) => {
         ui.server.once('error', reject)
@@ -337,6 +414,14 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
     // group is connected; then the daily version check starts.
     if (!started.held?.length) updater?.confirmStarted()
     void updater?.start()
+    // Model lists are probed once in the background shortly after startup, so
+    // a later /model or console group card does not wait for a CLI handshake.
+    const runners = new Set(Object.values(cfg.providers || {}).filter(p => p && !p.hidden)
+      .map(p => p.runner === 'codex' ? 'codex' : !p.baseUrl ? 'claude' : '').filter(Boolean))
+    const warm = setTimeout(() => { void modelCatalog.warm([...runners]).catch(() => {}) }, 30_000)
+    warm.unref?.()
+    scheduleCardDefaultsMigration({ service, configControl, updater, cfg, stateDir,
+      log: message => process.stderr.write(`SintBot · ${message}\n`) })
   } catch (error) {
     ui?.close()
     const stopped = await service?.stop('startup-failed', 1)

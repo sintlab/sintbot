@@ -1,4 +1,4 @@
-# Install SintBot 1.4.15
+# Install SintBot 1.4.16
 
 English · [简体中文](./zh-CN/install.md)
 
@@ -10,13 +10,13 @@ You need a Mac, Node.js 22 or newer, and projects stored on that Mac. Install an
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-The installer checks the environment, installs `sintbot@1.4.15` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.15`. No sudo is needed.
+The installer checks the environment, installs `sintbot@1.4.16` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.16`. No sudo is needed.
 
 To preview, append `-s -- --dry-run`. To choose another location, set `SINTBOT_INSTALL_DIR` and adjust the executable paths below.
 
 ## 2. Connect Feishu
 
-In the [Feishu Open Platform](https://open.feishu.cn/), create a custom app, enable the bot and the permissions to receive and reply to messages, choose long connection for event subscription and subscribe to message receipt. Publish the app, add the bot to the groups you will use, and copy each group's `oc_…` chat ID.
+In the [Feishu Open Platform](https://open.feishu.cn/), create a custom app, enable the bot and the permissions to receive and reply to messages, choose long connection for event subscription and subscribe to message receipt. For callbacks, also choose long connection and subscribe to card action callbacks (the tap-to-pick `/model` card needs them). Publish the app, add the bot to the groups you will use, and copy each group's `oc_…` chat ID.
 
 Enter the app credentials in the default macOS terminal (the secret is not echoed):
 
@@ -94,7 +94,7 @@ Any text message is a task. Replies arrive in a card that appears once the model
 | `/skip` | Cancel only the current task; queued messages run next and the conversation is kept |
 | `/stop` | Stop the current task and cancel queued ones; the conversation is kept |
 | `/new` | Start a new conversation, forgetting the previous one (only while the group is idle) |
-| `/model` | List models; `/model name` switches (only while the group is idle; starts a new conversation) |
+| `/model` | Opens a tap-to-pick card: choose the backend, model and thinking depth, then confirm. You can also send `/model high`, `/model <model>` or `/model <backend>`. A model or depth change continues the conversation; a backend change starts a new one. Only while the group is idle |
 | `/hud` | Quota of the current model and usage of this conversation |
 | `/issue text` | Log feedback; review and close it in the console overview |
 | `/help` | List commands, with this group's project and model |
@@ -107,7 +107,7 @@ When the reply card moves below a confirmed follow-up, its existing text is show
 
 ## 6. Console
 
-Model cards distinguish requested settings from runtime reports; expand Capacity and runtime details for reference limits. Codex context and per-model compaction each offer Executor default or Custom. Numeric inputs appear only for Custom. Changes apply next turn without resetting the session; known catalog context limits are enforced. Compaction means a threshold for Codex and a window for Claude Code, and may start earlier. Explicit legacy global compaction values are converted into independent settings for existing models, preserving per-model overrides. New models use executor defaults. Reading does not rewrite the file; the converted settings are persisted on the next normal configuration save.
+Model and thinking depth are chosen per group: on the group card, the Model row picks the backend and model and the next row picks the depth, from lists read live from the local Codex and Claude Code. Subscription model cards no longer carry a model or depth; a third-party endpoint keeps its model on the model card. After the upgrade, each model card's existing model and depth move into its groups with the same effective values and no session reset, after a configuration backup. Model cards distinguish requested settings from runtime reports; expand Capacity and runtime details for reference limits. Codex context and per-model compaction each offer Executor default or Custom. Numeric inputs appear only for Custom. Changes apply next turn without resetting the session; known catalog context limits are enforced. Compaction means a threshold for Codex and a window for Claude Code, and may start earlier. Explicit legacy global compaction values are converted into independent settings for existing models, preserving per-model overrides. New models use executor defaults. Reading does not rewrite the file; the converted settings are persisted on the next normal configuration save.
 
 The overview combines group projects and concurrency. Each row shows the runner, state and elapsed time, project folder, model and configured reasoning effort, and the latest reported context usage. Select a group to view its tasks, then expand a task for tools, reply and usage. Context is a session sample, not cumulative token consumption; unknown capacity and older samples are labeled. Row icons provide console messages, stop and new-session controls according to the current group state.
 

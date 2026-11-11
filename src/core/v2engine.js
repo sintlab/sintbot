@@ -18,7 +18,12 @@ const { prepareC2RunnerInput } = require('./c2runnerinput')
 const { continueC2Successor } = require('./c2successorbridge')
 const { rejectC2Input } = require('./c2inputrejection')
 const progress = require('./turnprogress')
-const { modelContext } = require('../modelcontext')
+const { groupBrain } = require('./brain')
+const { modelName } = require('./modelname')
+const { parseModelWords, resolveModel, effortsFor, modelChoices, fillPicks, recommendEffort } = require('./modelcmd')
+const { DEFAULT_VALUE: MODEL_CARD_DEFAULT } = require('../platform/modelcard')
+// A /model card answers taps for ten minutes; older cards turn read-only.
+const MODEL_CARD_TTL_MS = 10 * 60 * 1000
 const { GROUP_COMMANDS, RUNTIME_ENTRY, runtimeCommand } = require('../runtimefacts')
 const NO_REPLY = 'NO_REPLY'
 const SYSTEM_APPENDIX = systemAppendix(NO_REPLY)
@@ -51,13 +56,16 @@ function cardDuration(ms) {
   const hours = Math.floor(minutes / 60)
   return minutes % 60 ? `${hours} 小时 ${minutes % 60} 分` : `${hours} 小时`
 }
-function cardModelInfo(group, provider) {
-  if (!provider) return { model: '', effort: '' }
-  const { model } = modelContext(group, provider)
-  const effort = provider.runner === 'codex'
-    ? provider.reasoningEffort : provider.env?.CLAUDE_CODE_EFFORT_LEVEL
+function cardModelInfo(brain) {
+  if (!brain) return { model: '', effort: '' }
   const clean = value => String(value || '').replace(/\s+/g, ' ').trim()
-  return { model: clean(model), effort: clean(effort) }
+  return { model: clean(brain.model ? modelName(brain.model) : ''), effort: clean(brain.effort) }
+}
+// An example depth for /model replies: high when available, else another one.
+const exEffortOf = (efforts, cur) => ((efforts || []).includes('high') && cur !== 'high' ? 'high' : ((efforts || []).find(e => e !== cur) || ''))
+// "codex · GPT-6-Astra · high": what this group runs on its current backend.
+function brainLabel(name, brain) {
+  return [name, brain?.model ? modelName(brain.model) : '', brain?.effort || ''].filter(Boolean).join(' · ')
 }
 function cardModelDetail(info, result) {
   // A rejected configured effort may have been retried at the model default.
@@ -90,7 +98,7 @@ const T = {
     '· /skip — 只放弃手头这件，排队的继续；之前聊的还记得',
     '· /stop — 手头和排队的全取消；之前聊的还记得',
     '· /new — 忘掉之前聊的，从头开始（要等手头任务结束）',
-    '· /model — 本群在用的模型；换：/model 名字（要等手头任务结束，换完之前聊的不再带着）',
+    '· /model — 看或改本群模型：/model high 调深度、/model 型号 换型号（都接着当前对话）、/model 后端 换后端（开新对话）；要等手头任务结束',
     '· /hud — 额度与本段对话的用量',
     '· /issue 一句话 — 记下问题反馈，给管理员看',
     '· /help — 这份说明',
@@ -116,11 +124,40 @@ const T = {
   issueUsage: '用法：/issue 后面跟一句话，说清哪里不对劲\n例：/issue 刚才发的图它没理我',
   issueLogged: id => `📝 已记下 #${id}`,
   issueFailed: '⚠ 没记下来 —— 麻烦再说一次，或直接在群里说',
-  modelInfo: (current, list, example) => `【当前模型】${current}\n【可用】${list}\n换模型：发「/model 名字」，例如 /model ${example}\n⚠ 换完是新的一段对话，之前聊的内容不再带着`,
-  modelUnknown: (want, names) => `⚠ 没有「${want}」这个模型\n【可用】${names}\n发「/model 名字」换，名字要一模一样`,
+  // /model replies list backends, models and depths on separate lines, with
+  // examples taken from this group's real choices. Any unrecognised word
+  // rejects the whole command and changes nothing (no fuzzy matching).
+  //   o = { current, names, name, choices|null|undefined, efforts, exEffort, exModel, exProvider }
+  //   choices === null: this backend's model is set in the console (third-party endpoint).
+  modelInfo: (o) => {
+    const L = [`【本群模型】${o.current}`]
+    L.push(`【后端】${o.names.join(' · ')}`)
+    if (o.choices === null) L.push(`【${o.name} 型号】到控制台改`)
+    else if (o.choices && o.choices.length) L.push(`【${o.name} 型号】${o.choices.map((x) => modelName(x)).join(' · ')}`)
+    if (o.efforts && o.efforts.length) L.push(`【思考深度】${o.efforts.join(' · ')}`)
+    if (o.exEffort) L.push(`· 调深度：/model ${o.exEffort}（接着当前对话）`)
+    if (o.exModel) L.push(`· 换型号：/model ${modelName(o.exModel)}（接着当前对话）`)
+    if (o.exProvider) L.push(`· 换后端：/model ${o.exProvider}（开新对话）`)
+    L.push('⚠ 要等手头任务结束才能改')
+    return L.join('\n')
+  },
+  modelUnknownWord: (word, o) => (o.choices === null
+    ? `⚠ 「${word}」不是可选的后端或深度（${o.name} 的型号要到控制台改）—— 一项都没改`
+    : `⚠ 「${word}」不是可选的后端、型号或深度 —— 一项都没改`)
+    + `\n【后端】${o.names.join(' · ')}` + (o.choices && o.choices.length ? `\n【${o.name} 型号】${o.choices.map((x) => modelName(x)).join(' · ')}` : '')
+    + (o.efforts && o.efforts.length ? `\n【思考深度】${o.efforts.join(' · ')}` : ''),
+  modelDup: (what, a, b) => `⚠ 一次只能选一个${what}（写了 ${a} 和 ${b}）—— 一项都没改`,
+  modelNoCatalog: name => `⚠ 暂时取不到 ${name} 的可选型号 —— 一项都没改；稍后再试，或请管理员到控制台改`,
+  modelEffortUnsupported: (model, e, list) => list.length
+    ? `⚠ ${modelName(model) || model} 没有「${e}」这档深度 —— 一项都没改\n【可选】${list.join(' · ')}`
+    : `⚠ ${modelName(model) || model} 不支持调思考深度 —— 一项都没改`,
   modelSame: current => `本群已经在用 ${current}，没有变化`,
-  modelBusy: '⚠ 手头还有任务在跑，现在换会打断它 —— 等它跑完再换，或先发 /stop',
-  modelSwitched: current => `✅ 已切到 ${current}\n⚠ 新的一段对话从这里开始，之前聊的内容不再带着`,
+  modelBusy: '⚠ 手头还有任务在跑 —— 等它跑完再改，或先发 /stop',
+  modelSwitched: (current, note, filled) => `✅ 已切到 ${current}\n⚠ 换了后端，新的一段对话从这里开始，之前聊的内容不再带着` + (note ? ` —— ${note}` : '')
+    + (filled ? `\n· 本群在这个后端还没选过${filled}，先用推荐的；要换就 /model 加名字` : ''),
+  modelChanged: (current, filled) => `✅ 已改为 ${current} —— 接着当前对话，下条消息生效\n· 对话很长时新型号可能装不下，可发 /new 重开`
+    + (filled ? `\n· ${filled}先用推荐的` : ''),
+  effortSwitched: (effort, label) => `✅ 思考深度已调为 ${effort}（${label}）—— 接着当前对话，下条消息生效`,
   modelSwitchFailed: '⚠ 没换成 —— 请管理员到控制台看一下',
   stopPending: '正在停止当前任务，这条消息没有处理，请稍后重发。',
   stopUnavailable: '当前任务正在收尾，暂时无法停止。',
@@ -257,7 +294,9 @@ class Engine {
       durableV2AssertWriterLock, durableV2Journal,
       durableV2NormalRoute = true, durableV2StreamFrames = false,
       durableV2AcquireCapacity = null, durableV2SealCapacity = null,
-      durableV2SwitchProvider = null, durableV2UsageProbe = null, durableV2Issues = null,
+      durableV2SwitchProvider = null, durableV2SetBrain = null, durableV2ModelCatalog = null,
+      durableV2ModelCard = null,
+      durableV2UsageProbe = null, durableV2Issues = null,
       durableV2Version = '', durableV2DataDir = '', durableV2ConsoleEnabled = false } = options
     const sync = f => typeof f === 'function' && f.constructor?.name !== 'AsyncFunction'
     if (!cfg || !cfg.agent || !cfg.groups || !cfg.providers ||
@@ -282,6 +321,9 @@ class Engine {
         durableV2AcquireCapacity !== null && typeof durableV2AcquireCapacity !== 'function' ||
         durableV2SealCapacity !== null && !sync(durableV2SealCapacity) ||
         durableV2SwitchProvider !== null && !sync(durableV2SwitchProvider) ||
+        durableV2SetBrain !== null && !sync(durableV2SetBrain) ||
+        durableV2ModelCatalog !== null && typeof durableV2ModelCatalog !== 'function' ||
+        durableV2ModelCard !== null && !sync(durableV2ModelCard) ||
         durableV2UsageProbe !== null && typeof durableV2UsageProbe !== 'function' ||
         durableV2Issues !== null && typeof durableV2Issues?.add !== 'function' ||
         typeof durableV2Version !== 'string') {
@@ -291,7 +333,8 @@ class Engine {
       durableV2StartTurn, durableV2ApplyLocalEffect, durableV2VerifyRunnerClosed,
       durableV2AssertWriterLock, durableV2Journal, durableV2NormalRoute,
       durableV2StreamFrames, durableV2AcquireCapacity, durableV2SealCapacity,
-      durableV2SwitchProvider, durableV2UsageProbe, durableV2Issues, durableV2Version,
+      durableV2SwitchProvider, durableV2SetBrain, durableV2ModelCatalog, durableV2ModelCard,
+      durableV2UsageProbe, durableV2Issues, durableV2Version,
       durableV2DataDir, durableV2ConsoleEnabled })
     this.projectMemory = options.projectMemory || null
     this.repoInfo = options.repoInfo || null
@@ -450,6 +493,11 @@ _resolveProvider(chatId, group) {
     return { name, provider: this.cfg.providers[name] }
   }
 
+// The group's model and depth on the backend actually running (core/brain.js).
+_brain(group, name, provider) {
+    return groupBrain(group, name, provider, { defaultProvider: this.cfg.defaultProvider })
+  }
+
 // Chat commands are answered before any receipt, like /stop with nothing to
 // stop: nothing enters the journal and each returns its single reply as an
 // input rejection. Commands that reset a session need the group idle and its
@@ -467,8 +515,7 @@ async _durableV2Command(msg, cmd, rest) {
     const group = this._resolveGroup(msg.chatId)
     if (!group || group.paused) return reject('unsupported-command', T.unsupportedCommandWithModel)
     const { name, provider } = this._resolveProvider(msg.chatId, group)
-    // A group may pin its own model; the runner uses it before the provider default.
-    const label = (n, p) => { const { model } = modelContext(group, p); return model ? `${n} · ${model}` : n }
+    const label = (n, p) => brainLabel(n, this._brain(group, n, p))
     if (cmd === '/model') return this._durableV2ModelCommand(msg, rest, group)
     if (cmd === '/help') {
       const isCodex = provider?.runner === 'codex'
@@ -531,38 +578,247 @@ async _durableV2Command(msg, cmd, rest) {
     return reject('unsupported-command', T.unsupportedCommandWithModel)
   }
 
-// /model lists models, or switches through the console's configuration
-// writer. Switching needs this group idle and settled, and always starts a
-// fresh session.
-_durableV2ModelCommand(msg, want, group) {
+// /model: backend · model · thinking depth. Words are parsed exactly
+// (core/modelcmd.js); the decision is _durableV2ApplyModel (shared with the
+// model card) and the write goes through the console's configuration writer.
+// Every change needs this group idle and settled; only a backend change
+// starts a new conversation.
+async _durableV2ModelCommand(msg, want, group) {
     const reject = (reason, notice) =>
       rejectC2Input('C2 v2 model command answered before receipt', { reason, notice })
-    const label = (name, provider, scope = {}) => {
-      const { model } = modelContext(scope, provider)
-      return model ? `${name} · ${model}` : name
+    const { name, provider } = this._resolveProvider(msg.chatId, group)
+    const names = this._modelNames()
+    const words = String(want || '').split(/\s+/).map(w => w.trim()).filter(Boolean)
+    if (!words.length) {
+      const cat = await this._modelCatalog(name, provider)
+      const cur = this._brain(group, name, provider)
+      const o = this._modelOpts(names, name, cat, cur)
+      const concrete = cat && Array.isArray(cat.models) ? cat.models.map(m => m.id) : []
+      const exModel = concrete.find(c => (o.choices || []).includes(c) && c !== cur.model) || ''
+      const text = T.modelInfo({ ...o, current: brainLabel(name, cur),
+        exEffort: exEffortOf(o.efforts, cur.effort), exModel,
+        exProvider: names.find(n => n !== name) || '' })
+      // Feishu gets a tap-to-pick card; the text above is its fallback.
+      let card = null
+      if (this.durableV2ModelCard) {
+        try { card = this.durableV2ModelCard(await this._modelPanel(msg.chatId, group, { issuedAt: Date.now() })) } catch (error) {
+          this.log(`/model card not built: ${error?.message || String(error)}`)
+        }
+      }
+      return rejectC2Input('C2 v2 model command answered before receipt', { reason: 'model-info', notice: text, card })
     }
-    const available = Object.entries(this.cfg.providers || {})
-      .filter(([, provider]) => provider && !provider.hidden &&
-        ['claude', 'codex'].includes(provider.runner || 'claude'))
-    const { name: currentName, provider: currentProvider } = this._resolveProvider(msg.chatId, group)
-    const current = label(currentName, currentProvider, group)
-    const list = available.map(([name, provider]) => label(name, provider)).join(' / ')
-    if (!want) {
-      const example = available.find(([name]) => name !== currentName)?.[0] || currentName
-      return reject('model-info', T.modelInfo(current, list, example))
+    const sender = msg.senderName || msg.userId || 'unknown'
+    const pw = parseModelWords(words, names)
+    if (pw.error) {
+      this._logModelReject(msg.chatId, words.join(' '), 'dup', sender)
+      return reject('model-dup', T.modelDup(pw.error.what, pw.error.a, pw.error.b))
     }
-    const hit = available.find(([name]) => name.toLowerCase() === want.toLowerCase())
-    if (!hit) return reject('model-unknown', T.modelUnknown(want, available.map(([name]) => name).join(' / ')))
-    if (hit[0] === currentName) return reject('model-same', T.modelSame(current))
-    if (this._durableV2GroupBusy(msg.chatId)) return reject('model-busy', T.modelBusy)
+    const out = await this._durableV2ApplyModel(msg.chatId, group, pw,
+      { sender, said: words.join(' '), source: 'command' })
+    const reason = out.kind === 'reject' ? `model-${out.reason}` : out.kind === 'model' ? 'model-changed' : `model-${out.kind}`
+    return reject(reason, out.text)
+  }
+
+// The /model card's panel state (platform-neutral; Feishu draws it with
+// src/platform/modelcard.js). "Current" is the backend actually running and
+// this group's choice on it. The draft (p backend, m model, e depth) starts
+// as the group's choice on that backend; unchosen items are filled with the
+// catalog's recommendation, so the card always shows a concrete pick. A draft
+// that differs from the current one gets a preview, which enables confirm.
+async _modelPanel(chatId, group, extra = {}) {
+    const { name, provider } = this._resolveProvider(chatId, group)
+    const b = this._brain(group, name, provider)
+    const current = brainLabel(name, b)
+    const mode = extra.mode || 'edit'
+    if (mode !== 'edit') return { mode, current: extra.current || current, receipt: extra.receipt, issuedAt: extra.issuedAt || 0 }
+    const names = this._modelNames()
+    const d0 = extra.draft || {}
+    const known = extra.draft && names.includes(d0.p)
+    const dp = known ? d0.p : name
+    const dProv = this.cfg.providers[dp]
+    const base = this._brain(group, dp, dProv)
+    const third = !!(dProv && dProv.baseUrl)
+    const draft = known ? { p: dp, m: String(d0.m || ''), e: String(d0.e || '') } : { p: dp, m: '', e: '' }
+    const cat = await this._modelCatalog(dp, dProv)
+    const rec = cat && cat.ok !== false && cat.recommended ? cat.recommended : null
+    let model = null // null: a third-party endpoint, whose model is set in the console
+    if (!draft.e) draft.e = base.effort || ''
+    if (!cat || cat.models !== null) {
+      const choices = cat && cat.ok !== false ? (cat.models || []).map(m => m.id) : []
+      if (!draft.m && !third) draft.m = base.model || ''
+      if (!draft.m && rec && rec.model) draft.m = rec.model
+      const options = choices.map(v => ({ value: v, label: modelName(v) }))
+      if (draft.m && !choices.includes(draft.m)) options.push({ value: draft.m, label: modelName(draft.m) })
+      model = { options, selected: draft.m }
+    } else draft.m = ''
+    const dModel = draft.m || (third ? base.model : '')
+    const listed = cat && Array.isArray(cat.models) ? cat.models.find(m => m.id === dModel) : null
+    const noDepth = !!(listed && Array.isArray(listed.efforts) && !listed.efforts.length)
+    const effList = cat && !noDepth ? effortsFor(cat, dModel) : []
+    if (noDepth) draft.e = ''
+    else if (!draft.e || (effList.length && !effList.includes(draft.e))) draft.e = cat ? recommendEffort(cat, dModel) : draft.e
+    const dEffort = draft.e
+    const efforts = effList.map(e => ({ value: e, label: e, selected: e === dEffort }))
+    let preview = null
+    if (dp !== name || dModel !== b.model || (dEffort || '') !== (b.effort || '')) {
+      preview = { to: brainLabel(dp, { model: dModel, effort: dEffort }),
+        note: dp !== name ? '换了后端 —— 会开新对话' : dModel !== b.model ? '换了型号 —— 接着当前对话' : '只调深度 —— 接着当前对话' }
+    }
+    return { mode, current, draft, preview, failover: '', quota: '',
+      backends: names.map(n => ({ name: n, selected: n === dp })),
+      model, efforts, issuedAt: extra.issuedAt || 0 }
+  }
+
+// A tap on the /model card. value = the callback value { f, v?, d, t },
+// option = the dropdown choice, who = the operator's name.
+//   f = p | m | e: change only the card's draft (nothing is written)
+//   f = ok: apply the draft once through _durableV2ApplyModel → receipt card
+//   f = x: close; nothing changes, the card turns grey in place
+// Returns { toast?, state? }; state is drawn into a card that replaces this one.
+async handleModelCard({ chatId, who = '', value = {}, option } = {}) {
+    const group = this.cfg.groups && this.cfg.groups[chatId]
+    if (!group) return { toast: { type: 'info', content: '这个群还没绑定项目' } }
+    const issued = Number(value.t) || 0
+    const now = Date.now()
+    if (value.f === 'x') return { toast: { type: 'info', content: '已关闭 · 模型没变' }, state: await this._modelPanel(chatId, group, { mode: 'closed' }) }
+    if (group.paused) return { toast: { type: 'warning', content: '本群已暂停 —— 恢复后再改' } }
+    if (!issued || now - issued > MODEL_CARD_TTL_MS) {
+      return { toast: { type: 'info', content: '这张卡已过期 —— 发 /model 重新打开' }, state: await this._modelPanel(chatId, group, { mode: 'expired' }) }
+    }
+    const d = value.d && typeof value.d === 'object' ? { p: String(value.d.p || ''), m: String(value.d.m || ''), e: String(value.d.e || '') } : null
+    const norm = x => (x == null || x === MODEL_CARD_DEFAULT ? '' : String(x))
+    if (value.f === 'p' || value.f === 'm' || value.f === 'e') {
+      let draft = d
+      if (value.f === 'p') draft = { p: norm(value.v), m: '', e: '' }
+      else if (value.f === 'm') draft = { ...(d || {}), m: norm(option) }
+      else draft = { ...(d || {}), e: norm(value.v) }
+      return { state: await this._modelPanel(chatId, group, { draft, issuedAt: now }) }
+    }
+    if (value.f !== 'ok' || !d) return {}
+    const by = String(who || '').trim() || '有人'
+    const before = await this._modelPanel(chatId, group)
+    const { name: curName } = this._resolveProvider(chatId, group)
+    const target = d.p || curName
+    const tb = this._brain(group, target, this.cfg.providers[target])
+    const out = await this._durableV2ApplyModel(chatId, group, {
+      provider: d.p && d.p !== curName ? d.p : undefined,
+      model: d.m && d.m !== tb.model ? d.m : undefined,
+      effort: d.e && d.e !== tb.effort ? d.e : undefined },
+    { sender: by, said: `[模型卡] ${d.p}·${d.m || '-'}·${d.e || '-'}`, source: 'card' })
+    if (out.kind === 'reject' && out.reason === 'busy') return { toast: { type: 'warning', content: '手头还有任务在跑 —— 等它做完再确认，或先发 /stop' } }
+    if (out.kind === 'reject' || out.kind === 'failed') return { toast: { type: 'error', content: String(out.text || '').split('\n')[0].replace(/^⚠\s*/, '') } }
+    const g2 = (this.cfg.groups && this.cfg.groups[chatId]) || group
+    if (out.kind === 'same') return { toast: { type: 'info', content: '已经是这个了，没有变化' }, state: await this._modelPanel(chatId, g2, { issuedAt: now }) }
+    const hm = fmtStamp(now, this.tz).slice(-5)
+    const after = await this._modelPanel(chatId, g2)
+    const how = out.kind === 'switched' ? '已开新对话' : '接着当前对话'
+    return {
+      toast: { type: 'success', content: `已改为 ${after.current} · ${how}` },
+      state: { mode: 'receipt', current: after.current,
+        receipt: { line: `${by} 改为 ${after.current} · ${how} · ${hm}`, before: `之前：${before.current}` } },
+    }
+  }
+
+_modelNames() {
+    return Object.entries(this.cfg.providers || {})
+      .filter(([, p]) => p && !p.hidden && ['claude', 'codex'].includes(p.runner || 'claude'))
+      .map(([n]) => n)
+  }
+async _modelCatalog(name, provider) {
+    if (!this.durableV2ModelCatalog) return null
+    try { return await this.durableV2ModelCatalog(name, provider) } catch { return null }
+  }
+_modelOpts(names, name, cat, brain) {
+    return { names, name,
+      choices: !cat ? undefined : cat.models === null ? null : cat.ok === false ? [] : modelChoices(cat),
+      efforts: cat ? effortsFor(cat, brain && brain.model) : [] }
+  }
+_logModelReject(chatId, said, reason, sender) {
+    this.log(`/model rejected: ${chatId} ${JSON.stringify(String(said || '')).slice(0, 80)} ${reason} (by ${sender})`)
+  }
+
+// pw = { provider?, model?, models?, effort? } from parseModelWords, or the
+// model card's confirmed draft. Returns { kind, reason?, text, label?, after? }
+// with kind ∈ reject | failed | same | switched | model | effort.
+// Missing picks on the target backend are filled with the catalog's
+// recommendation (fillPicks); a depth-only change never fills a model.
+async _durableV2ApplyModel(chatId, group, pw, { sender = 'unknown', said = '', source = 'command' } = {}) {
+    const reject = (reason, text) => { this._logModelReject(chatId, said, reason, sender); return { kind: 'reject', reason, text } }
+    const { name, provider } = this._resolveProvider(chatId, group)
+    const names = this._modelNames()
+    const target = pw.provider || name
+    // The card's draft comes back from the platform: accept only a listed backend.
+    if (pw.provider && !names.includes(pw.provider)) return reject('unknown', T.modelUnknownWord(target, this._modelOpts(names, name, null, null)))
+    const tProv = this.cfg.providers[target]
+    const tBrain = this._brain(group, target, tProv)
+    if (pw.model === '') pw = { ...pw, model: undefined }
+    if (pw.effort === '') pw = { ...pw, effort: undefined }
+    if (pw.models) {
+      const mcat = await this._modelCatalog(target, tProv)
+      const bad = pw.models.find(w => !resolveModel(w, mcat))
+      if (bad) return reject('unknown', T.modelUnknownWord(bad, this._modelOpts(names, target, mcat, tBrain)))
+      const ids = [...new Set(pw.models.map(w => resolveModel(w, mcat)))]
+      if (ids.length > 1) return reject('dup', T.modelDup('型号', pw.models[0], pw.models[1]))
+      pw = { ...pw, model: ids[0] }
+      delete pw.models
+    }
+    const switching = target !== name
+    const wantsBrain = pw.model !== undefined || pw.effort !== undefined
+    const cat = wantsBrain || switching ? await this._modelCatalog(target, tProv) : null
+    let model
+    if (pw.model !== undefined) {
+      if (cat && cat.models === null) return reject('unknown', T.modelUnknownWord(pw.model, this._modelOpts(names, target, cat, tBrain)))
+      if (!cat || cat.ok === false) return reject('no-catalog', T.modelNoCatalog(target))
+      model = resolveModel(pw.model, cat)
+      if (!model) return reject('unknown', T.modelUnknownWord(pw.model, this._modelOpts(names, target, cat, tBrain)))
+      if (model === tBrain.model) model = undefined
+    }
+    const f = fillPicks({ switching, model, effort: pw.effort, currentModel: tBrain.model,
+      currentEffort: tBrain.effort, third: !!(tProv && tProv.baseUrl), cat })
+    model = f.model
+    const nextModel = model === undefined ? tBrain.model : model
+    let effort
+    if (pw.effort !== undefined) {
+      const effs = cat ? effortsFor(cat, nextModel) : []
+      const known = cat && cat.models && cat.models.find(m => m.id === nextModel)
+      const unsupported = known && Array.isArray(known.efforts) && !known.efforts.length
+      if (unsupported || (effs.length && !effs.includes(pw.effort))) {
+        return reject('effort', T.modelEffortUnsupported(nextModel || target, pw.effort, unsupported ? [] : effs))
+      }
+      effort = pw.effort === tBrain.effort && model === undefined && !switching ? undefined : pw.effort
+    } else effort = f.effort
+    const current = brainLabel(name, this._brain(group, name, provider))
+    if (!switching && model === undefined && effort === undefined) return { kind: 'same', text: T.modelSame(current), label: current }
+    if (this._durableV2GroupBusy(chatId)) return reject('busy', T.modelBusy)
+    let r
     try {
-      this.durableV2SwitchProvider(msg.chatId, hit[0])
+      if (this.durableV2SetBrain) {
+        r = this.durableV2SetBrain(chatId, { provider: switching ? target : undefined, model, effort },
+          { by: sender, source })
+      } else if (switching && model === undefined && effort === undefined) {
+        this.durableV2SwitchProvider(chatId, target)
+      } else throw new Error('Model and depth writer unavailable')
     } catch (error) {
-      this.log(`/model switch failed for ${msg.chatId} → ${hit[0]}: ${error?.message || String(error)}`)
-      return reject('model-failed', /settled/.test(error?.message || '') ? T.modelBusy : T.modelSwitchFailed)
+      this.log(`/model failed for ${chatId} → ${target}: ${error?.message || String(error)}`)
+      return { kind: 'failed', reason: 'failed',
+        text: /settled|任务进行中|空闲/.test(error?.message || '') ? T.modelBusy : T.modelSwitchFailed }
     }
-    this.log(`/model: ${msg.chatId} ${currentName} → ${hit[0]} (by ${msg.senderName || 'unknown'})`)
-    return reject('model-switched', T.modelSwitched(label(hit[0], this.cfg.providers[hit[0]])))
+    const g2 = (this.cfg.groups && this.cfg.groups[chatId]) || group
+    const after = r?.after || this._brain(g2, target, this.cfg.providers[target])
+    const label = brainLabel(target, after)
+    this.log(`/model: ${chatId} ${name}·${tBrain.model || '-'}·${tBrain.effort || '-'} → ${target}·${after.model || '-'}·${after.effort || '-'} (by ${sender}, ${source})`)
+    const filled = f.filled.length ? f.filled.join('和') : ''
+    if (switching) {
+      let note = ''
+      try {
+        const opts = { full: group.permissionMode === 'bypassPermissions', isCodex: tProv?.runner === 'codex' }
+        const h = this.projectMemory ? this.projectMemory(group.workdir, opts) : null
+        if (h?.note) note = h.note
+      } catch {}
+      return { kind: 'switched', text: T.modelSwitched(label, note, filled), label, after }
+    }
+    if (r?.modelChanged) return { kind: 'model', text: T.modelChanged(label, filled), label, after }
+    return { kind: 'effort', text: T.effortSwitched(after.effort, brainLabel(target, { model: after.model })), label, after }
   }
 
 async runDurableV2Message(msg, platform) {
@@ -1559,9 +1815,10 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
       if (!provider || (provider.baseUrl && !provider.apiKey)) {
         throw new Error('C2 v2 runner provider unavailable')
       }
-      rt.v2CardModelInfo = cardModelInfo(job.group, provider)
+      rt.v2Brain = this._brain(job.group, name, provider)
+      rt.v2CardModelInfo = cardModelInfo(rt.v2Brain)
       this._observeActivity('start', { chatId, receiptId, receiptIds: cohort.receiptIds, generation,
-        sessionId: this.store.getSession(chatId), model: rt.v2CardModelInfo.model,
+        sessionId: this.store.getSession(chatId), model: rt.v2Brain.model, effort: rt.v2Brain.effort,
         runner: provider.runner, project: projectName(job.group) })
       rt.v2FollowupEnabled = followupEnabled(job.group, provider.runner)
       rt.v2SteerControl = null
@@ -1805,7 +2062,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
       capTimer = timeoutDeadlineAt !== null ? setTimeout(onHardDeadline, timeoutMs) : null
       const input = prepareC2RunnerInput({ prompt,
         appendSystemPrompt: SYSTEM_APPENDIX, msg: job.msg, group: job.group,
-        provider, config: this.cfg,
+        provider, config: this.cfg, brain: { model: rt.v2Brain.model, effort: rt.v2Brain.effort },
         sessionId: this.store.getSession(chatId) || null,
         signal: controller.signal, extraEnv: this.baseSkillEnv(chatId),
         onDurableEvent: event => {
@@ -2233,7 +2490,7 @@ classifyDurableV2UnresolvedTurn({ chatId, receiptId, turnToken, effectId,
         chatId: msg.chatId, groupName: group.name || msg.chatId,
         workdir: group.workdir, repo: group.repo || '', repoState: info?.state || '',
         repoOrigin: info?.origin || '未知', pushDenied: policy.pushDenied,
-        providerName, model: modelContext(group, provider).model,
+        providerName, model: this._brain(group, providerName, provider).model,
         runtimeVersion: this.durableV2Version || '', runtimeCommand: runtimeCommand(),
         noVision: provider.vision === false, platformName: platform.chatLabel || '项目群',
         permissionTier: policy.tier, tz: this.tz, publicUrl: '', uiUrl: '', lanUrl: '' }),

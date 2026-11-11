@@ -1,5 +1,24 @@
 [
   {
+    "version": "1.4.16",
+    "date": "2026-11-11",
+    "name": "Per-group model and thinking depth",
+    "items": [
+      {
+        "t": "Choose model and depth per group",
+        "d": "Pick the backend, model and thinking depth on each group card in the console. Model lists come live from the local Codex and Claude Code. Subscription model cards no longer carry a model or depth; a third-party endpoint keeps its model on the model card."
+      },
+      {
+        "t": "Group command /model",
+        "d": "Send /model for a tap-to-pick card and confirm to apply, or send /model high, /model <model>, or /model <backend> <model> <depth>. A model or depth change on the same backend continues the conversation; a backend change starts a new one. Changes wait until the group is idle; receipts and the audit log record who made them."
+      },
+      {
+        "t": "Existing settings migrate automatically",
+        "d": "After the upgrade connects, each model card's model and depth move into its groups with the same effective values and no session reset, after a configuration backup. Custom Codex context windows are checked against each group's chosen model."
+      }
+    ]
+  },
+  {
     "version": "1.4.15",
     "date": "2026-11-11",
     "name": "Simpler model settings",

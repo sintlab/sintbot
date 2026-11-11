@@ -6,7 +6,7 @@ const { followupEnabled } = require('../agent/privatecore')
 // process-local arguments. It neither starts a child nor persists text,
 // credentials, callback handles, or environment values.
 function prepareC2RunnerInput({ prompt, appendSystemPrompt, msg, group, provider,
-  config, sessionId = null, signal, extraEnv, onTurnAccepted, onSpawnFailed, onDurableEvent,
+  config, brain = null, sessionId = null, signal, extraEnv, onTurnAccepted, onSpawnFailed, onDurableEvent,
   onEvent = () => {}, onSteerReady, onSteerLanded, log = () => {} } = {}) {
   if (typeof prompt !== 'string' || !prompt ||
       typeof appendSystemPrompt !== 'string' || !appendSystemPrompt ||
@@ -14,6 +14,8 @@ function prepareC2RunnerInput({ prompt, appendSystemPrompt, msg, group, provider
       !group || typeof group.workdir !== 'string' || !group.workdir ||
       !provider || !['claude', 'codex'].includes(provider.runner) ||
       !config || !config.agent || typeof config.agent !== 'object' ||
+      (brain !== null && (typeof brain !== 'object' || typeof brain.model !== 'string' ||
+        typeof brain.effort !== 'string')) ||
       (sessionId !== null && (typeof sessionId !== 'string' || !sessionId)) ||
       !signal || typeof signal.aborted !== 'boolean' ||
       !extraEnv || typeof extraEnv !== 'object' || Array.isArray(extraEnv) ||
@@ -47,7 +49,10 @@ function prepareC2RunnerInput({ prompt, appendSystemPrompt, msg, group, provider
     steer: !isCodex && enabled,
     codexProjectDocFallback: isCodex && group.codexProjectDocFallback === true,
     onSteerReady, onSteerLanded,
-    model: group.model,
+    // The group's model and depth on this backend (core/brain.js); empty
+    // leaves the choice to the executor.
+    model: brain ? brain.model || undefined : group.model,
+    effort: brain ? brain.effort : '',
     workdir: group.workdir,
     sessionId,
     permissionMode: group.permissionMode || 'dontAsk',

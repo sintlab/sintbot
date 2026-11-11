@@ -1650,6 +1650,7 @@ function claudeChip(){
   if(!s.loggedIn) return '<span class="chip none" title="这台机器还没登录 Claude —— 跑 claude auth login">未登录</span>';
   return `<span class="chip set" title="claude auth status: ${esc(s.method||'')} · ${esc(s.email||'')}${s.org?' · '+esc(s.org):''}">订阅登录 ${IC.check}${s.plan?' · '+esc(s.plan):''}</span>`;
 }
+function providerGroupCount(name){return (S.groups||[]).filter(g=>!g.paused&&(g.effectiveProvider||g.provider||S.defaultProvider)===name).length;}
 function renderProviders(){
   const cards=S.providers.filter(p=>showAll||(!p.hidden&&p.configured)).map(p=>{
     const cs=p.runner==='codex'?codexStatus[p.name]:null;
@@ -1657,14 +1658,12 @@ function renderProviders(){
     return `<div class="card pcard${p.hidden?' is-hidden':(!p.configured?' is-unconfig':'')}" data-prov="${esc(p.name)}">
       <div class="ph"><div class="pn"><span class="drag" draggable="true" title="拖动排序">${IC.grip}</span>${esc(p.name)}${p.runner==='codex'?'<span class="cli-tag codex" title="GPT 经 Codex CLI 后端 · 订阅登录">Codex CLI</span>':'<span class="cli-tag claude" title="经 Claude Code CLI · 模型大脑按 env 切换">Claude Code CLI</span>'}</div>
         <div class="inline" style="gap:8px">${chip}<button class="iconbtn cfg" data-act="edit" title="配置模型">${IC.settings}</button></div></div>
-      <div class="kv"><span class="kk">型号</span><span class="vv" title="${esc(p.model||(p.loggedIn&&p.runner!=='codex'?'未指定 ⇒ spawn 时不设 ANTHROPIC_MODEL,用 Claude Code 自己的默认模型':''))}">${esc(p.model||(p.loggedIn&&p.runner!=='codex'?'跟随 Claude Code 默认':'—'))}</span></div>
-      <div class="kv"><span class="kk">${p.contextWindow?.source==='official'?'模型上限':'当前窗口'}</span><span class="vv" title="${esc(providerWindowText(p,true))} · 只读，不会改变模型容量">${esc(providerWindowText(p))}</span></div>
-      ${p.runner==='codex'?`<div class="kv"><span class="kk">窗口设置</span><span class="vv">${p.contextWindowTokens?esc(fmtContextTokens(p.contextWindowTokens)):'执行器默认'}</span></div><div class="kv"><span class="kk">${p.reportedContextTokens?'最近上报可用窗口':p.contextWindowTokens?'实际可用窗口':'目录默认窗口'}</span><span class="vv" title="${esc(providerWindowText(p,true))}">${p.reportedContextTokens?esc(fmtContextTokens(p.reportedContextTokens)):p.contextWindowTokens?'待上报':p.contextWindow?.activeTokens?esc(fmtContextTokens(p.contextWindow.activeTokens)):'待上报'}</span></div>`:''}
+      ${p.baseUrl?`<div class="kv"><span class="kk">型号</span><span class="vv" title="${esc(p.model||'')}">${esc(p.model?modelName(p.model):'—')}</span></div>
+      <div class="kv"><span class="kk">${p.contextWindow?.source==='official'?'模型上限':'当前窗口'}</span><span class="vv" title="${esc(providerWindowText(p,true))} · 只读，不会改变模型容量">${esc(providerWindowText(p))}</span></div>`:`<div class="kv"><span class="kk">型号与深度</span><span class="vv" title="型号与思考深度按群在「群·项目」里选">按群选 · ${providerGroupCount(p.name)} 个群在用</span></div>`}
+      ${p.runner==='codex'?`<div class="kv"><span class="kk">窗口设置</span><span class="vv">${p.contextWindowTokens?esc(fmtContextTokens(p.contextWindowTokens)):'执行器默认'}</span></div>`:''}
       <div class="kv"><span class="kk">${p.runner==='codex'?'压缩阈值':'压缩窗口'}</span><span class="vv" title="${esc(providerCompactText(p))} · 逐模型设置 · ${p.runner==='codex'?'Codex 可能按当前窗口提前压缩':'Claude Code 在压缩窗口满前触发，设置值受模型窗口限制'}">${esc(providerCompactText(p))}</span></div>
       <div class="kv"><span class="kk">连接方式</span><span class="vv" title="${esc(p.runner==='codex'?'Codex CLI(codex exec · 订阅登录)':(p.baseUrl||'本机 Claude Code 的登录态 —— 无需 baseUrl / API key'))}">${esc(p.runner==='codex'?'Codex CLI (订阅登录)':(p.baseUrl?p.baseUrl.replace('https://',''):'Claude 订阅登录'))}</span></div>
-      ${p.effort?`<div class="kv"><span class="kk">思考深度</span><span class="vv">${esc(p.effort)}</span></div>`:''}
       ${p.vision===false?'<div class="kv"><span class="kk">识图</span><span class="vv" title="纯文本模型:送给它的图片(群里发的图/网页截图/读取的图片文件)自动降级成占位文本,不会 400 崩掉整轮">不支持 · 图片自动降级</span></div>':''}
-      ${p.runner==='codex'?`<div class="kv"><span class="kk">推理强度</span><span class="vv">${esc(p.reasoningEffort||cxDefEffortLabel(p.model))}</span></div>`:''}
       ${usage[p.name]?`<div class="kv"><span class="kk" style="flex:none">${esc(usage[p.name].label)}${usageRefreshBtn(false)}</span><span class="vv" title="${esc(usage[p.name].value)}${usage[p.name].label==='订阅额度'?' —— 百分比 = 已用,括号 = 距重置,与这台机器上交互式 Claude Code 共享的订阅窗口':''}" style="color:var(--ok);font-weight:600;white-space:normal;overflow:visible;max-width:none;flex:1;min-width:0;line-height:1.5">${esc(usage[p.name].value)}</span></div>`:''}
       ${(cs&&cs.usageText)?`<div class="kv"><span class="kk" style="flex:none">订阅额度${usageRefreshBtn(true)}</span><span class="vv" title="百分比 = 已用,括号 = 距重置 —— 与交互式 Codex 共享的订阅窗口(时长随官方口径)" style="color:var(--ok);font-weight:600;white-space:normal;overflow:visible;max-width:none;flex:1;min-width:0;line-height:1.5">${esc(cs.usageText)}</span></div>`:''}
       <div class="acts"><button class="btn" data-act="test">测试</button>${p.hidden?'<span class="hint" style="align-self:center">已隐藏</span>':''}</div>
@@ -1674,7 +1673,7 @@ function renderProviders(){
   const extra=S.providers.filter(p=>p.hidden||!p.configured).length;
   const toggle=extra?`<button class="btn ghost" id="showAll">${showAll?'只看已配置':`显示全部 (${extra})`}</button>`:'';
   $('#providers').innerHTML=`<div class="inline" style="justify-content:space-between;align-items:flex-start;margin:0 2px 14px;gap:10px">
-      <div class="hint" style="flex:1">${S.runtimeCapabilities?esc(runtimeAllows('POST','/api/providers/add')?RUNTIME_UI_TEXT.providers:RUNTIME_UI_TEXT.providersView):`管理模型 · 拖 ${IC.grip} 排序 · ${IC.settings} 配端点/key/思考深度 · 模型按群在「群·项目」选`}</div>
+      <div class="hint" style="flex:1">${S.runtimeCapabilities?esc(runtimeAllows('POST','/api/providers/add')?RUNTIME_UI_TEXT.providers:RUNTIME_UI_TEXT.providersView):`管理模型 · 拖 ${IC.grip} 排序 · ${IC.settings} 配端点/key/压缩 · 型号与思考深度按群在「群·项目」选`}</div>
       <div class="inline" style="gap:8px">${toggle}<button class="btn primary" id="addModel">${IC.plus} 添加模型</button></div></div>
     <div class="grid cols2 stagger" id="pgrid">${cards}</div>
     <h2 class="sec" style="margin-top:32px">插件库 · MCP</h2>
@@ -1805,21 +1804,26 @@ function openProviderModal(name,opts){
   const preset=edit?'':`<div class="field"><label class="f">预设(自动填端点/模型/调优)</label><select id="amPreset">${Object.keys(PRESETS).map(k=>`<option value="${esc(k)}" ${opts.preset===k?'selected':''}>${esc(k)}</option>`).join('')}</select></div>`;
   const keyPh=edit?(p.keyStatus==='set'?'已设置 · 留空保持':p.keyStatus==='env'?'env:'+esc(p.keyRef)+' · 留空保持':'粘贴 key'):'粘贴 key(存进本地 gitignored 配置)';
   const codexNote=isCodex?'<div class="hint" style="margin-bottom:12px">使用本机 ChatGPT 订阅登录，额度与本机 Codex 共享。</div>':'';
+  // Durable hosts: model and thinking depth are chosen per group (group card / /model);
+  // only a third-party endpoint keeps its model here as connection configuration.
+  const perGroup=!!S.runtimeCapabilities;
+  const showModelSec=!edit||!perGroup||(!isCodex&&!isClaudeLogin);
   $('#modal').innerHTML=`<h3>${edit?'配置 '+esc(name):'添加模型'}</h3>
     ${preset}
     ${codexNote}
-    <h4 class="sec">型号与推理</h4>
+    ${showModelSec?`<h4 class="sec">${perGroup?'名称与型号':'型号与推理'}</h4>`:''}
     ${edit?'':'<div class="field"><label class="f" for="amName">名称</label><input id="amName" placeholder="如 glm / my-model"/></div>'}
-    ${isCodex?`<div class="field"><label class="f">模型 model</label>
+    ${perGroup?`<div class="hint" style="margin-bottom:12px">型号与思考深度按群在「群·项目」里选${(isCodex||isClaudeLogin)?'':'；这个端点的型号在下面填，各群共用'}。</div>`:''}
+    ${isCodex&&perGroup?'':isCodex?`<div class="field"><label class="f">模型 model</label>
       <select id="amModelSel"><option value="${edit?esc(p.model):''}" selected>${edit&&p.model?esc(p.model):'(未设 — 用 codex 默认)'}</option></select>
       <input id="amModel" value="${edit?esc(p.model):''}" placeholder="如 gpt-5.6-sol" style="display:none;margin-top:8px"/>
       <div class="hint" id="amModelSrc" style="margin-top:4px">加载模型列表…</div></div>`
-    :isClaudeLogin?`<div class="field" id="clModelWrap"><label class="f">模型 model</label>
+    :isClaudeLogin&&perGroup?'':isClaudeLogin?`<div class="field" id="clModelWrap"><label class="f">模型 model</label>
       <div class="hint">检测登录中…</div></div>`
     :`<div class="field"><label class="f">模型 model</label><input id="amModel" value="${edit?esc(p.model):''}" placeholder="如 glm-5.2[1m]"/></div>`}
-    ${isCodex?`<div class="field"><label class="f">推理强度</label><select id="amRE">${RE_CODEX.concat(edit&&p.reasoningEffort&&!RE_CODEX.includes(p.reasoningEffort)?[p.reasoningEffort]:[]).map(v=>`<option value="${v}" ${edit&&v===(p.reasoningEffort||'')?'selected':''}>${v||'默认(模型内置)'}</option>`).join('')}</select>
+    ${isCodex&&!perGroup?`<div class="field"><label class="f">推理强度</label><select id="amRE">${RE_CODEX.concat(edit&&p.reasoningEffort&&!RE_CODEX.includes(p.reasoningEffort)?[p.reasoningEffort]:[]).map(v=>`<option value="${v}" ${edit&&v===(p.reasoningEffort||'')?'selected':''}>${v||'默认(模型内置)'}</option>`).join('')}</select>
       <div class="hint" style="margin-top:4px">默认沿用模型推荐强度；更高强度通常需要更多时间和额度。</div></div>`:''}
-    ${isCodex?'':`<div class="field"><label class="f">思考深度</label><select id="amEff">${EFFORTS.map(v=>`<option value="${v}" ${edit&&v===p.effort?'selected':''}>${v||'默认'}</option>`).join('')}</select>
+    ${isCodex||perGroup?'':`<div class="field"><label class="f">思考深度</label><select id="amEff">${EFFORTS.map(v=>`<option value="${v}" ${edit&&v===p.effort?'selected':''}>${v||'默认'}</option>`).join('')}</select>
       <div class="hint" style="margin-top:5px">默认沿用模型推荐强度；更高强度通常需要更多时间和额度。</div></div>`}
     <h4 class="sec">上下文与压缩</h4>
     <details class="field"><summary class="hint" style="cursor:pointer">容量与运行信息</summary><div class="dim" id="amWindow" style="padding:9px 0">${edit?esc(providerWindowText(p,true)):'添加后按模型目录或会话上报显示'}</div></details>
@@ -1946,7 +1950,7 @@ function openProviderModal(name,opts){
     const b={name:nm,autocompactTokens:$('#amCompMode').value==='default'?0:Number($('#amComp').value)};
     if(!Number.isInteger(b.autocompactTokens)||b.autocompactTokens<0||($('#amCompMode').value==='custom'&&(b.autocompactTokens<100000||b.autocompactTokens>1000000))){toast('压缩阈值须为 0 或 10万–100万 token','err');return;}
     if(selModel)b.model=selModel;
-    if(isCodex){b.model=selModel||'';b.reasoningEffort=$('#amRE').value;
+    if(isCodex){if(!perGroup){b.model=selModel||'';b.reasoningEffort=$('#amRE').value;}
       const value=$('#amContextMode').value==='default'?'0':$('#amContext').value.trim();b.contextWindowTokens=Number(value);
       if(!value||!Number.isSafeInteger(b.contextWindowTokens)||b.contextWindowTokens<0||($('#amContextMode').value==='custom'&&(b.contextWindowTokens<100000||b.contextWindowTokens>1050000))){toast('自定义窗口须为 10万–105万 token','err');return;}
       // ⚠ 新建时必须显式带 runner —— 少了它建出来的是个"没有端点没有 key 的 claude provider",
@@ -1955,8 +1959,8 @@ function openProviderModal(name,opts){
     else if(isClaudeLogin){
       // 订阅登录:端点/key/识图三项面板里就没有 ⇒ 不回传(回传空串会把已有值清掉)。
       // 型号可以被清空成「跟随 Claude Code 默认」,那要显式 modelClear —— 但只在控件真在时才发。
-      b.effort=$('#amEff').value; if(hasModelCtl&&!selModel)b.modelClear=true;
-    } else {b.model=selModel;b.baseUrl=$('#amBase').value.trim();b.apiKey=$('#amKey').value.trim();b.effort=$('#amEff').value;b.vision=!$('#amVision').checked;}
+      if(!perGroup){b.effort=$('#amEff').value; if(hasModelCtl&&!selModel)b.modelClear=true;}
+    } else {b.model=selModel;b.baseUrl=$('#amBase').value.trim();b.apiKey=$('#amKey').value.trim();if($('#amEff'))b.effort=$('#amEff').value;b.vision=!$('#amVision').checked;}
     if(!edit)b.env=JSON.parse($('#amPreset').dataset.env||'{}');
     if(edit)b.hidden=$('#amHide').checked;
     try{const r=await api('/api/providers/add','POST',b);S=r;
@@ -2655,7 +2659,7 @@ function cronFullHtml(text){
   }).join('');
 }
 const RUNTIME_UI_TEXT={
-  "groups": "可绑定新群，修改模型、项目目录、权限、数据输出和忙时跟进；该群须没有进行中的任务和未结记录。切模型或项目会开始新的一段对话。停止任务和开新会话在「概览」，开新会话须等该群空闲。群里发 /model 也能切换模型。",
+  "groups": "可绑定新群，修改后端、型号、思考深度、项目目录、权限、数据输出和忙时跟进；该群须没有进行中的任务和未结记录。换后端或项目会开始新的一段对话，换型号或调深度接着当前对话。停止任务和开新会话在「概览」，开新会话须等该群空闲。群里发 /model 也能改。",
   "skills": "当前支持飞书文字消息、忙时跟进、任务回复和停止。定时任务、生图、群消息管理、画布与预览暂未接入。",
   "cron": "当前不执行定时任务；已有定义仅供查看。",
   "board": "画布创建、同步与反馈暂未接入；已有链接仅供查看。",
@@ -2665,10 +2669,80 @@ const RUNTIME_UI_TEXT={
   "resumeLabel": "恢复",
   "steer": "Codex 与 Claude Code 默认开启忙时跟进；长命令执行期间的补充会在工具步骤之间读取。只有确认模型已读取才显示已加入；不支持此能力时排队。控制台插话同样支持忙时跟进；关闭或暂不支持时排队。",
   "preview": "当前版本未接入预览服务。",
-  "providers": "可添加模型，修改型号、端点、密钥、思考深度与推理强度，测试、隐藏或拖动排序；各群的模型在「群·项目」里切换。改型号、后端或端点时，用它的群须空闲，并会开始新的一段对话；默认模型和群正在用的模型不能隐藏。移除模型暂不可用。",
+  "providers": "可添加模型，修改端点、密钥、上下文与压缩，测试、隐藏或拖动排序；型号与思考深度按群在「群·项目」里选（第三方端点的型号在这里填）。改后端或端点时，用它的群须空闲，并会开始新的一段对话；默认模型和群正在用的模型不能隐藏。移除模型暂不可用。",
   "providersView": "当前可查看模型配置与登录状态；各群的模型在「群·项目」里切换。添加或修改模型暂不可用。",
   "unavailable": "当前版本暂不支持此操作。"
 };
+// Model display names (claude-opus-5-5 → Opus 5.5): the server injects the same
+// function the group replies use; stored and sent values stay the official ids.
+const modelNameRule=/*__SBOT_MODELNAME__*/(s=>String(s==null?'':s));
+const MODEL_OPTS={}; // provider name → /api/groups/model-options result
+const modelName=(id)=>{const k=String(id==null?'':id).trim();if(!k)return '';
+  const listed=Object.values(MODEL_OPTS).map(c=>c&&Array.isArray(c.models)&&c.models.find(m=>m&&m.id===k)).find(Boolean);
+  return (S&&S.modelNames&&S.modelNames[k])||(listed&&listed.name)||modelNameRule(k);};
+// Backend · model · thinking depth on the group card. Choices are stored per
+// backend; only a backend change starts a new conversation.
+const MODEL_OPTS_LOADING=new Set();
+function loadModelOpts(name){
+  if(!name||MODEL_OPTS[name]||MODEL_OPTS_LOADING.has(name))return;
+  MODEL_OPTS_LOADING.add(name);
+  api('/api/groups/model-options?provider='+encodeURIComponent(name)).then(c=>{MODEL_OPTS[name]=c||{ok:false,models:[],efforts:[]};})
+    .catch(()=>{MODEL_OPTS[name]={ok:false,models:[],efforts:[]};})
+    .finally(()=>{MODEL_OPTS_LOADING.delete(name);if($('#groups'))renderGroups();});
+}
+function catEfforts(cat,model){
+  if(!cat)return null;
+  const m=Array.isArray(cat.models)?cat.models.find(x=>x.id===model):null;
+  if(m&&Array.isArray(m.efforts))return m.efforts; // [] = this model has no depth setting
+  return cat.efforts||[];
+}
+function groupBrainRows(g){
+  const b=g.brain||{provider:g.effectiveProvider||g.provider||S.defaultProvider,model:'',effort:''};
+  const name=b.provider, cat=MODEL_OPTS[name];
+  if(!cat)loadModelOpts(name);
+  const sel='style="width:auto;min-width:110px;max-width:100%;padding:5px 30px 5px 10px;font-size:11.5px"';
+  const unset='<span style="color:var(--fail)">未选</span>';
+  const provs=S.providers.filter(pp=>!pp.hidden&&pp.configured);
+  if(!provs.some(pp=>pp.name===name))provs.unshift({name});
+  const backend=`<select class="gprov" data-g="${esc(g.chatId)}" ${sel}>${provs.map(pp=>`<option value="${esc(pp.name)}" ${pp.name===name?'selected':''}>${esc(pp.name)}</option>`).join('')}</select>`;
+  let model;
+  if(!cat)model=`<span class="vv">${b.model?esc(modelName(b.model)):unset} <span class="faint">· 加载清单…</span></span>`;
+  else if(cat.models===null)model=`<span class="vv" title="这个端点的型号在「模型」页设置,各群共用">${b.model?esc(modelName(b.model)):'—'} <span class="faint">· 在「模型」页改</span></span>`;
+  else{
+    const list=cat.models||[];
+    const opts=list.map(m=>`<option value="${esc(m.id)}" ${m.id===b.model?'selected':''}>${esc(m.name||modelName(m.id))}${cat.recommended&&cat.recommended.model===m.id?' ★':''}</option>`);
+    if(b.model&&!list.some(m=>m.id===b.model))opts.unshift(`<option value="${esc(b.model)}" selected>${esc(modelName(b.model))}</option>`);
+    if(!b.model)opts.unshift('<option value="" selected disabled>未选</option>');
+    opts.push('<option value="__custom__">自定义…</option>');
+    model=`<span class="vv inline" style="gap:6px;flex-wrap:wrap;min-width:0"><select class="gmodel" data-g="${esc(g.chatId)}" ${sel}>${opts.join('')}</select>
+      <span class="gcustom" data-g="${esc(g.chatId)}" hidden><input class="gcustomv" placeholder="型号 id" style="width:150px;padding:5px 8px;font-size:11.5px"/> <button class="btn" data-gcustom="${esc(g.chatId)}" style="padding:3px 9px;font-size:11px">保存</button></span>
+      ${cat.ok===false?'<span class="faint" style="font-size:11px">清单暂时取不到</span>':''}</span>`;
+  }
+  const effs=catEfforts(cat,b.model);
+  let effort;
+  if(effs&&!effs.length&&cat&&Array.isArray(cat.models)&&cat.models.some(m=>m.id===b.model))effort='<span class="vv faint">这个型号不支持</span>';
+  else{
+    const list=(effs&&effs.length?effs:['low','medium','high','xhigh','max']).slice();
+    if(b.effort&&!list.includes(b.effort))list.push(b.effort);
+    effort=`<select class="geffort" data-g="${esc(g.chatId)}" ${sel}>${b.effort?'':'<option value="" selected disabled>未选</option>'}${list.map(e=>`<option value="${esc(e)}" ${e===b.effort?'selected':''}>${esc(e)}</option>`).join('')}</select>`;
+  }
+  const pr=S.providers.find(pp=>pp.name===name)||{};
+  const win=g.contextWindow&&g.contextWindow.tokens?providerWindowText({contextWindow:g.contextWindow,runner:pr.runner},true):'';
+  // One "模型" row: backend and model side by side (they wrap on a narrow screen).
+  return `<div class="kv"><span class="kk">模型</span><span class="vv inline" style="gap:6px;flex-wrap:wrap;min-width:0">${backend}${model}</span></div>
+    <div class="kv"><span class="kk">思考深度</span>${effort}</div>
+    ${win?`<div class="kv"><span class="kk">上下文</span><span class="vv" title="${esc(win)}">${esc(win)}</span></div>`:''}
+    <div class="kv"><span class="kk"></span><span class="faint" style="font-size:11px">换后端会开新对话；换型号或调深度接着当前对话 · 群空闲时才能改</span></div>`;
+}
+async function saveGroupBrain(chatId,change){
+  try{
+    const r=await api('/api/groups/brain','POST',{chatId,...change});S=r;renderOverview();renderGroups();
+    const c=r.brainChange||{};
+    const filled=c.filled&&c.filled.length?'（未选的'+c.filled.join('和')+'先用推荐）':'';
+    const what=[c.model?modelName(c.model):'',c.effort||''].filter(Boolean).join(' · ');
+    toast(!c.changed?'没有变化':c.switching?`已切到 ${c.provider}${what?' · '+what:''} · 会话已重置，下条消息生效${filled}`:c.modelChanged?`已改为 ${what} · 接着当前对话，下条消息生效${filled}`:`思考深度已调为 ${c.effort} · 下条消息生效`,'ok');
+  }catch(e){toast(e.message,'err');renderGroups();}
+}
 function renderGroups(){
   const provOf=g=>S.providers.find(pp=>pp.name===(g.provider||S.defaultProvider));
   const cards=S.groups.map(g=>{
@@ -2885,10 +2959,7 @@ function renderGroups(){
       </label>
       <span class="faint" style="font-size:11px">${g.redactPii===false?'当前:明文':'当前:遮盖'}</span>
     </span></div>
-    <div class="kv"><span class="kk">模型</span>
-      <select class="gprov" data-g="${esc(g.chatId)}" style="width:auto;min-width:110px;padding:5px 30px 5px 10px;font-size:11.5px">
-        ${S.providers.filter(pp=>!pp.hidden&&pp.configured).map(pp=>`<option value="${esc(pp.name)}" ${pp.name===(g.provider||S.defaultProvider)?'selected':''}>${esc(pp.name)}${pp.model?' · '+esc(pp.model):''}</option>`).join('')}
-      </select></div>
+    ${groupBrainRows(g)}
     <div class="kv" style="align-items:flex-start"><span class="kk">忙时跟进</span><span class="vv" style="min-width:0">
       <label class="inline" style="gap:6px;cursor:pointer" title="${esc(S.runtimeCapabilities?RUNTIME_UI_TEXT.steer:'开启后，处理任务期间：群成员的后续消息、控制台勾了「回复」的插话，都会加入当前任务 —— 相关要求及时吸收，独立请求按先后回应。定时任务和不回复的插话仍排在后面。')}">
         <input type="checkbox" class="gsteer" data-g="${esc(g.chatId)}"${g.followupEnabled?' checked':''} style="width:auto;margin:0"/>
@@ -2932,7 +3003,14 @@ function renderGroups(){
     const on=b.dataset.p!=='1';
     if(on&&!confirm(S.runtimeCapabilities?'暂停本群?只有任务结束且记录全部结账后才能暂停；暂停期间不处理新消息，配置和会话保留。':'暂停本群?\n期间消息不处理(静默丢弃)、排队清空、定时任务与画布播报停发;进行中的任务会跑完。\n完全可逆:配置/会话/画布全保留,点「恢复」即原样回来。'))return;
     try{S=await api('/api/groups/pause','POST',{chatId:b.dataset.gpause,paused:on});renderGroups();renderOverview();toast(S.runtimeCapabilities?(on?'已暂停':'已恢复'):(on?'已暂停 · 群内已通知':'已恢复 · 群内已通知'),'ok');}catch(e){toast(e.message,'err');}});
-  $$('#groups .gprov').forEach(sel=>sel.onchange=async()=>{try{const r=await api('/api/groups/provider','POST',{chatId:sel.dataset.g,provider:sel.value});S=r;renderOverview();renderGroups();toast(r.switched&&r.switched.live?('已切到 '+sel.value+' · 会话已重置,下条消息生效'):('已保存 '+sel.value+' · daemon 未运行下次生效'),'ok');}catch(e){toast(e.message,'err');}});
+  $$('#groups .gprov').forEach(sel=>sel.onchange=()=>saveGroupBrain(sel.dataset.g,{provider:sel.value}));
+  $$('#groups .gmodel').forEach(sel=>sel.onchange=()=>{const box=$('.gcustom[data-g="'+sel.dataset.g+'"]');
+    if(sel.value==='__custom__'){if(box){box.hidden=false;box.querySelector('input').focus();}return;}
+    if(box)box.hidden=true;saveGroupBrain(sel.dataset.g,{model:sel.value});});
+  $$('#groups [data-gcustom]').forEach(b=>b.onclick=()=>{const box=$('.gcustom[data-g="'+b.dataset.gcustom+'"]'),v=box&&box.querySelector('input').value.trim();
+    if(!v){toast('填写型号 id','err');return;}saveGroupBrain(b.dataset.gcustom,{model:v});});
+  $$('#groups .geffort').forEach(sel=>sel.onchange=()=>saveGroupBrain(sel.dataset.g,{effort:sel.value}));
+
   $$('#groups .gsteer').forEach(c=>c.onchange=async()=>{const on=c.checked;
     try{S=await api('/api/groups/steer','POST',{chatId:c.dataset.g,enabled:on});renderGroups();toast(on?'已开启 · 下轮生效':'已关闭 · 下轮恢复排队','ok');}
     catch(e){c.checked=!on;toast(e.message,'err');}});
@@ -4350,7 +4428,7 @@ const I18N_EN=[
   ["等待模型读取，尚未确认加入", "Waiting for the model to read it; not yet confirmed joined"],
   ["处理状态请查看实时活动", "Check live activity for processing status"],
   ["需要处理", "Needs attention"],
-  ["可绑定新群，修改模型、项目目录、权限、数据输出和忙时跟进；该群须没有进行中的任务和未结记录。切模型或项目会开始新的一段对话。停止任务和开新会话在「概览」，开新会话须等该群空闲。群里发 /model 也能切换模型。", "Bind new groups and change the model, project folder, permissions, data display and busy-turn followups of a group with no running task or unsettled record. Changing the model or project starts a new conversation. Stop tasks and start new sessions in Overview; a new session needs the group to be idle. Members can also switch models with /model in the group."],
+  ["可绑定新群，修改后端、型号、思考深度、项目目录、权限、数据输出和忙时跟进；该群须没有进行中的任务和未结记录。换后端或项目会开始新的一段对话，换型号或调深度接着当前对话。停止任务和开新会话在「概览」，开新会话须等该群空闲。群里发 /model 也能改。", "Bind new groups and change the backend, model, thinking depth, project folder, permissions, data display and busy-turn followups of a group with no running task or unsettled record. Changing the backend or project starts a new conversation; changing the model or depth continues it. Stop tasks and start new sessions in Overview; a new session needs the group to be idle. Members can also change these with /model in the group."],
   ["当前支持飞书文字消息、忙时跟进、任务回复和停止。定时任务、生图、群消息管理、画布与预览暂未接入。", "Feishu text messages, busy-turn followups, task replies and stopping are supported. Schedules, image generation, group message management, canvas and previews are unavailable."],
   ["当前不执行定时任务；已有定义仅供查看。", "Schedules are not executed. Existing definitions are shown for reference only."],
   ["画布创建、同步与反馈暂未接入；已有链接仅供查看。", "Canvas creation, sync and feedback are unavailable. Existing links are view-only."],
@@ -4361,7 +4439,7 @@ const I18N_EN=[
   ["Codex 与 Claude Code 默认开启忙时跟进；长命令执行期间的补充会在工具步骤之间读取。只有确认模型已读取才显示已加入；不支持此能力时排队。控制台插话同样支持忙时跟进；关闭或暂不支持时排队。", "Busy-turn followups are on by default for Codex and Claude Code. Followups are read between tool steps; a long command must finish first. Joined means the model has read the message. Unsupported clients queue followups. Console messages also support busy-turn followups, or queue when followups are disabled or unavailable."],
   ["当前版本未接入预览服务。", "Preview services are unavailable in this version."],
   ["当前可查看模型配置与登录状态；各群的模型在「群·项目」里切换。添加或修改模型暂不可用。", "Model configuration and login status are shown here. Switch each group's model under Groups. Adding or changing models is unavailable."],
-  ["可添加模型，修改型号、端点、密钥、思考深度与推理强度，测试、隐藏或拖动排序；各群的模型在「群·项目」里切换。改型号、后端或端点时，用它的群须空闲，并会开始新的一段对话；默认模型和群正在用的模型不能隐藏。移除模型暂不可用。", "Add models; change their model id, endpoint, key, thinking depth and reasoning effort; test, hide or drag to reorder them. Switch each group's model under Groups. Changing a model id, backend or endpoint needs the groups using it to be idle and starts a new conversation for them. The default model and models in use by a group cannot be hidden. Removing models is unavailable."],
+  ["可添加模型，修改端点、密钥、上下文与压缩，测试、隐藏或拖动排序；型号与思考深度按群在「群·项目」里选（第三方端点的型号在这里填）。改后端或端点时，用它的群须空闲，并会开始新的一段对话；默认模型和群正在用的模型不能隐藏。移除模型暂不可用。", "Add models; change their endpoint, key, context and compaction; test, hide or drag to reorder them. Model and thinking depth are chosen per group under Groups (a third-party endpoint's model is set here). Changing a backend or endpoint needs the groups using it to be idle and starts a new conversation for them. The default model and models in use by a group cannot be hidden. Removing models is unavailable."],
   ["默认开启 · 下轮生效", "On by default · Applies next turn"],
   ["当前只能添加或修改 Codex 或 Claude Code 模型", "Only Codex or Claude Code models can be added or changed right now."],
   ["模型上限", "Model limit"],
@@ -4579,6 +4657,24 @@ const I18N_EN=[
   ["管理模型 · 拖","Manage models · drag"],
   ["排序 ·","to reorder ·"],
   ["配端点/key/思考深度 · 模型按群在「群·项目」选","sets endpoint / key / thinking depth · models are chosen per group on the Groups · Projects page"],
+  ["配端点/key/压缩 · 型号与思考深度按群在「群·项目」选", "sets endpoint / key / compaction · model and thinking depth are chosen per group on the Groups · Projects page"],
+  ["按群选", "Per group"],
+  ["个群在用", "groups using it"],
+  ["型号与深度", "Model and depth"],
+  ["型号与思考深度按群在「群·项目」里选", "Model and thinking depth are chosen per group under Groups"],
+  ["；这个端点的型号在下面填，各群共用", "; this endpoint's model is set below and shared by its groups"],
+  ["名称与型号", "Name and model"],
+  ["后端", "Backend"],
+  ["未选", "Not chosen"],
+  ["加载清单…", "loading list…"],
+  ["在「模型」页改", "change on the Models page"],
+  ["清单暂时取不到", "List unavailable right now"],
+  ["这个型号不支持", "Not supported by this model"],
+  ["上下文", "Context"],
+  ["型号 id", "Model id"],
+  ["换后端会开新对话；换型号或调深度接着当前对话 · 群空闲时才能改", "A backend change starts a new conversation; a model or depth change continues it · only while the group is idle"],
+  ["没有变化", "No change"],
+  ["填写型号 id", "Enter a model id"],
   ["添加模型","Add model"],
   ["插件库 · MCP","Plugin library · MCP"],
   ["本机装好的 MCP · 按运行时分两套 · 命令行安装、即时刷新","MCP servers installed on this machine · two sets, one per runtime · installed from the command line, refreshes instantly"],

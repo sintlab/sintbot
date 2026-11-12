@@ -96,7 +96,13 @@ function normalizeEvent(ev) {
   const result = claudeNormalizeEvent(ev)
   // JSON cannot carry `undefined`; retain the frozen JS object's optional
   // property shape at the public runner boundary.
-  if (ev.type === 'system') { result.subtype = ev.subtype; result.sessionId = ev.session_id }
+  if (ev.type === 'system') {
+    result.subtype = ev.subtype; result.sessionId = ev.session_id
+    // init 里 CLI 自报的可用命令:含 compact ⇒ 可以空闲整理(ABI 37 idle_compact_plan 的 canCompact);
+    // 2.1.311 实测在 slash_commands 里。哪版拿掉了,引擎就只在轮内压缩。
+    if (ev.subtype === 'init' && Array.isArray(ev.slash_commands)) result.slashCommands = ev.slash_commands.filter(c => typeof c === 'string')
+    // 压缩边界(compact_boundary)的 preTokens 由核心 normalize 带出,引擎据此判整理成败。
+  }
   else if (ev.type === 'assistant' || ev.type === 'user') {
     result.sessionId = ev.session_id
     if (ev.type === 'assistant') for (const tool of result.tools) {
@@ -158,6 +164,8 @@ function runTurn({
   softStopGraceMs = 10000,
   steer = false, onSteerReady, onSteerLanded,
   steerReceiptTimeoutMs = 10000, steerHoldMs = 20000, interruptGraceMs = 2000,
+  requireCloseProof = false,
+  closeProofGraceMs = 3000,
   closeGraceMs = 3000, // short: the grace starts AFTER the answer, so we're only waiting for
   // the OS to close a possibly-clinging pipe (MCP browser children / cmd.exe shim). Claude
   // persists its session continuously, so killing ~3s post-answer is safe → the group frees
@@ -270,6 +278,7 @@ function runTurn({
       let aborted = false
       let killTimer = null
       let closeTimer = null
+      let closeProofTimer = null
       let settled = false
       let childCloseObserved = false
       let acceptanceFailed = false
@@ -279,7 +288,7 @@ function runTurn({
       // Resolution is guarded (exactly once) because a close-grace timer can force the
       // turn to settle before the 'close' event fires — otherwise a lingering pipe would
       // wedge the per-group lock forever (never-hang invariant).
-      const finish = (fn) => { if (settled) return; settled = true; followup?.dispose(); if (killTimer) clearTimeout(killTimer); if (closeTimer) clearTimeout(closeTimer); if (signal) signal.removeEventListener('abort', onAbort); fn() }
+      const finish = (fn) => { if (settled) return; settled = true; followup?.dispose(); if (killTimer) clearTimeout(killTimer); if (closeTimer) clearTimeout(closeTimer); if (closeProofTimer) clearTimeout(closeProofTimer); if (signal) signal.removeEventListener('abort', onAbort); fn() }
       const resolveRun = result => {
         if (childCloseObserved) closedRunnerResults.add(result)
         resolve(result)
@@ -335,6 +344,14 @@ function runTurn({
         closeTimer = setTimeout(() => {
           if (!aborted && !(lastResult && lastResult.authFailed)) log(`claude 答案已到但 ${closeGraceMs}ms 内没退出 ⇒ 强制收尾;本轮若起过后台命令(run_in_background),它会被一起收掉,下一轮可能空转一次`)
           killTree()
+          // Compaction shares a resumable session with the next turn. A result
+          // or a sent signal does not prove the process closed its files.
+          if (requireCloseProof && !childCloseObserved) {
+            closeProofTimer = setTimeout(() => finish(() => reject(Object.assign(
+              new Error('Claude compaction process close remains unproven'),
+              { code: 'CLAUDE_COMPACTION_CLOSE_UNPROVEN' }))), closeProofGraceMs)
+            return
+          }
           const complete = () => finish(() => resolveRun({ sessionId: capturedSessionId, result: lastResult, code: null, aborted }))
           if (onDurableEvent) durableWork.then(complete, failDurableEvent)
           else complete()
@@ -434,6 +451,11 @@ function runTurn({
             killTree()
             armCloseGrace()
             continue
+          }
+          // 额度事件(ABI 37):订阅登录的 Claude 每次运行都带回 5 小时窗 / 7 天窗已用比例 —— 喂进额度缓存,
+          // 页脚与 /hud 就不必再去打那个常被限流的额度接口。第三方端点 / 自带密钥不是订阅额度,不喂。
+          if (raw.type === 'rate_limit_event' && isSubscription(provider)) {
+            try { require('./claudeusage').noteRateLimit(raw.rate_limit_info) } catch { /* 额度显示出错不能碰轮次 */ }
           }
           let ev
           try { ev = normalizeEvent(raw) } catch (error) { failCore(error); return }
@@ -572,4 +594,20 @@ function probeVersion(bin = 'claude') {
   })
 }
 
-module.exports = { runTurn, isClosedRunnerResult, isClosedRunnerError, buildEnv, normalizeEvent, probeVersion, supportsFlag, BASE_SKILL_ALLOWS }
+// 这一份 provider 跑的是不是本机登录的 Claude 订阅(额度事件只对它有意义)。env 里另指了端点 / 令牌的也不算。
+function isSubscription(provider = {}) {
+  const env = provider.env || {}
+  return !provider.baseUrl && !provider.apiKey && !env.ANTHROPIC_BASE_URL && !env.ANTHROPIC_AUTH_TOKEN && !env.ANTHROPIC_API_KEY
+}
+
+// 空闲整理(ABI 37,核心 idle_compact_plan 决定起不起、保留什么):对同一个会话跑一次 `/compact`。
+// ⚠ 参数必须与平时轮次**完全相同**(引擎用同一组启动参数):工具定义在提示最前面,换了工具集 / MCP / 系统提示附录,
+//   整段会话的缓存全部失效(旧 sbot 11-12 实测换工具集缓存写入 2.6 倍)。输入一律纯文本,不开跟进通道。
+// 停:引擎的 abort signal ⇒ 与普通轮同一条两段式收尾。结果:onEvent 收到 system/compact_boundary(preTokens)与 result。
+function compactSession(opts = {}) {
+  const { onSteerReady, onSteerLanded, steer, prompt, onDurableEvent, onTurnAccepted, keep, ...rest } = opts
+  if (!keep) return Promise.reject(new Error('compactSession: keep required'))
+  return runTurn({ ...rest, requireCloseProof: true, prompt: '/compact ' + keep })
+}
+
+module.exports = { runTurn, compactSession, isSubscription, isClosedRunnerResult, isClosedRunnerError, buildEnv, normalizeEvent, probeVersion, supportsFlag, BASE_SKILL_ALLOWS }

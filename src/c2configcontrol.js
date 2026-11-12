@@ -200,6 +200,13 @@ function createC2ConfigControl({ installation, getBindings, getHeld = () => new 
     if (!prepared || prepared.raw !== JSON.stringify(raw)) {
       throw new Error('Configuration was not validated against the current service')
     }
+    const bindings = getBindings()
+    // Stop every affected compactor before mutating any session or file.
+    let stopping = false
+    for (const chatId of prepared.resets) {
+      if (bindings.get(chatId)?.engine?.stopIdleCompact?.(chatId, '会话已重置')) stopping = true
+    }
+    if (stopping) throw new Error('正在停止会话整理，请稍后再保存设置')
     for (const chatId of prepared.resets) store.resetGroupSession(chatId)
     if (prepared.added.length) {
       for (const route of prepared.added) {

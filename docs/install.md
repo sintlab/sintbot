@@ -1,4 +1,4 @@
-# Install SintBot 1.4.17
+# Install SintBot 1.4.18
 
 English · [简体中文](./zh-CN/install.md)
 
@@ -10,19 +10,33 @@ You need a Mac, Node.js 22 or newer, and projects stored on that Mac. Install an
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-The installer checks the environment, installs `sintbot@1.4.17` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.17`. No sudo is needed.
+The installer checks the environment, installs `sintbot@1.4.18` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.18`. No sudo is needed.
 
 To preview, append `-s -- --dry-run`. To choose another location, set `SINTBOT_INSTALL_DIR` and adjust the executable paths below.
 
-## 2. Connect by scanning (recommended)
+## 2. Connect Feishu in the browser (recommended)
 
 Prerequisite: the Feishu app on your phone is signed in with an enterprise or team identity; a personal identity without an organization cannot scan, so create a team first (free). The app created by the scan belongs to the scanner's organization; approval depends on its policies.
+
+```bash
+"$HOME/.local/share/sintbot/bin/sintbot" start --ui
+```
+
+Without a configuration file this command does not fail; it opens the local setup page (`http://127.0.0.1:4600`, reachable only from this Mac). Enter a project name (default `sintbot`, created under `~/Projects` with a `README.md`) or pick an existing folder, choose the runner if both are installed, tick the basic option if you are not an organization administrator, then click Start. Scan the QR code on the page with Feishu and confirm on the phone. It then, in order: obtains the app credentials → runs the self-check → opens the contact range and visibility and publishes a version → creates a group and adds you → creates the project folder → writes `~/.sbot/config.json` → initializes the message journals, showing each result on the page. Once the scan is confirmed, the app exists in your organization; any later failed check stops before the folder and the configuration exist and the page offers Retry (it reuses the app already created, never a second one); if the group could not be created, the page asks you to create one by hand, add the bot, paste the group ID and continue.
+
+Before showing the QR code, setup reads the selected executor's live model catalog and displays its recommended model and thinking depth. These choices are saved explicitly for the new group. If the live list is unavailable, setup stops before creating an app; check the executor login and connection, then retry. After connecting, change the choices in the console or with `/model`. Existing group choices are preserved.
+
+When setup completes the service starts right away and the page switches to the console a few seconds later. Keep the terminal open. In the new group, send "Read the first line of the project README and reply with only that line", then compare it with the `README.md` in the project folder.
+
+### Terminal route
+
+The same flow is available without a browser; the flags map to the options on the page:
 
 ```bash
 "$HOME/.local/share/sintbot/bin/sintbot" connect
 ```
 
-In an interactive terminal it first asks for the project name (press Enter for the default `sintbot`), then prints the scan link and opens a local page with the QR code; scan it with Feishu and confirm on the phone. It then, in order: obtains the app credentials (and prints the app ID) → runs the self-check → opens the contact range and visibility and publishes a version → creates a group and adds you → creates the project folder `~/Projects/sintbot` (with a `README.md`) → writes `~/.sbot/config.json` → initializes the message journals. Every step reports its result. Once the scan is confirmed, the app exists in your organization; any later failed check or group creation stops before the folder and the configuration are created and prints the rerun command with `--app-id`.
+In an interactive terminal it first asks for the project name (press Enter for the default `sintbot`), then prints the scan link and opens a local page with the QR code; the steps are the same as above, results are printed in the terminal, and a failure prints the rerun command with `--app-id`.
 
 - The credentials are stored in clear text in `~/.sbot/config.json` (file 0600, directory 0700). To switch back to environment variables, change `appId` / `appSecret` to `"env:FEISHU_APP_ID"` / `"env:FEISHU_APP_SECRET"` and export both before every start.
 - `--basic`: for a non-administrator in a company organization. It does not request `application:application:patch` and skips the range and publish steps; ask an administrator to finish those two in the Open Platform.
@@ -31,15 +45,15 @@ In an interactive terminal it first asks for the project name (press Enter for t
 - `--workdir /absolute/path`: bind an existing directory instead of creating one; `--name` changes the default folder name; `--provider codex|claude` picks the runner (chosen automatically when only one is installed); `--no-open` prints the link without opening the page.
 - `connect` refuses to run when a Feishu configuration already exists or the service is running. The scan requests the card callbacks used by `/model`. If the card does not respond, check the callback subscription as in section 4.
 
-## 3. First start
+## 3. Everyday start
 
-`connect` has already initialized, so start directly:
+After setup, every start uses the same command; with the configuration in its default location it is the same one you used to connect:
 
 ```bash
-"$HOME/.local/share/sintbot/bin/sintbot" start --config "$HOME/.sbot/config.json" --ui
+"$HOME/.local/share/sintbot/bin/sintbot" start --ui
 ```
 
-This checks the configuration and runners, connects Feishu and opens the local console. Keep the terminal open. In the group, send "Read the first line of the project README and reply with only that line", then compare it with `~/Projects/sintbot/README.md`. A passing preflight does not prove Feishu authentication or delivery.
+This checks the configuration and runners, connects Feishu and opens the local console. Keep the terminal open. If you used `--config` or `--data-dir`, pass the same flags on every start. A passing preflight does not prove Feishu authentication or delivery.
 
 ## 4. Manual setup (alternative)
 
@@ -131,7 +145,7 @@ Any text message is a task. Replies arrive in a card that appears once the model
 | `/stop` | Stop the current task and cancel queued ones; the conversation is kept |
 | `/new` | Start a new conversation, forgetting the previous one (only while the group is idle) |
 | `/model` | Opens a tap-to-pick card: choose the backend, model and thinking depth, then confirm. You can also send `/model high`, `/model <model>` or `/model <backend>`. A model or depth change continues the conversation; a backend change starts a new one. Only while the group is idle |
-| `/hud` | Quota of the current model and usage of this conversation |
+| `/hud` | Quota of the current model and usage of this conversation; Claude groups also show the idle compaction line and the last compaction time |
 | `/issue text` | Log feedback; review and close it in the console overview |
 | `/help` | List commands, with this group's project and model |
 
@@ -140,6 +154,8 @@ Send a command as a message of its own; except for `/issue` and `/model`, do not
 Busy follow-ups default on for both Codex and Claude Code. Set `steer: false` to queue them instead; an explicit `steer` value overrides the legacy Codex setting. Claude Code must advertise the required input capabilities, otherwise messages stay queued. Reading can wait until a long-running tool finishes. The reply card follows confirmed reading, and continuation answers are combined into one final reply. If a turn returns a model error or no result, only that group is asked to resend; there is no automatic retry. If a group's last result cannot be confirmed, such as a reply whose delivery is unknown, only that group is paused and answers new messages with a short notice; other groups keep working. Nothing is replayed or retried.
 
 When the reply card moves below a confirmed follow-up, its existing text is shown immediately and subsequent output continues from that point. Moving the card does not restart the task.
+
+On Claude Code versions advertising compact, an idle group can compact its session after a normal turn once context reaches half the configured compaction window. New work stops compaction first. Compaction takes one concurrency slot and starts only when another slot remains free. A value of 0 leaves normal compaction to the executor and disables this idle step. Fresh quota events update usage immediately; while events remain fresh, supplemental quota requests are limited to once every 30 minutes. Idle compaction is experimental in this release: successful compaction and cache behavior still await real-model validation.
 
 ## 6. Console
 

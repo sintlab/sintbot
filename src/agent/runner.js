@@ -22,6 +22,14 @@ function runTurn(opts) {
   return claudeAgent.runTurn(opts)
 }
 
+// 空闲整理只有 Claude 路线有(无头 /compact);GPT ⇒ null = 不支持,引擎只在轮内压缩。
+function compactSession(opts) {
+  const route = routeBackend(opts && opts.provider && opts.provider.runner, opts && opts.codexApp, opts && opts.codexSteer, opts && opts.codexProjectDocFallback)
+  if (route !== 'claude') return null
+  const compact = Number(opts.autocompactTokens ?? opts.provider?.autocompactTokens) || 0
+  return claudeAgent.compactSession({ ...opts, autocompactTokens: compact > 0 ? Math.min(1_000_000, Math.max(100_000, Math.floor(compact))) : 0 })
+}
+
 const isClosedRunnerResult = value => [claudeAgent, codexAgent, codexApp].some(agent => agent.isClosedRunnerResult(value))
 const isClosedRunnerError = value => [claudeAgent, codexAgent, codexApp].some(agent => agent.isClosedRunnerError(value))
-module.exports = { runTurn, probeVersion: claudeAgent.probeVersion, isClosedRunnerResult, isClosedRunnerError }
+module.exports = { runTurn, compactSession, probeVersion: claudeAgent.probeVersion, isClosedRunnerResult, isClosedRunnerError }

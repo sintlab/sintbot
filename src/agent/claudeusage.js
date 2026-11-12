@@ -171,7 +171,56 @@ const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms))
 // 里所有人都查不到额度(而这接口恰恰偶发超时/限流);完全不压又让连点几下就把限流捅穿。
 // 10 秒 = 人再问一次就真的重试,机器连点仍被挡住。
 const RAW = { at: 0, data: null }
+
+// ── 额度事件(ABI 37)──────────────────────────────────────────────────────────
+// claude CLI 每次运行都在 stream 里吐一个 `rate_limit_event`(订阅登录时),runner 收到就喂进来;解析在核心
+// `usage_parse('claude','event')`。EVENT_TTL 内有事件 ⇒ 5 小时窗 / 7 天窗用它,不打接口;按模型分的周窗
+// 事件里没有的窗口仍取接口；事件新鲜时接口最多 SCOPED_TTL 请求一次，避免频繁探测触发限流。
+const EVENT_TTL_MS = 10 * 60_000
+const SCOPED_TTL_MS = 30 * 60_000
+const EVT = { at: 0, windows: null } // windows: { session?: {percent, resetsAt, at}, weekly_all?: {…} }
+const EVENT_KIND = { session: 'session', weekly: 'weekly_all' } // 核心的窗口名 → 接口 limits[] 的 kind
+function noteRateLimit(info, now = Date.now()) {
+  if (!info || typeof info !== 'object') return false
+  let parsed
+  try { parsed = require('./privatecore').usageParse('claude', 'event', null, info, now) } catch { return false }
+  if (!parsed.ok) return false
+  const windows = {}
+  for (const w of parsed.windows) {
+    const kind = EVENT_KIND[w.kind]
+    if (kind) windows[kind] = { percent: w.percentUsed, resetsAt: w.resetsAt ?? null, at: now }
+  }
+  if (!Object.keys(windows).length) return false
+  EVT.windows = { ...(EVT.windows || {}), ...windows } // 只有一个窗时别把另一个窗的旧值丢了
+  EVT.at = now
+  // A new event must be visible immediately without invalidating the endpoint cache.
+  CACHE.at = 0; CACHE.val = null
+  return true
+}
+const eventFresh = (now = Date.now()) => !!(EVT.at && now - EVT.at < EVENT_TTL_MS && EVT.windows)
+// 事件与接口数据合成 parseLimits 的形状;同一个窗两边都有 ⇒ 取更新的那份(人点了「刷新」时接口比事件新)。
+function mergeEvent(limits, dataAt, now = Date.now()) {
+  const out = Array.isArray(limits) ? limits.slice() : []
+  for (const [kind, w] of Object.entries(EVT.windows || {})) {
+    if (!w || now - w.at >= EVENT_TTL_MS) continue
+    const i = out.findIndex(l => l && l.kind === kind)
+    if (i >= 0 && dataAt > w.at) continue
+    const row = { kind, percent: w.percent, resetsAt: w.resetsAt, scopeName: '' }
+    if (i >= 0) out[i] = row; else out.push(row)
+  }
+  return out
+}
+function clearEvents() { EVT.at = 0; EVT.windows = null } // 单测用
+
 async function fetchRaw(token, { ttl = 60_000, now = Date.now, log = warn, curl = fetchCurl, sleep = sleepMs } = {}) {
+  const t = now()
+  if (eventFresh(t)) {
+    // 事件新鲜:接口只为补「按模型分的周窗」,最多 SCOPED_TTL 打一次(成败都算一次 —— 限流时不连环重试)。
+    if ((RAW.at && t - RAW.at < SCOPED_TTL_MS) || !token) return RAW.data
+    const data = await curl(token, { log }) // 不重试:事件已经给了主要的两个窗
+    RAW.at = now(); RAW.data = data
+    return data
+  }
   if (RAW.at && now() - RAW.at < (RAW.data ? ttl : FAIL_TTL_MS)) return RAW.data
   // 只走 curl(纪律 1);失败隔一下再问一次 —— 超时与短限流重试一次往往就通,再不通就认了。
   let data = await curl(token, { log })
@@ -371,9 +420,9 @@ async function usageLine({ ttl = TTL, now = Date.now, readToken = readAccessToke
   if (CACHE.at && now() - CACHE.at < (CACHE.val ? ttl : FAIL_TTL_MS)) return CACHE.val
   let val = null
   const token = readToken()
-  if (token) {
-    const data = await fetchRaw(token, { ttl, now, log: io.log, curl: io.curl, sleep: io.sleep })
-    val = formatClaudeUsage(parseLimits(data), now())
+  if (token || eventFresh(now())) { // 令牌读不到(钥匙串偶发)但有新鲜的额度事件,照样出数
+    const data = token ? await fetchRaw(token, { ttl, now, log: io.log, curl: io.curl, sleep: io.sleep }) : null
+    val = formatClaudeUsage(mergeEvent(parseLimits(data), RAW.at, now()), now())
   } else {
     try { val = await fallback({ now, ...(home ? { home } : {}), ...(bin ? { bin } : {}), ...io }) } catch { val = null }
   }
@@ -382,4 +431,4 @@ async function usageLine({ ttl = TTL, now = Date.now, readToken = readAccessToke
 }
 function clearCache() { CACHE.at = 0; CACHE.val = null; RAW.at = 0; RAW.data = null }
 
-module.exports = { usageLine, fetchRaw, clearCache, parseCredentials, parseLimits, formatClaudeUsage, readAccessToken, fetchCurl, fetchNative, readCurlResult, fmtDurDecimal, cachedUsageFallback, readCachedUtilization, readClaudeJson, supportsUsageFlag, resetFallback, settleFallback, QUOTA_SEP, TIMEOUT_MS, FAIL_TTL_MS, RETRY_WAIT_MS, FALLBACK_ARGS, FALLBACK_FLAGS, FALLBACK_TIMEOUT_MS, FALLBACK_KILL_GRACE_MS, FALLBACK_INTERVAL_MS, FALLBACK_FLAG_PROBE_MS }
+module.exports = { usageLine, fetchRaw, clearCache, clearEvents, noteRateLimit, eventFresh, mergeEvent, parseCredentials, parseLimits, formatClaudeUsage, readAccessToken, fetchCurl, fetchNative, readCurlResult, fmtDurDecimal, cachedUsageFallback, readCachedUtilization, readClaudeJson, supportsUsageFlag, resetFallback, settleFallback, QUOTA_SEP, TIMEOUT_MS, FAIL_TTL_MS, RETRY_WAIT_MS, FALLBACK_ARGS, FALLBACK_FLAGS, FALLBACK_TIMEOUT_MS, FALLBACK_KILL_GRACE_MS, FALLBACK_INTERVAL_MS, FALLBACK_FLAG_PROBE_MS }

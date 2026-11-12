@@ -1,9 +1,9 @@
-// ABI v36 adapter for the private binary decision core. Manifest assembly still stays in JS.
+// ABI v37 adapter for the private binary decision core. Manifest assembly still stays in JS.
 const fs = require('node:fs')
 const path = require('node:path')
 const { createHash } = require('node:crypto')
 
-const EXPECTED_SHA256 = '6d9dfe5ced41446a68d3dc8a6f083803b28fb3e5789bc24f96996b4533374bcf'
+const EXPECTED_SHA256 = '9705ac11c9ddcd47c9532471603e5c0c21d189ac89e353b33fcea55de91feb51'
 let bytes
 try {
   bytes = fs.readFileSync(path.join(__dirname, 'privatecore.wasm'))
@@ -26,7 +26,7 @@ try {
 } catch (cause) {
   throw new Error('SintBot binary core cannot start on this runtime', { cause })
 }
-if (core.abi_version() !== 36) throw new Error('SintBot binary core ABI mismatch')
+if (core.abi_version() !== 37) throw new Error('SintBot binary core ABI mismatch')
 const encoder = new TextEncoder()
 const decoder = new TextDecoder('utf-8', { fatal: true })
 
@@ -823,6 +823,27 @@ function usageParse(provider, source, status, body, now = Date.now()) {
   return value
 }
 
+// ABI 37 (docs/ABI37_CONTRACTS.md in the core): idle compaction rules. The host
+// only spawns, stops and logs; start/skip and settle outcomes are decided here.
+function idleCompactPlan(input) {
+  const value = coreJson('idle_compact_plan', input, 'plan idle compaction')
+  if (!isObject(value) || typeof value.start !== 'boolean' || !Number.isFinite(value.at) ||
+      typeof value.reason !== 'string' || typeof value.keep !== 'string' || !Number.isFinite(value.maxMs)) {
+    throw new Error('SintBot binary core returned an invalid idle compaction plan')
+  }
+  return value
+}
+
+function idleCompactSettle(input) {
+  const value = coreJson('idle_compact_settle', input, 'settle idle compaction')
+  if (!isObject(value) || !['compacted', 'stopped', 'failed'].includes(value.status) ||
+      !Number.isFinite(value.fails) || typeof value.notice !== 'string' ||
+      (value.ctx !== null && !Number.isFinite(value.ctx)) || (value.restUntil !== null && !Number.isFinite(value.restUntil))) {
+    throw new Error('SintBot binary core returned an invalid idle compaction result')
+  }
+  return value
+}
+
 function envConflicts(input) {
   const value = coreJson('env_conflicts', input, 'check environment conflicts')
   if (!isObject(value) || !Array.isArray(value.warnings) ||
@@ -859,7 +880,7 @@ function followupCall(name, value) {
 function followupEnabled(group, runner) { return followupCall('followup_policy', { group, runner }) }
 function claudeFollowupStep(state, event) { return followupCall('claude_followup_step', { state, event }) }
 
-const entries = { followupEnabled, claudeFollowupStep, classifyError, routeBackend, sandboxTier, appErrorOverride, appNormalizeItem, appStreamTail, appNoticeAction, appDeltaNext, appLandedAction, appCompletionAction, appCompletionNoticeAction, manifestFeatures, manifestHeader, manifestContext, manifestSkills, manifestStyleBoard, manifestImagenAsset, manifestRuntime, manifestPolicy, systemAppendix, codexEffortRejection, wecomGatePrompt, imagenPrompt, turnPrompt, compactEvent, engineQueueStep, engineSlotsStep, engineTurnStep, engineSessionStep, engineHandoffStep, engineIntakeStep, engineLifecycleStep, engineTerminalStep, engineSteerStep, engineRecoveryStep, engineFailoverStep, parseResetFields, chooseResetEpoch, codexBuildPrompt, codexBuildArgs, appUsageFromTotal, settleUsage, appBuildRequest, claudeBaseSkillAllows, claudeBuildArgs, claudePluginAllowRules, claudeNormalizeEvent, codexNormalizeEvent, codexParseError, connectManifest, connectPlan, connectConfig, qrMatrix, usageParse, envConflicts }
+const entries = { followupEnabled, claudeFollowupStep, classifyError, routeBackend, sandboxTier, appErrorOverride, appNormalizeItem, appStreamTail, appNoticeAction, appDeltaNext, appLandedAction, appCompletionAction, appCompletionNoticeAction, manifestFeatures, manifestHeader, manifestContext, manifestSkills, manifestStyleBoard, manifestImagenAsset, manifestRuntime, manifestPolicy, systemAppendix, codexEffortRejection, wecomGatePrompt, imagenPrompt, turnPrompt, compactEvent, engineQueueStep, engineSlotsStep, engineTurnStep, engineSessionStep, engineHandoffStep, engineIntakeStep, engineLifecycleStep, engineTerminalStep, engineSteerStep, engineRecoveryStep, engineFailoverStep, parseResetFields, chooseResetEpoch, codexBuildPrompt, codexBuildArgs, appUsageFromTotal, settleUsage, appBuildRequest, claudeBaseSkillAllows, claudeBuildArgs, claudePluginAllowRules, claudeNormalizeEvent, codexNormalizeEvent, codexParseError, connectManifest, connectPlan, connectConfig, qrMatrix, usageParse, envConflicts, idleCompactPlan, idleCompactSettle }
 for (const name of Object.keys(entries)) entries[name] = guarded(entries[name])
 
 module.exports = { ...entries, engineStep, resetBinaryCore, HUMAN_BY_KIND: HUMAN }

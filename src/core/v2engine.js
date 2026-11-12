@@ -9,12 +9,13 @@ const { isDeepStrictEqual } = require('node:util')
 const { redact } = require('./redact')
 const { fmtStamp, normalizeTz } = require('./time')
 const { settleUsage, manifestPolicy, manifestHeader, manifestContext, manifestFeatures, manifestSkills,
-  followupEnabled, systemAppendix, turnPrompt, engineTerminalStep, engineQueueStep } = require('../agent/privatecore')
+  followupEnabled, systemAppendix, turnPrompt, engineTerminalStep, engineQueueStep,
+  idleCompactPlan, idleCompactSettle, compactEvent, classifyError } = require('../agent/privatecore')
 const { taskId } = require('./enginecheckpoint')
 const { prepareCardTerminalPath } = require('./c2cardterminalpath')
 const { terminalReplyText } = require('./c2terminaleffectbridge')
 const { createC2TurnProjection } = require('./c2turnprojection')
-const { prepareC2RunnerInput } = require('./c2runnerinput')
+const { prepareC2RunnerInput, prepareC2CompactionInput } = require('./c2runnerinput')
 const { continueC2Successor } = require('./c2successorbridge')
 const { rejectC2Input } = require('./c2inputrejection')
 const progress = require('./turnprogress')
@@ -119,7 +120,8 @@ const T = {
   quotaShow: (name, value) => `${name} 额度：${value}`,
   quotaMiss: name => `${name} 额度暂时没查到，稍后再试`,
   quotaNone: name => `模型「${name}」不支持查额度`,
-  sessionLine: (turns, ctx, inTotal) => `【对话】第 ${turns} 轮 · ${ctx ? `上下文约 ${fmtWan(ctx)} token` : `累计处理约 ${fmtWan(inTotal)} token`}`,
+  sessionLine: (turns, ctx, inTotal, { idleAt = 0, lastAt = '' } = {}) => `【对话】第 ${turns} 轮 · ${ctx ? `上下文约 ${fmtWan(ctx)} token` : `累计处理约 ${fmtWan(inTotal)} token`}`
+    + (idleAt > 0 ? `（空闲时过 ${fmtWan(idleAt)} 先整理${lastAt ? ` · 上次整理 ${lastAt}` : ''}）` : ''),
   noSession: '【对话】本段对话还没开始',
   issueUsage: '用法：/issue 后面跟一句话，说清哪里不对劲\n例：/issue 刚才发的图它没理我',
   issueLogged: id => `📝 已记下 #${id}`,
@@ -297,7 +299,8 @@ class Engine {
       durableV2SwitchProvider = null, durableV2SetBrain = null, durableV2ModelCatalog = null,
       durableV2ModelCard = null,
       durableV2UsageProbe = null, durableV2Issues = null,
-      durableV2Version = '', durableV2DataDir = '', durableV2ConsoleEnabled = false } = options
+      durableV2Version = '', durableV2DataDir = '', durableV2ConsoleEnabled = false,
+      durableV2CompactSession = null, durableV2CapacitySnapshot = null } = options
     const sync = f => typeof f === 'function' && f.constructor?.name !== 'AsyncFunction'
     if (!cfg || !cfg.agent || !cfg.groups || !cfg.providers ||
         options.receiptJournal || options.unifiedStepHost ||
@@ -326,7 +329,9 @@ class Engine {
         durableV2ModelCard !== null && !sync(durableV2ModelCard) ||
         durableV2UsageProbe !== null && typeof durableV2UsageProbe !== 'function' ||
         durableV2Issues !== null && typeof durableV2Issues?.add !== 'function' ||
-        typeof durableV2Version !== 'string') {
+        typeof durableV2Version !== 'string' ||
+        durableV2CompactSession !== null && typeof durableV2CompactSession !== 'function' ||
+        durableV2CapacitySnapshot !== null && !sync(durableV2CapacitySnapshot)) {
       throw new TypeError('dedicated Engine requires complete durable v2 authority')
     }
     Object.assign(this, { cfg, store, log, durableV2Runtime, durableV2Payloads,
@@ -335,7 +340,7 @@ class Engine {
       durableV2StreamFrames, durableV2AcquireCapacity, durableV2SealCapacity,
       durableV2SwitchProvider, durableV2SetBrain, durableV2ModelCatalog, durableV2ModelCard,
       durableV2UsageProbe, durableV2Issues, durableV2Version,
-      durableV2DataDir, durableV2ConsoleEnabled })
+      durableV2DataDir, durableV2ConsoleEnabled, durableV2CompactSession, durableV2CapacitySnapshot })
     this.projectMemory = options.projectMemory || null
     this.repoInfo = options.repoInfo || null
     this.activity = options.activity || null
@@ -351,9 +356,11 @@ class Engine {
 
   shutdown() {
     this.durableV2Runtime.close()
+    this._closing = true // 关停中不再起空闲整理
     let aborted = 0
     for (const rt of this.rts.values()) {
       rt.v2AdmissionController?.abort()
+      this._stopIdleCompact(rt, '关停', { force: true }) // 整理一并停掉(不等压缩边界),不算被打断的轮次(它没有收据)
       if (rt.v2Controller) {
         try { rt.v2Controller.abort() } catch {}
         aborted++
@@ -372,14 +379,16 @@ async drainDurableV2(timeoutMs = 12_000) {
     if (active.some(rt => rt.v2NormalRouteFailure)) return false
     const runs = active.filter(rt => rt.v2RunnerStopPromise || rt.v2Controller)
     const routes = active.filter(rt => rt.v2NormalRouteActive)
-    if (!runs.length && !routes.length) return true
+    const compacting = active.filter(rt => rt.v2Compacting?.exited)
+    if (!runs.length && !routes.length && !compacting.length) return true
     if (runs.some(rt => !rt.v2RunnerStopPromise) ||
         routes.some(rt => !rt.v2NormalRoutePromise)) return false
     let timer
     try {
       const results = await Promise.race([
         Promise.all([...runs.map(rt => rt.v2RunnerStopPromise),
-          ...routes.map(rt => rt.v2NormalRoutePromise)]),
+          ...routes.map(rt => rt.v2NormalRoutePromise),
+          ...compacting.map(rt => rt.v2Compacting.exited.then(closed => closed === true, () => false))]),
         new Promise(resolve => { timer = setTimeout(() => resolve(null), timeoutMs) }),
       ])
       return Array.isArray(results) && results.every(value => value === true)
@@ -546,6 +555,9 @@ async _durableV2Command(msg, cmd, rest) {
       let locked = false
       try { locked = this.durableV2AssertWriterLock() === true } catch {}
       if (!locked) throw new Error('C2 v2 /new lost single-writer lock')
+      const stopping = this._stopIdleCompact(this.rts.get(msg.chatId), '开新会话')
+      if (stopping && await stopping !== true) return reject('new-busy', T.newBusy)
+      if (this.durableV2AssertWriterLock() !== true || this._durableV2GroupBusy(msg.chatId)) return reject('new-busy', T.newBusy)
       this.store.resetSessionAndStats(msg.chatId)
       this.log(`/new: ${msg.chatId} (by ${msg.senderName || 'unknown'})`)
       return reject('new-session', T.freshSession)
@@ -561,8 +573,12 @@ async _durableV2Command(msg, cmd, rest) {
       }
       const stats = this.store.getSessionStats(msg.chatId)
       const session = this.store.getSession(msg.chatId)
+      const hudRt = this.rts.get(msg.chatId)
+      const idleAt = provider && provider.runner === 'claude' && this._idleCompactCapability(hudRt, name) === true
+        ? idleCompactPlan({ threshold: this._idleCompactThreshold(provider), now: 0 }).at : 0
       lines.push(stats?.sessionId && stats.sessionId === session
-        ? T.sessionLine(stats.turns, stats.ctx || 0, stats.in || 0) : T.noSession)
+        ? T.sessionLine(stats.turns, stats.ctx || 0, stats.in || 0,
+          { idleAt, lastAt: stats.compactedAt ? fmtStamp(stats.compactedAt, this.tz).slice(-5) : '' }) : T.noSession)
       return reject('hud', lines.join('\n'))
     }
     if (cmd === '/issue') {
@@ -790,6 +806,9 @@ async _durableV2ApplyModel(chatId, group, pw, { sender = 'unknown', said = '', s
     const current = brainLabel(name, this._brain(group, name, provider))
     if (!switching && model === undefined && effort === undefined) return { kind: 'same', text: T.modelSame(current), label: current }
     if (this._durableV2GroupBusy(chatId)) return reject('busy', T.modelBusy)
+    const stopping = this._stopIdleCompact(this.rts.get(chatId), '会话已重置')
+    if (stopping && await stopping !== true) return reject('busy', T.modelBusy)
+    if (this.durableV2AssertWriterLock() !== true || this._durableV2GroupBusy(chatId)) return reject('busy', T.modelBusy)
     let r
     try {
       if (this.durableV2SetBrain) {
@@ -1002,6 +1021,13 @@ async runDurableV2Message(msg, platform) {
       let release = null
       let failed = false
       try {
+        // 空闲整理不占群锁:收据已登记,起轮前先停掉整理并等它退出(同一个会话文件不能两个进程同时写)。
+        // 等待期间按「等并发名额」对外:后到的消息走 waitingForCapacity 那一支排队,而不是撞上已关闭的忙时路由。
+        if (rt.v2Compacting && !(await this._awaitIdleCompactStop(rt))) {
+          this._observeActivity('unknown', { chatId: msg.chatId })
+          return { receiptId: accepted.receiptId, status: 'interruptedBeforeDispatch',
+            queued: true, ingressClosed: true }
+        }
         let receiptId = accepted.receiptId
         if (this.durableV2AcquireCapacity) {
           const controller = new AbortController()
@@ -1049,11 +1075,15 @@ async runDurableV2Message(msg, platform) {
       rt.v2NormalRouteFailure = true
       return false
     })
+    let outcome = null
     try {
-      return await execution
+      outcome = await execution
+      return outcome
     } finally {
       rt.v2NormalRouteActive = false
       rt.v2NormalRoutePromise = null
+      // 群已空闲、槽已还:看这一轮要不要接一次空闲整理(同步判定,起跑后才异步)。
+      this._maybeIdleCompact(rt, outcome?.status)
     }
   }
 
@@ -2074,6 +2104,9 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
         onEvent: event => {
           if (event.type === 'system' && event.subtype === 'context')
             this._observeActivity('observe', { chatId, receiptId, generation, event })
+          // CLI 在 init 里自报的可用命令:含 compact 才能空闲整理(按这一家 provider 记)。
+          if (event.type === 'system' && event.subtype === 'init' && Array.isArray(event.slashCommands))
+            rt.v2CanCompact = { provider: this._resolveProvider(chatId, job.group).name, ok: event.slashCommands.includes('compact') }
         },
         onTurnAccepted: value => {
           const ack = capability.onTurnAccepted(value)
@@ -2084,6 +2117,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
         onSpawnFailed: value => capability.onSpawnFailed(value),
         onSteerReady, onSteerLanded,
         log: this.log })
+      rt.v2Compacted = false // 「进度可能已折叠」只带一轮
       let started
       try { started = this.durableV2StartTurn(input) }
       catch (error) { started = Promise.reject(error) }
@@ -2506,10 +2540,176 @@ classifyDurableV2UnresolvedTurn({ chatId, receiptId, turnToken, effectId,
     // Reinject current supported context each turn. No legacy feature menu,
     // external-message commands or v1 manifest refresh scheduler is included.
     return turnPrompt({ lines: batch?.length > 1 ? batch.map(line) : [line(msg)],
-      cancelled: null, compacted: false, manifest, updated: false })
+      cancelled: null, compacted: rt?.v2Compacted === true, manifest, updated: false })
   }
 
   handleMessage() { throw new Error('legacy Engine execution path is not enabled') }
+
+  // ── 空闲整理(ABI 37:核心 idle_compact_plan / idle_compact_settle 定规则,这里只起停进程)──────────
+  // 一轮正常收尾、群里没人在等时,对同一个 Claude 会话跑一次无头 /compact,把压缩从成员等着的轮次挪到间隙。
+  // 没有收据的运行不进持久日志:只占一个并发槽、写 store 的会话统计、记守护进程日志。不占群锁(rt.v2Compacting
+  // 只是句柄):新消息照常走空闲路径,起轮前先 _stopIdleCompact 并等进程退出;/new、换型号、关停同样先停。
+  _idleCompactThreshold(provider) {
+    const raw = Number(provider?.autocompactTokens) || 0
+    return raw > 0 ? Math.min(1_000_000, Math.max(100_000, Math.floor(raw))) : 0
+  }
+
+  _idleCompactCapability(rt, name) {
+    return rt?.v2CanCompact && rt.v2CanCompact.provider === name ? rt.v2CanCompact.ok : null
+  }
+
+  _maybeIdleCompact(rt, status) {
+    if (!this.durableV2CompactSession || !this.durableV2CapacitySnapshot || !rt) return
+    try {
+      const chatId = rt.chatId
+      const group = this.cfg.groups?.[chatId]
+      if (!group) return
+      const { name, provider } = this._resolveProvider(chatId, group)
+      if (!provider || provider.runner !== 'claude') return
+      const sid = this.store.getSession(chatId) || null
+      const stats = this.store.getSessionStats(chatId) || null
+      const cap = this.durableV2CapacitySnapshot()
+      const freeSlots = cap && !cap.closed ? Math.max(0, cap.maxConcurrent - cap.active - cap.waiting) : 0
+      const outcome = status === 'answered' ? 'ok' : status === 'silent' ? 'no-reply' : String(status || '')
+      const plan = idleCompactPlan({ threshold: this._idleCompactThreshold(provider), ctx: stats?.ctx || 0,
+        canCompact: this._idleCompactCapability(rt, name), outcome,
+        busy: this._durableV2GroupBusy(chatId) || !!rt.v2Compacting,
+        queued: rt.v2QueueReceiptIds?.length || 0,
+        paused: group.paused === true, closing: this._closing === true,
+        sessionMatch: !!(sid && stats && stats.sessionId === sid), freeSlots,
+        restUntil: rt.v2CompactRest && rt.v2CompactRest.sid === sid ? rt.v2CompactRest.until : null,
+        now: Date.now() })
+      if (!plan.start) {
+        if (plan.at > 0 && (stats?.ctx || 0) >= plan.at) this.log(`group ${chatId}: 空闲整理未起 — ${plan.reason}`)
+        return
+      }
+      this._startIdleCompact(rt, { group, name, provider, sid, ctx: stats.ctx, plan })
+    } catch (error) {
+      this.log(`group ${rt.chatId}: 空闲整理判定出错(忽略): ${error.message}`)
+    }
+  }
+
+  _startIdleCompact(rt, { group, name, provider, sid, ctx, plan }) {
+    const chatId = rt.chatId
+    const brain = this._brain(group, name, provider) // 可能抛:要在挂句柄之前
+    const controller = new AbortController()
+    const rec = { controller, sid, provider: name, boundary: null, startedAt: Date.now(), why: '', lateKill: null, exited: null, skip: false, closed: false }
+    rt.v2Compacting = rec
+    this.log(`group ${chatId}: 空闲整理开始 — 上下文约 ${fmtWan(ctx)},过了整理线 ${fmtWan(plan.at)}`)
+    const cap = setTimeout(() => { if (!rec.why) rec.why = '超时'; controller.abort() }, plan.maxMs)
+    cap.unref?.()
+    rec.exited = (async () => {
+      let release = null, result = null, error = null, spawned = false, verified = false
+      try {
+        if (this.durableV2AcquireCapacity) release = await this.durableV2AcquireCapacity({ signal: controller.signal })
+        if (controller.signal.aborted) {
+          const stopped = new Error('idle compaction stopped before start'); stopped.code = 'IDLE_COMPACT_STOPPED'; throw stopped
+        }
+        // ⚠ 与平时轮次同一组启动参数(工具、MCP、系统提示附录、型号、深度、env)—— 缓存才命中。
+        const input = prepareC2CompactionInput({ appendSystemPrompt: SYSTEM_APPENDIX, chatId, group, provider,
+          config: this.cfg, brain: { model: brain.model, effort: brain.effort }, sessionId: sid,
+          signal: controller.signal, extraEnv: this.baseSkillEnv(chatId), keep: plan.keep, log: this.log,
+          onEvent: event => {
+            if (event.type !== 'system') return
+            if (event.subtype === 'init' && Array.isArray(event.slashCommands)) {
+              rt.v2CanCompact = { provider: name, ok: event.slashCommands.includes('compact') }
+            } else if (compactEvent(event.subtype || '')) {
+              rec.boundary = { pre: event.preTokens || ctx, post: event.postTokens || 0 }
+            }
+          } })
+        const started = this.durableV2CompactSession(input)
+        if (started === null) {
+          rt.v2CanCompact = { provider: name, ok: false }
+          rec.skip = true
+          this.log(`group ${chatId}: 空闲整理 — 这个后端不支持,只在轮内压缩`)
+          return true
+        }
+        spawned = true
+        result = await started
+        verified = this.durableV2VerifyRunnerClosed({ result }) === true
+      } catch (e) {
+        error = e
+        verified = !spawned || this.durableV2VerifyRunnerClosed({ error: e }) === true
+      } finally {
+        clearTimeout(cap)
+        if (rec.lateKill) clearTimeout(rec.lateKill)
+        rec.closed = !spawned || verified
+        if (rec.closed) {
+          try { this._settleIdleCompact(rt, rec, result, error) } catch (e) { this.log(`group ${chatId}: 空闲整理收尾出错(忽略): ${e.message}`) }
+          if (release) { try { release() } catch (e) { this.log(`group ${chatId}: model permit release failed: ${e.message}`) } }
+          if (rt.v2Compacting === rec) rt.v2Compacting = null
+        } else {
+          // Keep the handle as well as the permit: drain, recovery and the next
+          // session writer must all see the same unresolved close evidence.
+          rec.closeError = error || Object.assign(new Error('Compaction close remains unproven'), { code: 'IDLE_COMPACT_CLOSE_UNPROVEN' })
+          this.log(`group ${chatId}: model permit kept until restart; compaction close unproven`)
+          try { this.durableV2Runtime.close() } catch {}
+        }
+      }
+      return rec.closed
+    })()
+  }
+
+  _settleIdleCompact(rt, rec, result, error) {
+    if (rec.skip) return
+    const chatId = rt.chatId
+    const res = result?.result || null
+    const now = Date.now()
+    const live = this.store.getSession(chatId) === rec.sid
+    const failureText = error ? String(error.message || error) : res?.isError ? String(res.text || res.subtype || '') : ''
+    const quota = res?.quota || (failureText ? classifyError(failureText)?.quota : null)
+    const out = idleCompactSettle({ boundary: rec.boundary, resultError: !!res?.isError, quota: !!quota,
+      error: failureText,
+      aborted: rec.controller.signal.aborted, why: rec.why,
+      fails: rt.v2CompactFails && rt.v2CompactFails.sid === rec.sid ? rt.v2CompactFails.n : 0,
+      resetAt: null, elapsedMs: now - rec.startedAt, now, live })
+    if (out.status === 'compacted' && live) {
+      rt.v2Compacted = true // 下一轮带「进度可能已折叠为摘要」
+      let locked = false
+      try { locked = this.durableV2AssertWriterLock() === true } catch {}
+      const stats = this.store.getSessionStats(chatId)
+      // 群忙(新消息刚停掉整理)时不碰统计:那一轮结算会写新值。
+      if (locked && stats && stats.sessionId === rec.sid && !this._durableV2GroupBusy(chatId)) {
+        const next = { ...stats, compactedAt: now }
+        if (out.ctx) next.ctx = out.ctx; else delete next.ctx
+        this.store.putSessionStats(chatId, next)
+      }
+    }
+    rt.v2CompactFails = { sid: rec.sid, n: out.fails }
+    rt.v2CompactRest = out.restUntil ? { sid: rec.sid, until: out.restUntil } : null
+    this.log(`group ${chatId}: ${out.notice}`)
+  }
+
+  // 同步发出停止信号,返回「进程退干净了」的 Promise(没有在跑 ⇒ null)。已收到压缩边界 ⇒ 不杀(压完了只差落盘),
+  // 兜底 10 s 再杀;否则立刻 abort(与普通轮同一条两段式收尾)。
+  _stopIdleCompact(rt, why, { force = false } = {}) {
+    const rec = rt?.v2Compacting
+    if (!rec) return null
+    if (!rec.why) rec.why = why
+    if (rec.boundary && !force) {
+      if (!rec.lateKill) { rec.lateKill = setTimeout(() => { try { rec.controller.abort() } catch {} }, 10_000); rec.lateKill.unref?.() }
+    } else { try { rec.controller.abort() } catch {} }
+    return rec.exited
+  }
+
+  // 控制台 / 配置写入是同步接口:只能发信号,所以不等边界、立刻杀,收尾认不到会话就不记统计。
+  stopIdleCompact(chatId, why = '会话已重置') { return this._stopIdleCompact(this.rts.get(chatId), why, { force: true }) }
+
+  // 起轮前等整理退出。等待期间挂「等并发名额」的标志与控制器,让这期间到的消息按排队处理;
+  // 关停会中止这个控制器 ⇒ 返回 false,调用方按「派发前被打断」收场。
+  async _awaitIdleCompactStop(rt) {
+    const stopping = this._stopIdleCompact(rt, '新消息')
+    if (!stopping) return true
+    const controller = new AbortController()
+    rt.v2AdmissionController = controller
+    rt.v2AdmissionPending = true
+    let closed = false
+    try { closed = await stopping === true } finally {
+      if (rt.v2AdmissionController === controller) rt.v2AdmissionController = null
+    }
+    if (!closed || controller.signal.aborted) { rt.v2AdmissionPending = false; return false }
+    return true
+  }
 
   stop(chatId) {
     const rt = this.rts.get(chatId)

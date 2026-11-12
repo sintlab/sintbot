@@ -8,9 +8,11 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { spawnSync } = require('node:child_process')
-const { runConnect } = require('../src/connect')
+const { runConnect, applyInitialGroupDefaults } = require('../src/connect')
 const core = require('../src/agent/privatecore')
 const c2install = require('../src/c2install')
+
+const fixtureCatalog = (provider = 'codex') => ({ ok: true, source: 'live', models: [{ id: provider === 'codex' ? 'gpt-fixture-live' : 'claude-fixture-live', name: 'Fixture Live', efforts: ['low', 'medium', 'high'], defEffort: 'low' }], efforts: ['low', 'medium', 'high'], recommended: { model: provider === 'codex' ? 'gpt-fixture-live' : 'claude-fixture-live', effort: 'low' } })
 
 const APP = { client_id: 'cli_a1b2c3d4e5', client_secret: 'not-a-real-secret', user_info: { open_id: 'ou_admin0001' } }
 const larkError = (code, msg, status = 400) => Object.assign(new Error(`Request failed with status code ${status}`),
@@ -72,6 +74,7 @@ function harness(t, { client = fakeClient(), registerApp, runners = { codex: tru
     signal: name => { for (const fn of handlers.get(name) || []) fn() },
   }
   h.deps = {
+    modelCatalog: async provider => fixtureCatalog(provider),
     registerApp: registerApp || (async options => {
       h.scans++
       options.onQRCodeReady({ url: 'https://accounts.feishu.cn/oauth/v1/app/registration?user_code=TEST&from=sdk', expireIn: 600 })
@@ -97,9 +100,13 @@ function harness(t, { client = fakeClient(), registerApp, runners = { codex: tru
 
 const tree = dir => fs.readdirSync(dir, { recursive: true }).sort()
 const writeConfig = (h, raw) => { fs.mkdirSync(path.dirname(h.configPath), { recursive: true }); fs.writeFileSync(h.configPath, JSON.stringify(raw)) }
-const expectedConfig = (h, chatId = 'oc_connect0001') => core.connectConfig({ appId: APP.client_id, appSecret: APP.client_secret,
-  botOpenId: 'ou_bot0001', adminOpenId: APP.user_info.open_id, chatId, workdir: h.workdir, home: h.home,
-  provider: 'codex', runners: { codex: true, claude: false } })
+const expectedConfig = (h, chatId = 'oc_connect0001') => {
+  const built = core.connectConfig({ appId: APP.client_id, appSecret: APP.client_secret,
+    botOpenId: 'ou_bot0001', adminOpenId: APP.user_info.open_id, chatId, workdir: h.workdir, home: h.home,
+    provider: 'codex', runners: { codex: true, claude: false } })
+  if (chatId) built.config.groups[chatId].providerPrefs = { codex: { model: 'gpt-fixture-live', effort: 'low' } }
+  return built
+}
 const nothingWritten = h => {
   assert.equal(fs.existsSync(h.configPath), false)
   assert.equal(fs.existsSync(path.join(h.home, 'Projects')), false)
@@ -350,4 +357,110 @@ test('a custom configuration location preserves existing parent directory permis
   assert.equal(fs.statSync(configPath).mode & 0o777, 0o600)
   assert.match(h.out.stderr, new RegExp(`配置已写入 ${escapeRe(configPath)}`))
   assert.doesNotMatch(h.out.stderr, /\.sbot\/config\.json/)
+})
+
+
+test('cancel while the welcome message is pending never writes a configuration or project', async t => {
+  const h = harness(t)
+  h.client.im.message.create = async () => { h.signal('SIGINT'); return { code: 0, data: { message_id: 'om_cancel' } } }
+  const groups = []
+  h.deps.onGroupReady = value => groups.push(value)
+  assert.equal(await runConnect([], h.deps), 130)
+  nothingWritten(h)
+  assert.deepEqual(groups, [{ appId: APP.client_id, chatId: 'oc_connect0001' }])
+})
+
+test('a configuration written during the scan is preserved instead of overwritten', async t => {
+  const h = harness(t)
+  const foreign = { feishu: { appId: 'cli_other00001' }, groups: { oc_existing: { workdir: '/tmp/existing' } } }
+  h.client.im.message.create = async () => {
+    fs.mkdirSync(path.dirname(h.configPath), { recursive: true })
+    fs.writeFileSync(h.configPath, JSON.stringify(foreign))
+    return { code: 0, data: { message_id: 'om_1' } }
+  }
+  assert.equal(await runConnect([], h.deps), 1)
+  assert.deepEqual(JSON.parse(fs.readFileSync(h.configPath, 'utf8')), foreign)
+  assert.equal(fs.existsSync(h.workdir), false)
+  assert.equal(h.inits.length, 0)
+})
+
+test('a README write failure leaves no bound configuration, so the same app and group can resume', async t => {
+  const h = harness(t)
+  let blockReadme = true
+  h.deps.fs = Object.create(fs)
+  h.deps.fs.writeFileSync = (file, ...args) => {
+    if (blockReadme && path.basename(file) === 'README.md') throw new Error('EACCES README')
+    return fs.writeFileSync(file, ...args)
+  }
+  assert.equal(await runConnect([], h.deps), 1)
+  assert.equal(fs.existsSync(h.configPath), false)
+  assert.equal(fs.existsSync(h.workdir), false)
+  blockReadme = false
+  const previous = h.client.calls.filter(c => c.name === 'im.chat.create').length
+  assert.equal(await runConnect(['--app-id', APP.client_id, '--chat', 'oc_connect0001'], h.deps), 0, h.out.stderr)
+  assert.equal(h.client.calls.filter(c => c.name === 'im.chat.create').length, previous)
+  assert.ok(fs.existsSync(h.configPath))
+})
+
+test('actual entry accepts an existing relative config after normalization', async t => {
+  const h = harness(t)
+  assert.equal(await runConnect([], h.deps), 0, h.out.stderr)
+  const executableDir = path.join(h.home, 'bin')
+  fs.mkdirSync(executableDir)
+  fs.writeFileSync(path.join(executableDir, 'codex'), '#!/bin/sh\necho "codex-cli fixture"\n', { mode: 0o755 })
+  const env = { ...process.env, HOME: h.home, PATH: executableDir + path.delimiter + process.env.PATH }
+  for (const key of Object.keys(env)) if (key === 'SBOT_CONFIG' || key.startsWith('SBOT_C2_')) delete env[key]
+  const result = spawnSync(process.execPath, [path.resolve(__dirname, '../bin/sintbot-v2.js'), 'start', '--preflight', '--config', '.sbot/config.json', '--data-dir', path.join(h.home, '.sbot')], { cwd: h.home, env, encoding: 'utf8', timeout: 15000 })
+  assert.equal(result.status, 0, result.stderr)
+  assert.doesNotMatch(result.stderr, /absolute path is required/)
+})
+
+
+test('new group persists live model defaults before initialization and shows them before scanning', async t => {
+  const h = harness(t)
+  const events = []
+  h.deps.modelCatalog = async (provider, options) => { events.push('catalog'); assert.equal(options.runner, provider); return fixtureCatalog(provider) }
+  h.deps.onModelDefaults = value => { events.push('defaults'); assert.deepEqual(value, { provider: 'codex', model: 'gpt-fixture-live', effort: 'low', name: 'Fixture Live', source: 'live' }) }
+  const scan = h.deps.registerApp
+  h.deps.registerApp = async options => { events.push('scan'); return scan(options) }
+  assert.equal(await runConnect([], h.deps), 0, h.out.stderr)
+  assert.deepEqual(events, ['catalog', 'defaults', 'scan'])
+  const config = JSON.parse(fs.readFileSync(h.configPath, 'utf8'))
+  assert.deepEqual(config.groups.oc_connect0001.providerPrefs.codex, { model: 'gpt-fixture-live', effort: 'low' })
+  const installed = c2install.loadInstallation(h.configPath, { dataDir: path.join(h.home, '.sbot') })
+  assert.deepEqual(installed.cfg.groups.oc_connect0001.providerPrefs.codex, { model: 'gpt-fixture-live', effort: 'low' })
+})
+
+test('missing or non-live model defaults stop before scanning without inventing selections', async t => {
+  for (const cat of [null, { ok: false }, { ...fixtureCatalog(), source: 'builtin' }, { ...fixtureCatalog(), source: 'saved' }, { ...fixtureCatalog(), recommended: {} }]) {
+    const h = harness(t)
+    h.deps.modelCatalog = async () => cat
+    await assert.rejects(runConnect([], h.deps), /live model|thinking depth/)
+    assert.equal(h.scans, 0)
+    nothingWritten(h)
+  }
+})
+
+test('cancel during model discovery stops before registration', async t => {
+  const h = harness(t)
+  h.deps.modelCatalog = async () => { h.signal('SIGINT'); return fixtureCatalog() }
+  assert.equal(await runConnect([], h.deps), 130)
+  assert.equal(h.scans, 0)
+  nothingWritten(h)
+})
+
+test('initial defaults fill only missing group fields and preserve all existing choices', () => {
+  const cat = { ...fixtureCatalog(), models: [...fixtureCatalog().models, { id: 'chosen-model', efforts: ['medium', 'high'], defEffort: 'medium' }] }
+  for (const [initial, expected] of [
+    [{}, { model: 'gpt-fixture-live', effort: 'low' }],
+    [{ model: 'chosen-model' }, { model: 'chosen-model', effort: 'medium' }],
+    [{ effort: 'high' }, { model: 'gpt-fixture-live', effort: 'high' }],
+    [{ model: 'chosen-model', effort: 'max' }, { model: 'chosen-model', effort: 'max' }],
+  ]) {
+    const config = { defaultProvider: 'codex', providers: { codex: { runner: 'codex' } }, groups: { oc_new: { provider: 'codex', providerPrefs: { codex: { ...initial } } }, oc_existing: { provider: 'codex', providerPrefs: { codex: { model: 'existing-model', effort: 'medium' } } } } }
+    const unchanged = JSON.stringify(config.groups.oc_existing)
+    applyInitialGroupDefaults(config, 'oc_new', cat)
+    assert.deepEqual(config.groups.oc_new.providerPrefs.codex, expected)
+    assert.equal(JSON.stringify(config.groups.oc_existing), unchanged)
+  }
 })

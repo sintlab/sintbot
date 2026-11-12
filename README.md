@@ -45,7 +45,7 @@ curl -fsSL https://sintbot.com/install.sh | bash
 
 The script checks the environment, installs SintBot and verifies the result, without `sudo`. You can read [install.sh](./install.sh) before running it. Installation does not sign in to a model account, connect a group or start a service.
 
-**2. Connect your group and project.** Run `sintbot connect` and scan the QR code with Feishu under an enterprise or team identity: it creates the app, a project folder and a group, then writes the configuration. The [installation guide](https://sintbot.com/guide/install/) covers the options, the manual route and the startup steps.
+**2. Connect your group and project.** Run `sintbot start --ui`; the browser opens the local setup page. Enter a project name and scan the QR code with Feishu under an enterprise or team identity: it creates the app, a project folder and a group, then writes the configuration. The [installation guide](https://sintbot.com/guide/install/) covers the options, the manual route and the startup steps.
 
 Installing with an AI assistant? Use the [AI-assisted install and first-use guide](./docs/AI-ASSISTED-INSTALL.md).
 

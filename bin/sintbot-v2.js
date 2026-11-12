@@ -24,10 +24,22 @@ async function startService(rest) {
       'no-open': { type: 'boolean' }, 'ui-port': { type: 'string' },
       'ui-host': { type: 'string' }, preflight: { type: 'boolean' } } })
   const preflightOnly = values.preflight === true
-  const { loadInstallation, assertPrivateDirectory, assertInstallationJournals, assertJournalScope } = require('../src/c2install')
+  const { loadInstallation, assertPrivateDirectory, assertInstallationJournals, assertJournalScope, installationStateDir } = require('../src/c2install')
+  // Setup mode: no configuration yet. With --ui, serve the local scan-to-connect
+  // page (src/setupserver.js) in this process; it writes the configuration and
+  // initializes the journals, then the normal start below continues.
+  const setupConfig = path.resolve(values.config || process.env.SBOT_CONFIG || path.join(installationStateDir(values['data-dir']), 'config.json'))
+  if (!fs.existsSync(setupConfig)) {
+    if (preflightOnly || values.ui !== true) {
+      throw new Error('No configuration yet. Run `sintbot start --ui` and connect Feishu in the browser (or `sintbot connect` in the terminal)')
+    }
+    await runSetupMode({ configFile: setupConfig, dataDir: values['data-dir'],
+      host: values['ui-host'] || '127.0.0.1', port: Number(values['ui-port'] || 4600),
+      open: values['no-open'] !== true })
+  }
   // Groups added to the configuration since the last start are registered
   // below, after the writer lock is held; existing journals stay as mapped.
-  const installation = loadInstallation(values.config, { dataDir: values['data-dir'], allowAddedGroups: true })
+  const installation = loadInstallation(setupConfig, { dataDir: values['data-dir'], allowAddedGroups: true })
   const { stateDir, file, cfg, groups, routes, serviceChatId, provider } = installation
   const uiEnabled = values.ui === true || cfg.ui?.enabled === true
   const uiHost = values['ui-host'] || cfg.ui?.host || '127.0.0.1'
@@ -49,6 +61,39 @@ async function startService(rest) {
   // Every installation, including one group, runs the multi-group service:
   // chat commands, the console writer and per-group fault closing live there.
   return startMultiGroupService({ installation, preflightOnly, uiEnabled, uiHost, uiPort })
+}
+
+// Serve the setup page until the configuration exists. The page is local only;
+// the browser is opened once. Ctrl-C cancels the scan in progress and exits.
+async function runSetupMode({ configFile, dataDir, host, port, open }) {
+  const { createSetupServer, probeRunners } = require('../src/setupserver')
+  const os = require('node:os')
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw new Error('Console port is invalid')
+  const setup = createSetupServer({ configFile, dataDir, home: os.homedir(), version: require('../package.json').version,
+    runners: probeRunners(), host, port, log: message => process.stderr.write(`Setup · ${message}\n`) })
+  await setup.listen()
+  const url = `http://${host === '::1' ? '[::1]' : host}:${port}/`
+  process.stderr.write(`SintBot has no Feishu configuration yet. Open ${url} to connect by scanning.\n`)
+  if (open && process.platform === 'darwin') {
+    try { require('node:child_process').spawn('open', [url], { stdio: 'ignore', detached: true }).unref() } catch {}
+  }
+  // Ctrl-C: cancel the run (runConnect stops at its next step boundary, writing
+  // nothing), wait for it to end, then exit.
+  const onSignal = () => {
+    setup.session.cancel()
+    const ended = Promise.race([Promise.resolve(setup.session.wait()).catch(() => {}), new Promise(resolve => setTimeout(resolve, 15_000))])
+    ended.then(() => setup.close()).finally(() => process.exit(130))
+  }
+  process.once('SIGINT', onSignal); process.once('SIGTERM', onSignal)
+  try {
+    await setup.completed
+    // Let the page read the final state before the console takes the port.
+    await new Promise(resolve => setTimeout(resolve, 3000))
+  } finally {
+    process.off('SIGINT', onSignal); process.off('SIGTERM', onSignal)
+    await setup.close()
+  }
+  process.stderr.write('Setup · Feishu connected; starting the service\n')
 }
 
 // Model and depth used to live on model cards; they now belong to each group.
@@ -309,6 +354,19 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
             if (closeChecks[backend]?.(result) === true) closedResults.add(result)
             return result
           }
+          // Idle compaction shares the turn's close evidence so its permit is
+          // released only once the child is proven closed (or never started).
+          const compactSession = input => {
+            const started = runner.compactSession(input)
+            if (started === null) return null
+            return started.then(result => {
+              if (closeChecks.claude?.(result) === true) closedResults.add(result)
+              return result
+            }, error => {
+              if (closeErrorChecks.claude?.(error) === true) closedErrors.add(error)
+              throw error
+            })
+          }
           engine = new Engine({ ...cfg, groups: { [route.chatId]: route.group } }, {
             store, activity, log: message => process.stderr.write(`C2 v2 · ${message}\n`),
             durableV2Runtime: runtime, durableV2Payloads: handles,
@@ -318,6 +376,8 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
               : !!error && typeof error === 'object' && closedErrors.has(error),
             durableV2AssertWriterLock: assertWriterLock, durableV2Journal: journal,
             durableV2AcquireCapacity: options => capacity.acquire(options),
+            durableV2CapacitySnapshot: () => capacity.snapshot(),
+            durableV2CompactSession: compactSession,
             // A route fault holds or recovers its group alone. Shared grants
             // are sealed only when the process writer lease itself is gone.
             durableV2SealCapacity: error => {
@@ -477,6 +537,9 @@ Usage:
   sintbot help
 
 Supports explicit Feishu groups using Codex or Claude Code. Start runs in the foreground.
+start --ui with no configuration opens a local setup page that connects Feishu by scanning (the
+browser form takes the same inputs as connect); the service starts once setup has written and
+initialized the configuration.
 connect scans a Feishu QR code to create the app, then creates a group (or binds --chat), the project
 folder under ~/Projects, the configuration and the journals, in that order; a failed check stops before
 the folder and configuration exist. It refuses existing configuration, state or a running service;

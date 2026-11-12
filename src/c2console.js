@@ -110,6 +110,9 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
     try { assertJournalScope(binding.journal, chatId, { requireSettled: true }) } catch (error) {
       throw new Error(busy, { cause: error })
     }
+    if (binding.engine.stopIdleCompact?.(chatId, '会话已重置')) {
+      throw new Error('正在停止会话整理，请稍后再开新会话')
+    }
     binding.engine.store.resetSessionAndStats(chatId)
     return true
   }

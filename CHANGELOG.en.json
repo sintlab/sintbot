@@ -1,5 +1,36 @@
 [
   {
+    "version": "1.4.18",
+    "date": "2026-11-12",
+    "name": "Browser setup and Claude idle compaction",
+    "items": [
+      {
+        "t": "Connect Feishu in the browser",
+        "d": "The first start opens a local setup page for project selection, phone confirmation, progress and resumable failures. Once configuration and journals are initialized, the page enters the console automatically. English and Chinese are supported."
+      },
+      {
+        "t": "Save explicit model and thinking-depth choices for new groups",
+        "d": "Before scanning, setup reads the selected executor's live recommended model and thinking depth and saves them for the new group. An unavailable live catalog stops setup before app creation; existing choices are preserved."
+      },
+      {
+        "t": "Safer cancellation and retries",
+        "d": "Cancellation stops at step boundaries. Retries reuse confirmed apps and groups, while configuration writes recheck current state to avoid overwriting another instance's setup."
+      },
+      {
+        "t": "Idle compaction for Claude groups (experimental)",
+        "d": "Claude Code versions advertising compact can compact an idle session after a task when context reaches half the configured compaction window. New work stops compaction first. Successful compaction and cache behavior still await real-model validation."
+      },
+      {
+        "t": "Immediate Claude quota updates from events",
+        "d": "Quota events from each run refresh the display promptly and reduce extra quota requests. Existing API and cache paths remain when events are unavailable."
+      },
+      {
+        "t": "Compaction exit protection and clearer setup guidance",
+        "d": "Unconfirmed process exit retains capacity and blocks further dispatch for that group. Configuration-file notices, language-specific guide links and startup instructions are also corrected."
+      }
+    ]
+  },
+  {
     "version": "1.4.17",
     "date": "2026-11-12",
     "name": "Feishu scan-to-connect and third-party quotas",

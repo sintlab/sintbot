@@ -12,9 +12,11 @@ const path = require('node:path')
 const readline = require('node:readline')
 const { parseArgs } = require('node:util')
 const core = require('./agent/privatecore')
-const { atomicWriteJSON } = require('./core/store')
+const { atomicWriteJSON, withFileLock } = require('./core/store')
 const { installationStateDir, MANIFEST } = require('./c2install')
 const { defaultProjectsRoot, tooWideReason, realpathLenient } = require('./projectsroot')
+const { fillPicks } = require('./core/modelcmd')
+const { applyBrainChange } = require('./groupbrain')
 
 const CONNECT_OPTIONS = Object.freeze({
   config: { type: 'string' }, 'data-dir': { type: 'string' }, workdir: { type: 'string' },
@@ -195,8 +197,48 @@ function dirObserved(fs, workdir, explicit, home) {
   return { workdir, exists, empty, tooWide, explicit }
 }
 
+// The same CLI catalog and recommendation used by /model and the console.
+// No saved cache or model prompt: a new group must pin a currently observed
+// recommendation, not inherit an old account's defaults or guess a fallback.
+function connectModelCatalog() {
+  const { createModelCatalog } = require('./modelcatalog')
+  const codex = require('./agent/codexstatus')
+  const claude = require('./agent/claudemodels')
+  return createModelCatalog({ cacheFile: null,
+    codexstatus: { listModels: bin => codex.listModels(bin, 12000) },
+    claudemodels: { ...claude, probeModels: bin => claude.probeModels(bin, { timeoutMs: 12000 }) },
+  })
+}
+
+function applyInitialGroupDefaults(config, chatId, cat) {
+  const current = applyBrainChange(config, chatId)
+  if (current.error) throw new Error(`Cannot set the new group's model defaults (${current.error})`)
+  const picks = fillPicks({ switching: true, currentModel: current.before.model || '',
+    currentEffort: current.before.effort || '', cat })
+  // fillPicks may suggest replacing an unsupported old depth on a backend
+  // switch. Onboarding only fills missing fields; it never replaces a choice.
+  const change = {}
+  if (!current.before.model && picks.model) change.model = picks.model
+  if (!current.before.effort && picks.effort) change.effort = picks.effort
+  const result = applyBrainChange(config, chatId, change)
+  if (result.error || !result.after.model || !result.after.effort) throw new Error('The live model catalog did not provide a valid model and thinking depth. Check the executor login and retry.')
+  return { provider: result.target, model: result.after.model, effort: result.after.effort,
+    name: cat.models?.find(m => m.id === result.after.model)?.name || result.after.model, source: cat.source }
+}
+
 async function runConnect(argv, deps = {}) {
   const d = defaultDeps(deps)
+  // Ctrl-C (or the setup page's cancel) aborts at the next step boundary for
+  // the whole run, not only during the scan; nothing is written after an abort.
+  const abort = new AbortController()
+  const onSignal = () => abort.abort()
+  for (const signal of ['SIGINT', 'SIGTERM']) d.signals.on(signal, onSignal)
+  try { return await connectFlow(argv, d, abort) } finally {
+    for (const signal of ['SIGINT', 'SIGTERM']) d.signals.off(signal, onSignal)
+  }
+}
+
+async function connectFlow(argv, d, abort) {
   const { fs, feishu, stderr, stdout } = d
   const { values } = parseArgs({ args: argv, allowPositionals: false, options: CONNECT_OPTIONS })
   const basic = values.basic === true
@@ -206,6 +248,11 @@ async function runConnect(argv, deps = {}) {
   if (givenChatId !== undefined && !CHAT_ID.test(givenChatId)) throw new Error('--chat must be a Feishu group id (oc_…)')
   if (values.provider !== undefined && !RUNNERS.includes(values.provider)) throw new Error('--provider must be codex or claude')
   const say = text => stderr.write(`${text}\n`)
+  const interrupted = () => {
+    if (!abort.signal.aborted) return false
+    say('已取消，没有写入任何文件。')
+    return true
+  }
   // A wait notice repeats on every poll; it is printed once per change.
   let lastWait = null
   const decide = (step, input) => {
@@ -268,8 +315,21 @@ async function runConnect(argv, deps = {}) {
   // let the core validate it now with placeholders for the scanned identities.
   const configInput = { appId: reuseAppId || 'cli_pending', appSecret: 'pending', botOpenId: 'ou_pending', adminOpenId: 'ou_pending',
     chatId: givenChatId || null, workdir, home: d.home, provider, runners }
-  const dryRun = core.connectConfig(configInput)
+  const dryRun = core.connectConfig({ ...configInput, chatId: givenChatId || 'oc_onboarding_pending' })
   if (!dryRun.ok) throw new Error(dryRun.error)
+  const catalog = d.modelCatalog || connectModelCatalog()
+  say('正在读取执行器推荐的型号和思考深度…')
+  let selectedCatalog
+  try { selectedCatalog = await catalog(provider, { runner: provider }) } catch {}
+  if (interrupted()) return EXIT_INTERRUPTED
+  if (!selectedCatalog || selectedCatalog.ok !== true || selectedCatalog.source !== 'live' ||
+      !Array.isArray(selectedCatalog.models) || !selectedCatalog.models.length) {
+    throw new Error(`Could not read live model defaults for ${provider}. Check the executor login and network, then retry. No new Feishu app was created.`)
+  }
+  const modelDefaults = applyInitialGroupDefaults(dryRun.config, givenChatId || 'oc_onboarding_pending', selectedCatalog)
+  d.onModelDefaults?.(modelDefaults)
+  say(`新群默认：${modelDefaults.name} · ${modelDefaults.effort}。接入后可在控制台修改。`)
+  if (interrupted()) return EXIT_INTERRUPTED
 
   // Step 1: the scan. The link is printed, and a local page renders the QR
   // code from the core's matrix; the page is removed however this ends.
@@ -285,9 +345,6 @@ async function runConnect(argv, deps = {}) {
     qrDir = null
   }
   process.once('exit', cleanupQr)
-  const abort = new AbortController()
-  const onSignal = () => abort.abort()
-  for (const signal of ['SIGINT', 'SIGTERM']) d.signals.on(signal, onSignal)
   let lastStatus = null
   let registration
   try {
@@ -324,7 +381,6 @@ async function runConnect(argv, deps = {}) {
   } finally {
     cleanupQr()
     process.off('exit', cleanupQr)
-    for (const signal of ['SIGINT', 'SIGTERM']) d.signals.off(signal, onSignal)
   }
   const appId = registration?.client_id || ''
   const appSecret = registration?.client_secret || ''
@@ -346,6 +402,7 @@ async function runConnect(argv, deps = {}) {
     plan = decide('token', {})
   } catch (error) { plan = decide('token', failureInput(error, larkErrMsg)) }
   if (plan.verdict === 'stop') return 1
+  if (interrupted()) return EXIT_INTERRUPTED
 
   // Step 2b: app enabled, waiting for an organization review when there is one.
   let waitedMs = 0
@@ -354,6 +411,7 @@ async function runConnect(argv, deps = {}) {
     plan = decide('app', { observed: { enabled, pendingReview: enabled ? false : await pendingReview(client, appId), waitedMs } })
     if (plan.verdict !== 'wait') break
     await d.sleep(plan.retryAfterMs)
+    if (interrupted()) return EXIT_INTERRUPTED
     waitedMs += plan.retryAfterMs
     try { identity = await feishu.fetchAppIdentity(client, appId) } catch { identity = null }
   }
@@ -363,6 +421,7 @@ async function runConnect(argv, deps = {}) {
   const precheck = await feishu.feishuPrecheck(client, { appId })
   if (decide('precheck', { observed: { checks: precheck.checks } }).verdict === 'stop') return 1
   const botOpenId = precheck.botOpenId || identity?.openId || ''
+  if (interrupted()) return EXIT_INTERRUPTED
 
   // Step 3: contact range, visibility and a published version. Failures only
   // warn; --basic skips both.
@@ -383,6 +442,7 @@ async function runConnect(argv, deps = {}) {
     } catch (error) { decide('publish', failureInput(error, larkErrMsg)) }
   }
 
+  if (interrupted()) return EXIT_INTERRUPTED
   // The real configuration input, validated before anything is created.
   Object.assign(configInput, { appId, appSecret, botOpenId, adminOpenId })
   let built = core.connectConfig(configInput)
@@ -409,28 +469,46 @@ async function runConnect(argv, deps = {}) {
     plan = decide('chat', { observed: { appId, chatId } })
   }
   if (plan.verdict === 'stop') return 1
+  d.onGroupReady?.({ appId, chatId })
+  if (interrupted()) return EXIT_INTERRUPTED // the group exists; the config does not, so --app-id/--chat resumes it
   try {
     await feishu.sendChatText(client, chatId,
       `你好，我是 ${chatName}。这个群绑定的项目目录是 ${workdir}；有任务直接 @ 我或在群里说。`)
   } catch {}
 
+  if (interrupted()) return EXIT_INTERRUPTED
   // Step 6: the folder, config.json (0600 in a 0700 directory) and the README.
   built = core.connectConfig({ ...configInput, chatId })
   if (!built.ok) { decide('config', { code: LOCAL_FAILURE, msg: built.error, observed: { configPath } }); return 1 }
-  let createdDir = false
+  applyInitialGroupDefaults(built.config, chatId, selectedCatalog)
+  let createdDir = false, createdReadme = false, configCommitted = false
+  const readme = path.join(workdir, 'README.md')
   try {
-    if (!observed.exists) {
-      fs.mkdirSync(path.dirname(workdir), { recursive: true, mode: 0o755 })
-      fs.mkdirSync(workdir, { mode: 0o755 })
-      createdDir = true
-    }
+    // A scan can wait for minutes. Recheck immediately before committing, under
+    // the same short-lived config lock as other writers; never replace a new
+    // installation that appeared while this page was waiting.
     fs.mkdirSync(path.dirname(configPath), { recursive: true, mode: 0o700 })
-    atomicWriteJSON(configPath, built.config, { mode: 0o600 })
-    fs.chmodSync(configPath, 0o600)
-    const readme = path.join(workdir, 'README.md')
-    if (!fs.existsSync(readme)) fs.writeFileSync(readme, built.readme, { mode: 0o644 })
+    withFileLock(configPath, () => {
+      assertReplaceable(readExistingConfig(fs, configPath), configPath, reuseAppId)
+      assertFreshState(fs, stateDir)
+      if (!observed.exists) {
+        fs.mkdirSync(path.dirname(workdir), { recursive: true, mode: 0o755 })
+        fs.mkdirSync(workdir, { mode: 0o755 })
+        createdDir = true
+      }
+      // Finish fallible project preparation before the config commit. A README
+      // failure must not leave a bound config that the retry correctly refuses.
+      if (!fs.existsSync(readme)) {
+        fs.writeFileSync(readme, built.readme, { mode: 0o644, flag: 'wx' })
+        createdReadme = true
+      }
+      if (fs.existsSync(configPath)) fs.chmodSync(configPath, 0o600)
+      atomicWriteJSON(configPath, built.config, { mode: 0o600 })
+      configCommitted = true
+    })
     plan = decide('config', { observed: { configPath } })
   } catch (error) {
+    if (createdReadme && !configCommitted) { try { fs.unlinkSync(readme) } catch {} }
     if (createdDir) { try { if (!fs.readdirSync(workdir).length) fs.rmdirSync(workdir) } catch {} }
     plan = decide('config', { code: LOCAL_FAILURE, msg: error?.message || String(error), observed: { configPath } })
   }
@@ -485,4 +563,4 @@ async function scannerName(client, openId, sdkName, basic, d) {
   return name ? core.connectManifest(basic, name, d.version).appPreset.name : ''
 }
 
-module.exports = { runConnect, CONNECT_OPTIONS, sdkAddons, qrPage, failureInput }
+module.exports = { runConnect, CONNECT_OPTIONS, sdkAddons, qrPage, failureInput, probeRunners, EXIT_INTERRUPTED, connectModelCatalog, applyInitialGroupDefaults }

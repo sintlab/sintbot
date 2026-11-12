@@ -164,7 +164,7 @@ function createC2MultiGroupService({ routes, assertWriterLock,
       binding.engine.shutdown()
       await bounded(() => binding.engine.drainDurableV2(drainTimeoutMs), drainTimeoutMs + 100)
       const quiescent = [...binding.engine.rts.values()].every(rt =>
-        !rt.v2Controller && !rt.v2NormalRouteActive)
+        !rt.v2Controller && !rt.v2NormalRouteActive && !rt.v2Compacting)
       if (!quiescent || !writerHeld() || !route) throw new Error('C2 group fault is not quiescent')
       const turns = activeTurns(binding.journal.snapshot())
       const proofs = turns.length ? binding.engine.durableV2ActiveFaultProofs?.(turns) || null : null

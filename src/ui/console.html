@@ -3651,7 +3651,7 @@ function renderSettings(){
       ${(pri.dropped||[]).map(d=>`<div class="hint" style="color:var(--fail)">${IC.x} 配置里已忽略 ${esc(d.value)}:${esc(d.why)}</div>`).join('')}
       ${(pri.outside||[]).length?`<div class="hint" style="margin-top:6px">${IC.warn} ${pri.outside.length} 个群在根之外:${esc(pri.outside.map(o=>o.name||o.chatId).join('、'))} —— 照常运行,改目录时须搬进根内</div>`:''}
     </div>
-    <div class="hint" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line);line-height:1.7">这里只读,控制台不提供修改。要改,在服务器上编辑配置文件里的 <code>projectsRoots</code>(一个路径或数组,认 ~),或运行 <code>sintbot setup --full</code>;改后即时生效,不用重启。</div>`;
+    <div class="hint" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line);line-height:1.7">这里只读,控制台不提供修改。要改,在服务器上编辑配置文件里的 <code>projectsRoots</code>(一个路径或数组,认 ~);改后即时生效,不用重启。</div>`;
   const urlRow=(label,u)=>`<div class="kv"><span class="kk">${label}</span><span class="vv mono"><a href="${esc(u)}" target="_blank" style="color:var(--ember-soft)">${esc(u)}</a></span></div>`;
   // 「服务器」卡 = 访问地址 + 项目根目录(用户 2026-09-08:两张短卡并成一张,不留空当;本机 127.0.0.1 那行去掉 ——
   // 正在看控制台的人用不着它,而它又是三行里最像「可以点」却最没用的一行)
@@ -3697,7 +3697,7 @@ function renderSettings(){
       ${px&&px.noProxy?`<div class="hint">直连:<span class="mono">${esc(px.noProxy)}</span></div>`:''}
     </details>`:''}
     <div class="botnet-actions"><button class="btn primary" id="bSave">保存</button>
-      <div class="hint">代理第一次填,新的对话轮次就生效;改已有的地址要重启后台服务(sintbot service restart)。</div></div>
+      <div class="hint">代理第一次填,新的对话轮次就生效;改已有的地址要重启 SintBot(按 Ctrl-C 退出后用原来的启动命令重新启动)。</div></div>
   </div>`;
   const updateJob=upd&&upd.job;
   // 1.4.x 多群服务的升级器带 mode:后台托管才能一键升级,前台与开发版只给说明。版本变化后的群播报由启动时的公告卡片负责(控制台可关)。
@@ -3967,6 +3967,8 @@ function bindWecomCard(){
 }
 // The connection view is read-only; onboarding is completed on the host Mac.
 // Public console actions are limited to group management and access administration.
+// Guide links follow the console language (the site keeps English at / and Chinese at /zh/).
+const guideBase=()=>document.documentElement.lang==='zh'?'https://sintbot.com/zh/guide/':'https://sintbot.com/guide/';
 function fxFeishuCard(fe){
   const configured=!!(fe&&(fe.appId||fe.appIdRef)&&fe.appSecretStatus&&fe.appSecretStatus!=='none');
   const c=connDict(S.conn).feishu,online=!!(c&&c.state==='connected');
@@ -3979,12 +3981,12 @@ function fxFeishuCard(fe){
     <p class="hint">${configured?'在项目群里发任务，机器人会把进度和结果回复到群里。':'用手机飞书确认一次，自动创建机器人和项目群。'}</p>
     ${configured?`<div class="feishu-current"><span>已绑定项目群</span><strong>${groupCount}</strong><span>消息响应</span><strong>${fe.onlyWhenMentioned?'仅回复 @ 机器人的消息':'接收群内普通消息'}</strong></div>
       ${!online?'<p class="hint">应用已配置，连接尚未确认。请确认这台 Mac 上的 SintBot 正在运行。</p>':''}
-      <div class="feishu-actions"><button class="btn primary" data-gotab="groups">管理项目群</button><a class="btn" href="https://sintbot.com/guide/usage/" target="_blank" rel="noopener">查看使用指南</a></div>`:''}
+      <div class="feishu-actions"><button class="btn primary" data-gotab="groups">管理项目群</button><a class="btn" data-guide="usage/" href="${guideBase()}usage/" target="_blank" rel="noopener">查看使用指南</a></div>`:''}
     <details class="feishu-details" ${configured?'':'open'}><summary>首次接入：三步开始</summary><ol class="feishu-steps">
       <li><b>手机扫码</b><span>按安装指南在 Mac 上开始接入，用手机飞书选择企业或团队身份，确认授权。</span></li>
       <li><b>自动建群</b><span>接入流程创建机器人应用、项目目录和群，把你加入群并保存配置。</span></li>
       <li><b>群里发任务</b><span>按提示启动后，在新群发「读取 README 第一行」。收到回复就可以开始工作。</span></li>
-    </ol><div class="feishu-actions"><a class="btn ${configured?'':'primary'}" href="https://sintbot.com/guide/install/#feishu" target="_blank" rel="noopener">查看扫码接入指南</a></div>
+    </ol><div class="feishu-actions"><a class="btn ${configured?'':'primary'}" data-guide="install/#feishu" href="${guideBase()}install/#feishu" target="_blank" rel="noopener">查看扫码接入指南</a></div>
     <p class="hint">已经接入的应用可以继续使用，添加项目群请到「群 · 项目」。</p></details>
     <details class="feishu-details"><summary>接入遇到问题</summary><dl class="feishu-help">
       <dt>没有企业或团队身份</dt><dd>先在飞书创建团队或切换到已有团队，再开始扫码。</dd>
@@ -4000,7 +4002,7 @@ function fxFeishuCard(fe){
       <dt>Bot ID</dt><dd class="mono">${esc(fe&&fe.botOpenId||'尚未获取')}</dd></dl>
       <p class="hint">更换应用或凭据需要在这台 Mac 上完成，并在所有任务结束后重新启动。请保留已有配置和任务记录。</p>
       <p class="hint">手动接入需配置机器人、消息事件和卡片回调、必要权限与可用范围，再发布应用版本。</p>
-      <a class="lnk" href="https://sintbot.com/guide/install/#feishu" target="_blank" rel="noopener">查看完整安装指南 ${IC.ext}</a>
+      <a class="lnk" data-guide="install/#feishu" href="${guideBase()}install/#feishu" target="_blank" rel="noopener">查看完整安装指南 ${IC.ext}</a>
     </details>
   </div>`;
 }
@@ -4556,7 +4558,7 @@ const I18N_EN=[
   ["连不上 Claude / ChatGPT 时填 · 国内模型端点自动直连 · 留空 = 不用代理","Set this if Claude / ChatGPT can't be reached · China model endpoints connect directly · empty = no proxy"],
   ["后台服务的环境里已有代理:","The background service already has a proxy in its environment: "],
   ["直连:","Direct: "],
-  ["代理第一次填,新的对话轮次就生效;改已有的地址要重启后台服务(sintbot service restart)。","A first-time proxy applies to new turns right away; changing an existing address needs a service restart (sintbot service restart)."],
+  ["代理第一次填,新的对话轮次就生效;改已有的地址要重启 SintBot(按 Ctrl-C 退出后用原来的启动命令重新启动)。","A first-time proxy applies to new turns right away; changing an existing address needs a SintBot restart (Ctrl-C, then the same start command)."],
   ["代理地址要像 http://127.0.0.1:7890","The proxy address should look like http://127.0.0.1:7890"],
   ["已接上聊天平台 —— 后台服务几秒后自动重启并连上","Chat platform connected — the background service restarts in a few seconds and connects"],
   ["已接上聊天平台 —— 在终端里重启 sintbot start --ui 连上","Chat platform connected — restart sintbot start --ui in the terminal to connect"],
@@ -5268,7 +5270,7 @@ const I18N_EN=[
   ["群项目都放这里 · 选目录、保存群绑定、从本机目录提炼风格,只认这些目录之内的路径 · 当前是默认值","All group projects live here · choosing a folder, saving a group binding, and extracting a style from a local folder only accept paths inside these folders · currently the default"],
   ["不存在 —— 在服务器上建好即可","Does not exist — just create it on the server"],
   ["这里只读,控制台不提供修改。要改,在服务器上编辑配置文件里的","Read-only here — the console offers no way to change it. To change it, edit "],
-  ["(一个路径或数组,认 ~),或运行"," in the config file on the server (one path, or an array; ~ is accepted), or run"],
+  ["(一个路径或数组,认 ~);改后即时生效,不用重启。"," in the config file on the server (one path, or an array; ~ is accepted); changes apply immediately, no restart needed."],
   [";改后即时生效,不用重启。","; changes apply immediately, no restart needed."],
   ["公网","Public"],
   ["局域网","LAN"],
@@ -6096,6 +6098,7 @@ function setLang(l){
   l=(l==='en')?'en':'zh';
   try{localStorage.setItem('sbot-lang',l);}catch(e){}
   const d=document.documentElement;d.dataset.lang=l;d.lang=l;
+  for(const a of document.querySelectorAll('#feishuCard a[data-guide]'))a.href=guideBase()+a.dataset.guide;
   document.title=l==='zh'?I18N_TITLE_ZH:trText(I18N_TITLE_ZH);
   applyI18n(document.body);updateLangBtn();
   if($('#verhistBox'))loadChangelog();   // 版本历史正文来自数据文件、不经词典 ⇒ 换语言得重画那张卡

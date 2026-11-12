@@ -386,7 +386,7 @@ async function runConnect(argv, deps = {}) {
   // The real configuration input, validated before anything is created.
   Object.assign(configInput, { appId, appSecret, botOpenId, adminOpenId })
   let built = core.connectConfig(configInput)
-  if (!built.ok) { decide('config', { code: LOCAL_FAILURE, msg: built.error }); return 1 }
+  if (!built.ok) { decide('config', { code: LOCAL_FAILURE, msg: built.error, observed: { configPath } }); return 1 }
 
   // Step 4: the project directory is judged now and created with the
   // configuration below, so a stopped group step leaves no folder behind.
@@ -403,7 +403,7 @@ async function runConnect(argv, deps = {}) {
       const chat = await feishu.createChat(client, chatName, '', adminOpenId ? [adminOpenId] : [])
       if (!chat.chatId) throw new Error('create chat returned no chat_id')
       chatId = chat.chatId
-      plan = decide('chat', { observed: { appId, chatId } })
+      plan = decide('chat', { observed: { appId } })   // chatId in observed means a group the user supplied
     } catch (error) { plan = decide('chat', { ...failureInput(error, larkErrMsg), observed: { appId, chatId: null } }) }
   } else {
     plan = decide('chat', { observed: { appId, chatId } })
@@ -416,7 +416,7 @@ async function runConnect(argv, deps = {}) {
 
   // Step 6: the folder, config.json (0600 in a 0700 directory) and the README.
   built = core.connectConfig({ ...configInput, chatId })
-  if (!built.ok) { decide('config', { code: LOCAL_FAILURE, msg: built.error }); return 1 }
+  if (!built.ok) { decide('config', { code: LOCAL_FAILURE, msg: built.error, observed: { configPath } }); return 1 }
   let createdDir = false
   try {
     if (!observed.exists) {
@@ -429,10 +429,10 @@ async function runConnect(argv, deps = {}) {
     fs.chmodSync(configPath, 0o600)
     const readme = path.join(workdir, 'README.md')
     if (!fs.existsSync(readme)) fs.writeFileSync(readme, built.readme, { mode: 0o644 })
-    plan = decide('config', {})
+    plan = decide('config', { observed: { configPath } })
   } catch (error) {
     if (createdDir) { try { if (!fs.readdirSync(workdir).length) fs.rmdirSync(workdir) } catch {} }
-    plan = decide('config', { code: LOCAL_FAILURE, msg: error?.message || String(error) })
+    plan = decide('config', { code: LOCAL_FAILURE, msg: error?.message || String(error), observed: { configPath } })
   }
   if (plan.verdict === 'stop') return 1
 

@@ -971,26 +971,19 @@ button.btn:not(:disabled):active{transform:translateY(1px)}
 @media(prefers-reduced-motion:reduce){button.btn:not(:disabled):hover,button.btn:not(:disabled):active{transform:none}}
 
 
-/* Feishu setup: a short connection summary, then optional help. */
-.feishu-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:18px}
-.feishu-heading .lbl{display:flex;align-items:center;gap:8px;margin-bottom:10px}
-.feishu-title{font-size:20px;font-weight:600;line-height:1.4;overflow-wrap:anywhere}
-.feishu-current{display:flex;align-items:center;gap:10px 18px;flex-wrap:wrap;font-size:12px;margin:18px 0;color:var(--muted)}
-.feishu-current strong{font-weight:500;color:var(--ink)}
+/* Feishu follows the same card heading and key/value rhythm as the other settings. */
+.feishu-heading{display:flex;justify-content:space-between;align-items:center;gap:18px;margin-bottom:18px}
+.feishu-heading .lbl{display:flex;align-items:center;gap:8px;margin:0}
+.feishu-setup>.hint{margin:0 0 14px}
+.feishu-setup .kv .vv{white-space:normal;overflow-wrap:anywhere}
 .feishu-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:14px 0}
 .feishu-actions .btn{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;min-height:40px}
 .feishu-actions input{flex:1;min-width:180px}
 .feishu-details{border-top:1px solid var(--line);margin-top:18px;padding-top:4px}
-.feishu-details>summary{cursor:pointer;padding:14px 0;font-size:13px;font-weight:500;min-height:44px}
-.feishu-steps{padding-left:22px;margin:8px 0 18px;display:grid;gap:16px;font-size:13px}
-.feishu-steps li{padding-left:6px;line-height:1.7}
-.feishu-steps b{display:block;font-weight:600;color:var(--ink)}
-.feishu-steps span{display:block;color:var(--muted)}
-.feishu-help{font-size:12px;line-height:1.8;margin:8px 0 16px}
-.feishu-help dt{font-weight:600;margin-top:13px}
-.feishu-help dd{margin:3px 0;color:var(--muted);overflow-wrap:anywhere}
+.feishu-details>summary{cursor:pointer;padding:14px 0;font-family:var(--sans);font-size:12.5px;font-weight:500;color:var(--dim);min-height:44px}
+.feishu-details>summary:hover{color:var(--ink)}
 .feishu-uri{overflow-wrap:anywhere;word-break:break-word;flex:1;min-width:0}
-@media(max-width:600px){.feishu-heading{gap:10px}.feishu-title{font-size:18px}.feishu-actions{align-items:stretch}.feishu-actions .btn{min-height:44px}.feishu-actions input{flex-basis:100%}.feishu-current{gap:8px 12px}}
+@media(max-width:600px){.feishu-heading{gap:10px}.feishu-actions{align-items:stretch}.feishu-actions .btn{min-height:44px}.feishu-actions input{flex-basis:100%}}
 
 </style>
 <script>/* 防 FOUC:首屏绘制前定主题(默认 light;用户切换后按 localStorage)与界面语言
@@ -3728,6 +3721,7 @@ function renderSettings(){
   </div>`;
   $('#settings').innerHTML=`<div class="grid cols2 stagger">
     ${fxFeishuCard(fe)}
+    ${fxFeishuAccessCard(fe)}
     ${netCard}
     <div class="card"><div class="lbl">运行限制</div>
       <div class="inline" style="align-items:flex-start">
@@ -3743,7 +3737,6 @@ function renderSettings(){
       <div class="hint" style="margin-top:10px">执行权限已改<b>按群设</b> —— 见「群·项目」每张卡(缺省 <b>dontAsk 只读 · fail-closed</b>)。</div>
     </div>
     ${botCard}
-    ${fxFeishuAccessCard(fe)}
     ${!S.runtimeCapabilities?fxSlackCard(S.slack||null)+fxWecomCard(S.wecom||null):''}
     ${aboutCard}
     ${updateCard}
@@ -3977,33 +3970,20 @@ function fxFeishuCard(fe){
   const appUrl=fe&&/^cli_[A-Za-z0-9]+$/.test(fe.appId||'')?'https://open.feishu.cn/app/'+encodeURIComponent(fe.appId):'https://open.feishu.cn/app';
   const groupCount=(S.groups||[]).filter(g=>!g.platform||g.platform==='feishu').length;
   return `<div class="card feishu-setup" id="feishuCard" style="grid-column:1/-1">
-    <div class="feishu-heading"><div><div class="lbl">${platLogo('feishu')}飞书</div><div class="feishu-title">${esc(app.name||(configured?'项目群已配置':'扫码，把项目带进飞书'))}</div></div><span class="fx-status ${online?'on':''}"><span class="dot ${online?'ok':configured?'warn':'skip'}"></span>${status}</span></div>
-    <p class="hint">${configured?'在项目群里发任务，机器人会把进度和结果回复到群里。':'用手机飞书确认一次，自动创建机器人和项目群。'}</p>
-    ${configured?`<div class="feishu-current"><span>已绑定项目群</span><strong>${groupCount}</strong><span>消息响应</span><strong>${fe.onlyWhenMentioned?'仅回复 @ 机器人的消息':'接收群内普通消息'}</strong></div>
-      ${!online?'<p class="hint">应用已配置，连接尚未确认。请确认这台 Mac 上的 SintBot 正在运行。</p>':''}
-      <div class="feishu-actions"><button class="btn primary" data-gotab="groups">管理项目群</button><a class="btn" data-guide="usage/" href="${guideBase()}usage/" target="_blank" rel="noopener">查看使用指南</a></div>`:''}
-    <details class="feishu-details" ${configured?'':'open'}><summary>首次接入：三步开始</summary><ol class="feishu-steps">
-      <li><b>手机扫码</b><span>按安装指南在 Mac 上开始接入，用手机飞书选择企业或团队身份，确认授权。</span></li>
-      <li><b>自动建群</b><span>接入流程创建机器人应用、项目目录和群，把你加入群并保存配置。</span></li>
-      <li><b>群里发任务</b><span>按提示启动后，在新群发「读取 README 第一行」。收到回复就可以开始工作。</span></li>
-    </ol><div class="feishu-actions"><a class="btn ${configured?'':'primary'}" data-guide="install/#feishu" href="${guideBase()}install/#feishu" target="_blank" rel="noopener">查看扫码接入指南</a></div>
-    <p class="hint">已经接入的应用可以继续使用，添加项目群请到「群 · 项目」。</p></details>
-    <details class="feishu-details"><summary>接入遇到问题</summary><dl class="feishu-help">
-      <dt>没有企业或团队身份</dt><dd>先在飞书创建团队或切换到已有团队，再开始扫码。</dd>
-      <dt>需要管理员批准</dt><dd>按飞书页面提示联系组织管理员。权限和发布审核以所在组织的设置为准。</dd>
-      <dt>扫码后没有建群成功</dt><dd>按接入流程给出的提示续做；已有应用可以复用，无需反复新建。</dd>
-      <dt>消息没有回复</dt><dd>确认机器人在群内、项目群已绑定，且这台 Mac 上的 SintBot 正在运行。</dd>
-      <dt>模型卡点了没反应</dt><dd>在应用后台检查卡片回调是否使用长连接，并订阅 card.action.trigger；修改后发布应用版本。</dd>
-    </dl><a class="lnk" href="${appUrl}" target="_blank" rel="noopener">打开飞书应用后台 ${IC.ext}</a></details>
-    <details class="feishu-details"><summary>高级：应用信息与手动接入</summary>
-      <p class="hint">当前应用信息仅供核对；此页不会修改应用凭据或重新扫码。</p>
-      <dl class="feishu-help"><dt>App ID</dt><dd class="mono">${esc(fe&&(fe.appId||(fe.appIdRef?'env:'+fe.appIdRef:''))||'未配置')}</dd>
-      <dt>应用凭据</dt><dd>${configured?'已设置，不显示密钥':'尚未配置完整'}</dd>
-      <dt>Bot ID</dt><dd class="mono">${esc(fe&&fe.botOpenId||'尚未获取')}</dd></dl>
+    <div class="feishu-heading"><div class="lbl">${platLogo('feishu')}飞书</div><span class="fx-status ${online?'on':''}"><span class="dot ${online?'ok':configured?'warn':'skip'}"></span>${status}</span></div>
+    ${configured?'':'<p class="hint">用手机飞书确认一次，自动创建机器人和项目群。</p>'}
+    ${configured?`<div class="kv"><span class="kk">应用名称</span><span class="vv">${esc(app.name||'项目群已配置')}</span></div>
+      <div class="kv"><span class="kk">已绑定项目群</span><span class="vv">${groupCount}</span></div>
+      <div class="kv"><span class="kk">消息响应</span><span class="vv">${fe.onlyWhenMentioned?'仅回复 @ 机器人的消息':'接收群内普通消息'}</span></div>
+      <div class="feishu-actions"><button class="btn primary" data-gotab="groups">管理项目群</button><a class="btn" data-guide="usage/" href="${guideBase()}usage/" target="_blank" rel="noopener">查看使用指南</a></div>`
+      :`<div class="feishu-actions"><a class="btn primary" data-guide="install/#feishu" href="${guideBase()}install/#feishu" target="_blank" rel="noopener">查看扫码接入指南</a></div>`}
+    ${configured?`<details class="feishu-details"><summary>高级：应用信息与手动接入</summary>
+      <div class="kv"><span class="kk">App ID</span><span class="vv">${esc(fe&&(fe.appId||(fe.appIdRef?'env:'+fe.appIdRef:''))||'未配置')}</span></div>
+      <div class="kv"><span class="kk">应用凭据</span><span class="vv">已设置，不显示密钥</span></div>
+      <div class="kv"><span class="kk">Bot ID</span><span class="vv">${esc(fe&&fe.botOpenId||'尚未获取')}</span></div>
       <p class="hint">更换应用或凭据需要在这台 Mac 上完成，并在所有任务结束后重新启动。请保留已有配置和任务记录。</p>
-      <p class="hint">手动接入需配置机器人、消息事件和卡片回调、必要权限与可用范围，再发布应用版本。</p>
-      <a class="lnk" data-guide="install/#feishu" href="${guideBase()}install/#feishu" target="_blank" rel="noopener">查看完整安装指南 ${IC.ext}</a>
-    </details>
+      <div class="feishu-actions"><a class="btn" href="${appUrl}" target="_blank" rel="noopener">打开飞书应用后台 ${IC.ext}</a><a class="btn" data-guide="install/#feishu" href="${guideBase()}install/#feishu" target="_blank" rel="noopener">查看完整安装指南 ${IC.ext}</a></div>
+    </details>`:''}
   </div>`;
 }
 function fxFeishuAccessCard(fe){
@@ -4403,6 +4383,7 @@ const I18N_EN=[
   ["在项目群里发任务，机器人会把进度和结果回复到群里。", "Send a task in your project group. The bot replies with progress and results."],
   ["用手机飞书确认一次，自动创建机器人和项目群。", "Confirm in Feishu on your phone to create the bot and project group automatically."],
   ["已绑定项目群", "Bound project groups"],
+  ["应用名称", "App name"],
   ["消息响应", "Messages"],
   ["仅回复 @ 机器人的消息", "Replies when the bot is mentioned"],
   ["接收群内普通消息", "Receives regular group messages"],

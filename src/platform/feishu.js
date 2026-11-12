@@ -569,22 +569,37 @@ function createFeishuPlatform({ appId, appSecret, botOpenId = null, onlyWhenMent
   // scope) is cached as null so we don't hammer the API, and callers fall back.
   const nameCache = new Map() // openId -> name | null
   let nameScopeWarned = false
-  async function senderNameOf(openId) {
+  let memberNameWarned = false
+  async function senderNameOf(openId, chatId = null) {
     if (!openId) return null
     if (nameCache.has(openId)) return nameCache.get(openId)
+    let name = null
     try {
       const r = await client.contact.user.get({ params: { user_id_type: 'open_id' }, path: { user_id: openId } })
-      const name = (r && r.data && r.data.user && (r.data.user.name || r.data.user.nickname)) || null
-      nameCache.set(openId, name)
-      return name
+      name = (r && r.data && r.data.user && (r.data.user.name || r.data.user.nickname)) || null
     } catch (e) {
-      nameCache.set(openId, null)
       if (!nameScopeWarned) {
         nameScopeWarned = true
         log('feishu: 拉取用户名失败(需要 contact:contact.base:readonly scope?),发送者标注回退为 open_id — ' + larkErrMsg(e))
       }
-      return null
     }
+    // 通讯录查不到(缺 scope、或发送者不在应用的通讯录范围内 —— 基础版多人群常见)时,退到当前群的
+    // 成员列表:名字随成员一起返回,顺带把同群其他人也写进同一份缓存。
+    if (!name && chatId) {
+      try {
+        for (const m of await fetchChatMembers(client, chatId)) {
+          if (m.name && m.name !== m.openId && !nameCache.get(m.openId)) nameCache.set(m.openId, m.name)
+        }
+        name = nameCache.get(openId) || null
+      } catch (e) {
+        if (!memberNameWarned) {
+          memberNameWarned = true
+          log('feishu: 群成员列表取名失败 — ' + larkErrMsg(e))
+        }
+      }
+    }
+    nameCache.set(openId, name)
+    return name
   }
 
   async function sendText(chatId, content) {
@@ -737,7 +752,7 @@ function createFeishuPlatform({ appId, appSecret, botOpenId = null, onlyWhenMent
             let senderName = openId || 'user'
             if (openId) {
               if (nameCache.has(openId)) senderName = nameCache.get(openId) || openId
-              else senderNameOf(openId).catch(() => {}) // background warm; does not reorder onMessage
+              else senderNameOf(openId, message.chat_id).catch(() => {}) // background warm; does not reorder onMessage
             }
             // Fire-and-forget into the engine (NFR1): a turn can run for minutes,
             // and whether the SDK serializes pending handlers is not contractual —

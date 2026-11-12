@@ -24,6 +24,9 @@ const { codexCatalogWindows, windowForProvider } = require('../agent/modelwindow
 const claudestatus = require('../agent/claudestatus') // Claude 订阅登录态(卡片「检测登录」· doctor 同源)
 const claudemodels = require('../agent/claudemodels') // Claude 模型候选(仅登录后给)
 const claudeusage = require('../agent/claudeusage') // Claude 订阅额度(oauth/usage,cc-hud 同源;v0.11.3)
+const { collectEnvConflicts } = require('../agent/envconflicts') // 模型卡「环境冲突」(B5):守护进程 env / settings.json / config.toml,只回键名
+// 探不出来给空数组 —— 这行告警绝不能拖垮登录检测本身。
+const envWarningsFor = (runner, provider) => { try { return collectEnvConflicts({ runner, provider }) } catch { return [] } }
 const codexAgent = require('../agent/codexcode') // codex --version 探针(概览健康,仅配了 codex provider 时)
 const { globalPlugins, codexPlugins, projectPlugins, mcpReachability } = require('../plugins')
 const gitrepo = require('../gitrepo') // 群项目 ↔ git 远端关联(「仓库地址」:init + origin,幂等)+ ls-remote 连通性探测
@@ -734,7 +737,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
 
       leftovers: await leftoversState(),
 
-      codexStatus: codexStatusCache ? { login: codexStatusCache.login, usage: codexStatusCache.usage } : null, // 前端加载回填,codex 卡片刷新不丢
+      codexStatus: codexStatusCache ? { login: codexStatusCache.login, usage: codexStatusCache.usage, envWarningsByProvider: codexStatusCache.envWarningsByProvider || {} } : null, // 前端加载回填,codex 卡片刷新不丢
       claudeStatus: claudeStatusCache ? claudeStatusCache.login : null, // 同上,Claude 订阅登录态
       // 服务器时区/时间(顶栏时钟):tz/offsetMin = bot 工作时区(cfg.timezone,默认北京)——
       // 群里/prompt 时间戳用的就是这个口径,运维看到的钟要和群里一致;hostTz 是主机系统时区
@@ -1033,7 +1036,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         codexModelsCache = { at: Date.now(), val }
         return sendJSON(res, 200, val)
       }
-      if (p === '/api/usage' && req.method === 'GET') { const cfg = loadConfig(configPath); return sendJSON(res, 200, await getUsage(cfg.providers)) }
+      if (p === '/api/usage' && req.method === 'GET') { const cfg = loadConfig(configPath); return sendJSON(res, 200, await getUsage(cfg.providers, { bin: cfg.agent.bin })) }
       // 模型卡「额度」行的 ↻:只刷这一个 provider 且绕过两层缓存(见 usage.js refreshUsage)。
       // 分工 = 整页 /api/usage 走 5 分钟缓存,手点才现拉;codex 走自家 /api/codex/verify 的 force。
       if (p === '/api/usage/refresh' && req.method === 'POST') {
@@ -1041,7 +1044,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         const cfg = loadConfig(configPath)
         const prov = cfg.providers && cfg.providers[name]
         if (!prov) return sendJSON(res, 400, { error: `未知模型 '${name}'` })
-        return sendJSON(res, 200, { name, usage: await refreshUsage(name, prov) })
+        return sendJSON(res, 200, { name, usage: await refreshUsage(name, prov, { bin: cfg.agent.bin }) })
       }
 
       if (p === '/api/provider-key' && req.method === 'POST') {
@@ -2473,10 +2476,12 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         // 前端不显示额度行,不拖垮登录检测本身。
         let usage = null
         if (login && login.ok && login.loggedIn) {
-          try { if (force) claudeusage.clearCache(); usage = await claudeusage.usageLine() } catch { usage = null }
+          try { if (force) claudeusage.clearCache(); usage = await claudeusage.usageLine({ bin: cfg.agent.bin }) } catch { usage = null }
         }
-        claudeStatusCache = { at: Date.now(), login: { ...login, usage } }
-        return sendJSON(res, 200, { ...login, usage })
+        // 订阅卡 = 无 baseUrl、无 key 的直连形态;环境里的 ANTHROPIC_API_KEY 对它是合法鉴权,核心据此不报。
+        const envWarnings = envWarningsFor('claude', { baseUrl: null, hasApiKey: false })
+        claudeStatusCache = { at: Date.now(), login: { ...login, usage, envWarnings } }
+        return sendJSON(res, 200, { ...login, usage, envWarnings })
       }
       // Claude 模型下拉的候选。**未登录不给任何型号**(产品决定:没登录就别列)。
       // 已登录时 = 内置候选 + 本机账号的额外可选项;为什么不是官方实时清单,见 claudemodels.js 头部。
@@ -2498,8 +2503,9 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         // 会把 usage 字段洗掉,而 /api/claude/verify 的 60s 去抖随后会把这份缺 usage 的缓存原样
         // 吐回去 —— 表现就是卡片上的额度行凭空消失,而登录态一切正常,没人查得出为什么。
         if (login && login.ok) {
-          const keep = claudeStatusCache && claudeStatusCache.login && claudeStatusCache.login.usage
-          claudeStatusCache = { at: Date.now(), login: keep ? { ...login, usage: keep } : login }
+          const prev = (claudeStatusCache && claudeStatusCache.login) || {}
+          const keep = prev.usage
+          claudeStatusCache = { at: Date.now(), login: { ...login, ...(keep ? { usage: keep } : {}), ...(prev.envWarnings ? { envWarnings: prev.envWarnings } : {}) } }
         }
         return sendJSON(res, 200, { ...claudemodels.listModels({ loggedIn: !!(login && login.ok && login.loggedIn) }), login })
       }
@@ -2516,11 +2522,14 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         const probe = await codexstatus.cachedAuthProbe('codex')
         const file = codexstatus.readAuthFile()
         const d = codexstatus.describeLogin(probe, file)
+        // B5:每张 codex 卡各算一份(baseUrl / key 不同,核心的判据不同);OPENAI_* / config.toml 的 model_provider,只有键名
+        const envWarningsByProvider = Object.fromEntries(Object.entries(loadConfig(configPath).providers || {})
+          .filter(([, x]) => x && x.runner === 'codex').map(([n, x]) => [n, envWarningsFor('codex', x)]))
         const login = { ok: true, verified: !!probe.verified, loggedIn: !!(probe.ok || (!probe.verified && file.exists && !file.expired)), dead: !!probe.dead, mode: file.mode || 'chatgpt', level: d.level, text: d.text }
         let usage = probe.usage || null
         if (!usage && !probe.dead && codexStatusCache && codexStatusCache.usage) usage = codexStatusCache.usage // 探不到时保住旧额度(同前端那条「同一份状态两个消费者」的教训)
-        codexStatusCache = { at: Date.now(), login, usage } // cached into /api/state so the card survives a page reload
-        return sendJSON(res, 200, { login, usage })
+        codexStatusCache = { at: Date.now(), login, usage, envWarningsByProvider } // cached into /api/state so the card survives a page reload
+        return sendJSON(res, 200, { login, usage, envWarningsByProvider })
       }
       if (p === '/api/playground/run' && req.method === 'POST') {
         const { provider: provName, workdir, prompt, sessionId } = await body(req)

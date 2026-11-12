@@ -1,4 +1,4 @@
-# Install SintBot 1.4.16
+# Install SintBot 1.4.17
 
 English · [简体中文](./zh-CN/install.md)
 
@@ -10,11 +10,45 @@ You need a Mac, Node.js 22 or newer, and projects stored on that Mac. Install an
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-The installer checks the environment, installs `sintbot@1.4.16` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.16`. No sudo is needed.
+The installer checks the environment, installs `sintbot@1.4.17` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.17`. No sudo is needed.
 
 To preview, append `-s -- --dry-run`. To choose another location, set `SINTBOT_INSTALL_DIR` and adjust the executable paths below.
 
-## 2. Connect Feishu
+## 2. Connect by scanning (recommended)
+
+Prerequisite: the Feishu app on your phone is signed in with an enterprise or team identity; a personal identity without an organization cannot scan, so create a team first (free). The app created by the scan belongs to the scanner's organization; approval depends on its policies.
+
+```bash
+"$HOME/.local/share/sintbot/bin/sintbot" connect
+```
+
+The terminal prints the scan link and opens a local page with the QR code; scan it with Feishu and confirm on the phone. It then, in order: obtains the app credentials (and prints the app ID) → runs the self-check → opens the contact range and visibility and publishes a version → creates a group and adds you → creates the project folder `~/Projects/sintbot` (with a `README.md`) → writes `~/.sbot/config.json` → initializes the message journals. Every step reports its result. Once the scan is confirmed, the app exists in your organization; any later failed check or group creation stops before the folder and the configuration are created and prints the rerun command with `--app-id`.
+
+- The credentials are stored in clear text in `~/.sbot/config.json` (file 0600, directory 0700). To switch back to environment variables, change `appId` / `appSecret` to `"env:FEISHU_APP_ID"` / `"env:FEISHU_APP_SECRET"` and export both before every start.
+- `--basic`: for a non-administrator in a company organization. It does not request `application:application:patch` and skips the range and publish steps; ask an administrator to finish those two in the Open Platform.
+- `--app-id cli_…`: reuse an existing app (add permissions to it instead of creating one), to rerun after a stop or once a review is approved. Allowed only when there is no configuration file, or the file belongs to that app and binds no group yet; a configuration with groups is never replaced.
+- `--chat oc_…`: skip group creation and bind a group you created by hand with the bot added (the notice after a failed group creation shows this command).
+- `--workdir /absolute/path`: bind an existing directory instead of creating one; `--name` changes the default folder name; `--provider codex|claude` picks the runner (chosen automatically when only one is installed); `--no-open` prints the link without opening the page.
+- `connect` refuses to run when a Feishu configuration already exists or the service is running. The scan requests the card callbacks used by `/model`. If the card does not respond, check the callback subscription as in section 4.
+
+## 3. First start
+
+`connect` has already initialized, so start directly:
+
+```bash
+"$HOME/.local/share/sintbot/bin/sintbot" start --config "$HOME/.sbot/config.json" --ui
+```
+
+This checks the configuration and runners, connects Feishu and opens the local console. Keep the terminal open. In the group, send "Read the first line of the project README and reply with only that line", then compare it with `~/Projects/sintbot/README.md`. A passing preflight does not prove Feishu authentication or delivery.
+
+## 4. Manual setup (alternative)
+
+Use the manual route when the scan fails, an administrator does not approve, or you prefer to manage the app yourself; it is the same procedure as before.
+
+<details>
+<summary>Show the manual steps</summary>
+
+#### 4.1 Create the app
 
 In the [Feishu Open Platform](https://open.feishu.cn/), create a custom app, enable the bot and the permissions to receive and reply to messages, choose long connection for event subscription and subscribe to message receipt. For callbacks, also choose long connection and subscribe to card action callbacks (the tap-to-pick `/model` card needs them). Publish the app, add the bot to the groups you will use, and copy each group's `oc_…` chat ID.
 
@@ -29,7 +63,7 @@ export FEISHU_APP_ID FEISHU_APP_SECRET
 
 Never post the secret in a group or commit it. Keep using this terminal; set both variables again in a new one.
 
-## 3. Bind projects
+#### 4.2 Write the configuration
 
 Create a private directory with `mkdir -p ~/.sbot && chmod 700 ~/.sbot`, then create `~/.sbot/config.json`. Replace the chat IDs and absolute project paths; each project directory must already exist. The example binds two groups, one with Codex and one with Claude Code. With one group, delete the other entry.
 
@@ -69,9 +103,9 @@ Then run `chmod 600 ~/.sbot/config.json`.
 - To pin a Claude model, add `"model"` to `providers.claude`; otherwise Claude Code's default model on this Mac is used.
 - At most 2 tasks run at once by default; add `"agent": { "maxConcurrent": 4 }` at the top level to change it (1–32).
 
-## 4. First start
+#### 4.3 Initialize and start
 
-Copy and run in the same terminal:
+Copy and run in the same terminal (the manual route runs `init` itself):
 
 ```bash
 SINTBOT="$HOME/.local/share/sintbot/bin/sintbot"
@@ -83,6 +117,8 @@ SINTBOT="$HOME/.local/share/sintbot/bin/sintbot"
 This initializes the message journals, checks the configuration and runners, connects Feishu and opens the local console, stopping at the first failure. **Run `init` only once**; never run it again for a restart. Keep the terminal open.
 
 In a group, send "Read the first line of the project README and reply with only that line", then compare it with the file. A passing preflight does not prove Feishu authentication or delivery.
+
+</details>
 
 ## 5. Use it in a group
 
@@ -123,7 +159,7 @@ You can also add a group without the console: add it to the configuration, stop 
 
 ## Stop and restart
 
-Press Ctrl-C and wait for exit. With the Feishu variables set, run:
+Press Ctrl-C and wait for exit. If the configuration uses `env:` references, set those variables first, then run:
 
 ```bash
 "$HOME/.local/share/sintbot/bin/sintbot" start --config "$HOME/.sbot/config.json" --ui

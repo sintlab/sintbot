@@ -1,9 +1,9 @@
-// ABI v35 adapter for the private binary decision core. Manifest assembly still stays in JS.
+// ABI v36 adapter for the private binary decision core. Manifest assembly still stays in JS.
 const fs = require('node:fs')
 const path = require('node:path')
 const { createHash } = require('node:crypto')
 
-const EXPECTED_SHA256 = 'a7ad2bd9210906ee6f5d7893ed3d9632769b6e2dbec285c1102492e3ba1257b5'
+const EXPECTED_SHA256 = 'c79f12ceb1ef79aceb0ab54cf87052127325a1d8fdfd5c02e3509fef39f6f511'
 let bytes
 try {
   bytes = fs.readFileSync(path.join(__dirname, 'privatecore.wasm'))
@@ -26,7 +26,7 @@ try {
 } catch (cause) {
   throw new Error('SintBot binary core cannot start on this runtime', { cause })
 }
-if (core.abi_version() !== 35) throw new Error('SintBot binary core ABI mismatch')
+if (core.abi_version() !== 36) throw new Error('SintBot binary core ABI mismatch')
 const encoder = new TextEncoder()
 const decoder = new TextDecoder('utf-8', { fatal: true })
 
@@ -771,6 +771,67 @@ function manifestPolicy(permissionMode, isCodex, allowedTools, disallowedTools) 
   return value
 }
 
+// ABI 36 JSON decisions (sintbot-core docs/ABI36_CONTRACTS.md). Each wrapper only
+// checks the envelope shape the host relies on; the core owns the rules and wording.
+const isObject = value => !!value && typeof value === 'object' && !Array.isArray(value)
+
+function connectManifest(basic, userName, version) {
+  const value = coreJson('connect_manifest', { basic: !!basic, userName: String(userName || ''), version: String(version || '') }, 'build the Feishu connect manifest')
+  if (!isObject(value) || !isObject(value.appPreset) || !isObject(value.addons) ||
+      !Array.isArray(value.addons.scopes) || !Array.isArray(value.addons.events) ||
+      !Array.isArray(value.addons.callbacks) || typeof value.hint !== 'string') {
+    throw new Error('SintBot binary core returned an invalid connect manifest')
+  }
+  return value
+}
+
+function connectPlan(step, { basic = false, status = null, code = null, msg = '', observed = {} } = {}) {
+  const value = coreJson('connect_plan', { step, basic: !!basic, status, code, msg: String(msg || ''), observed: isObject(observed) ? observed : {} }, `decide the connect step ${step}`)
+  if (!isObject(value) || !['ok', 'stop', 'wait', 'warn'].includes(value.verdict) || typeof value.notice !== 'string' ||
+      !(value.next === null || typeof value.next === 'string') ||
+      !(value.retryAfterMs === null || Number.isSafeInteger(value.retryAfterMs))) {
+    throw new Error('SintBot binary core returned an invalid connect decision')
+  }
+  return value
+}
+
+function connectConfig(input) {
+  const value = coreJson('connect_config', input, 'build the Feishu connect configuration')
+  if (!isObject(value) || typeof value.ok !== 'boolean' ||
+      (value.ok && (!isObject(value.config) || typeof value.readme !== 'string')) ||
+      (!value.ok && typeof value.error !== 'string')) {
+    throw new Error('SintBot binary core returned an invalid connect configuration')
+  }
+  return value
+}
+
+function qrMatrix(text, ec = 'M') {
+  const value = coreJson('qr_matrix', { text: String(text), ec }, 'encode a QR code')
+  if (!isObject(value) || !Number.isInteger(value.size) || !Array.isArray(value.rows) ||
+      value.rows.length !== value.size || value.rows.some(row => typeof row !== 'string' || row.length !== value.size)) {
+    throw new Error('SintBot binary core returned an invalid QR matrix')
+  }
+  return value
+}
+
+function usageParse(provider, source, status, body, now = Date.now()) {
+  const value = coreJson('usage_parse', { provider, source, status, body, now }, `parse ${provider} ${source} usage`)
+  if (!isObject(value) || typeof value.ok !== 'boolean' ||
+      (value.ok && !Array.isArray(value.windows)) || (!value.ok && typeof value.error !== 'string')) {
+    throw new Error('SintBot binary core returned an invalid usage result')
+  }
+  return value
+}
+
+function envConflicts(input) {
+  const value = coreJson('env_conflicts', input, 'check environment conflicts')
+  if (!isObject(value) || !Array.isArray(value.warnings) ||
+      value.warnings.some(w => !isObject(w) || typeof w.key !== 'string' || typeof w.where !== 'string' || typeof w.reason !== 'string')) {
+    throw new Error('SintBot binary core returned an invalid environment check')
+  }
+  return value
+}
+
 // A trap or exhausted stack can leave the instance's own stack pointer wrong, and
 // C1 calls hold no state, so the next call simply gets a fresh instance.
 function guarded(fn) {
@@ -798,7 +859,7 @@ function followupCall(name, value) {
 function followupEnabled(group, runner) { return followupCall('followup_policy', { group, runner }) }
 function claudeFollowupStep(state, event) { return followupCall('claude_followup_step', { state, event }) }
 
-const entries = { followupEnabled, claudeFollowupStep, classifyError, routeBackend, sandboxTier, appErrorOverride, appNormalizeItem, appStreamTail, appNoticeAction, appDeltaNext, appLandedAction, appCompletionAction, appCompletionNoticeAction, manifestFeatures, manifestHeader, manifestContext, manifestSkills, manifestStyleBoard, manifestImagenAsset, manifestRuntime, manifestPolicy, systemAppendix, codexEffortRejection, wecomGatePrompt, imagenPrompt, turnPrompt, compactEvent, engineQueueStep, engineSlotsStep, engineTurnStep, engineSessionStep, engineHandoffStep, engineIntakeStep, engineLifecycleStep, engineTerminalStep, engineSteerStep, engineRecoveryStep, engineFailoverStep, parseResetFields, chooseResetEpoch, codexBuildPrompt, codexBuildArgs, appUsageFromTotal, settleUsage, appBuildRequest, claudeBaseSkillAllows, claudeBuildArgs, claudePluginAllowRules, claudeNormalizeEvent, codexNormalizeEvent, codexParseError }
+const entries = { followupEnabled, claudeFollowupStep, classifyError, routeBackend, sandboxTier, appErrorOverride, appNormalizeItem, appStreamTail, appNoticeAction, appDeltaNext, appLandedAction, appCompletionAction, appCompletionNoticeAction, manifestFeatures, manifestHeader, manifestContext, manifestSkills, manifestStyleBoard, manifestImagenAsset, manifestRuntime, manifestPolicy, systemAppendix, codexEffortRejection, wecomGatePrompt, imagenPrompt, turnPrompt, compactEvent, engineQueueStep, engineSlotsStep, engineTurnStep, engineSessionStep, engineHandoffStep, engineIntakeStep, engineLifecycleStep, engineTerminalStep, engineSteerStep, engineRecoveryStep, engineFailoverStep, parseResetFields, chooseResetEpoch, codexBuildPrompt, codexBuildArgs, appUsageFromTotal, settleUsage, appBuildRequest, claudeBaseSkillAllows, claudeBuildArgs, claudePluginAllowRules, claudeNormalizeEvent, codexNormalizeEvent, codexParseError, connectManifest, connectPlan, connectConfig, qrMatrix, usageParse, envConflicts }
 for (const name of Object.keys(entries)) entries[name] = guarded(entries[name])
 
 module.exports = { ...entries, engineStep, resetBinaryCore, HUMAN_BY_KIND: HUMAN }

@@ -180,21 +180,206 @@ async function fetchRaw(token, { ttl = 60_000, now = Date.now, log = warn, curl 
   return data
 }
 
+// ── 令牌过期兜底(2026-11-12,cc-switch takeaways B3)──────────────────────────────
+// 纪律 2 不变:我们**不刷新**令牌。过期时让 Claude CLI 自己在自己的锁里刷新 —— 跑一次
+// `claude -p /usage`(官方的非交互用量面板),它顺手把额度写进 `~/.claude.json` 的
+// `cachedUsageUtilization`,我们只读那份缓存,交给核心 `usage_parse('claude','cached')` 判
+//(当前 CLI 使用 fetchedAtMs + utilization.limits;旧 limits[] 也保留支持，超过 645 秒判旧)。
+// 约束:
+//   · **不阻塞调用方**:需要刷新时在后台起跑(进程内一次一个),本次立刻回 null(或在跑期间回
+//     上一次解析出的值);之后的调用再读结果。/hud、/api/claude/verify 都是秒级回复。
+//   · **只信本进程跑成功后的文件**:退出码 0 才记一次「刷新完成时刻」,读文件以它为准;文件
+//     里没有 fetchedAt 时就用这个完成时刻 —— 别的进程(交互式 CLI)写的旧缓存不当新数。
+//     跑失败 / 超时 ⇒ null。
+//   · 同账号(按凭据文件路径)10 分钟最多跑一次 · 45 秒后 SIGTERM、再 5 秒 SIGKILL,子进程
+//     没 close 之前不会起下一个 · 旗子探测合成一次(短超时、有缓存),老 CLI 不认 ⇒ 跳过。
+//   · env 走 buildEnv({}) 再去掉 ANTHROPIC_API_KEY(只认 OAuth 登录态,别让 /usage 打到 API key
+//     或第三方网关)· cwd 用临时目录(别让它读到哪个项目的 CLAUDE.md / .mcp.json)· 输出不看不记。
+const FALLBACK_TIMEOUT_MS = 45_000
+const FALLBACK_KILL_GRACE_MS = 5_000
+const FALLBACK_INTERVAL_MS = 10 * 60_000
+const FALLBACK_FLAG_PROBE_MS = 2_000
+const FALLBACK_ARGS = Object.freeze(['-p', '/usage', '--output-format', 'json', '--tools', '', '--strict-mcp-config', '--setting-sources', '', '--no-session-persistence'])
+const FALLBACK_FLAGS = Object.freeze(['--tools', '--strict-mcp-config', '--setting-sources', '--no-session-persistence'])
+const USAGE_HELP_INFLIGHT = new Map()
+
+// Some native CLI builds exit before a long help page drains through a pipe.
+// A private regular file receives the complete page. The four flag checks share
+// one bounded process; this temporary file contains help text only.
+function supportsUsageFlag(bin, flag) {
+  let probe = USAGE_HELP_INFLIGHT.get(bin)
+  if (!probe) {
+    probe = (async () => {
+      const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'sintbot-usage-help-'))
+      const file = path.join(dir, 'help.txt')
+      let fd
+      try {
+        fd = fs.openSync(file, 'wx', 0o600)
+        const ok = await new Promise(resolve => {
+          let child, timer, force, settled = false
+          const finish = value => { if (settled) return; settled = true; clearTimeout(timer); clearTimeout(force); resolve(value) }
+          try {
+            const command = require('./winexec').resolveSpawn(bin, ['--help'])
+            child = require('node:child_process').spawn(command.file, command.spawnArgs,
+              { cwd: dir, stdio: ['ignore', fd, 'ignore'], windowsHide: true })
+          } catch { return finish(false) }
+          child.once('error', () => finish(false))
+          child.once('close', code => finish(code === 0))
+          timer = setTimeout(() => {
+            try { child.kill('SIGTERM') } catch {}
+            force = setTimeout(() => { try { child.kill('SIGKILL') } catch {} }, 1000)
+            force.unref?.()
+          }, 5000)
+          timer.unref?.()
+        })
+        if (!ok || fs.statSync(file).size > 1024 * 1024) return null
+        return await fs.promises.readFile(file, 'utf8')
+      } finally {
+        if (fd !== undefined) fs.closeSync(fd)
+        await fs.promises.rm(dir, { recursive: true, force: true })
+      }
+    })().catch(() => null)
+    USAGE_HELP_INFLIGHT.set(bin, probe)
+    probe.finally(() => { if (USAGE_HELP_INFLIGHT.get(bin) === probe) USAGE_HELP_INFLIGHT.delete(bin) })
+  }
+  return probe.then(text => text === null ? null : text.includes(flag))
+}
+const FALLBACK = {
+  inflight: null,       // 正在跑的那次(Promise<boolean>);子进程 close 前不清
+  lastAt: new Map(),    // 凭据文件路径 -> 上次起跑时刻(节流)
+  doneAt: new Map(),    // 凭据文件路径 -> 本进程最近一次退出码 0 的完成时刻(没有 = 不信文件)
+  lastGood: new Map(),  // 凭据文件路径 -> 上一次解析出的一行(只在刷新进行中回它)
+  flags: null,          // { bin, until, p } 合成一次的旗子探测
+  file: null,           // { path, mtimeMs, body } 按 mtime 缓存的 ~/.claude.json 解析
+}
+
+// `~/.claude.json` 原文 → 交给核心的 body(cachedUsageUtilization 原样)。不是对象 ⇒ null。
+// 时效优先用对象自带的 fetchedAtMs/fetchedAt;两者都没有才用本进程刷新完成时刻。
+function readCachedUtilization(raw) {
+  let j = null
+  try { j = JSON.parse(String(raw || '')) } catch { return null }
+  const u = j && j.cachedUsageUtilization
+  return u && typeof u === 'object' && !Array.isArray(u) ? u : null
+}
+
+// 按 mtime 缓存的异步读:同一份文件只解析一次;stat/读失败 ⇒ null。
+async function readClaudeJson(file, { readFile, stat }) {
+  let st = null
+  try { st = await stat(file) } catch { return null }
+  const mtimeMs = st && typeof st.mtimeMs === 'number' ? st.mtimeMs : null
+  const c = FALLBACK.file
+  if (c && c.path === file && mtimeMs !== null && c.mtimeMs === mtimeMs) return c.body
+  let raw = null
+  try { raw = await readFile(file, 'utf8') } catch { return null }
+  const body = readCachedUtilization(raw)
+  FALLBACK.file = { path: file, mtimeMs, body }
+  return body
+}
+
+// 核心的 windows[] → parseLimits 的形状,formatClaudeUsage 原样可用。
+const windowsToLimits = (windows) => (Array.isArray(windows) ? windows : [])
+  .map((w) => ({ kind: w.kind, percent: w.percentUsed, resetsAt: w.resetsAt ?? null, scopeName: w.scopeName || '' }))
+
+// 四个旗子合成**一次**探测:默认共享同一份完整 --help 输出，测试可注入探测函数。
+// 短超时兜底;结论 true/false 缓存 10 分钟、不知道(null)缓存 60 秒。
+function probeFlags(bin, supportsFlag, now, timeoutMs = FALLBACK_FLAG_PROBE_MS) {
+  const hit = FALLBACK.flags
+  if (hit && hit.bin === bin && now() < hit.until) return hit.p
+  const all = Promise.all(FALLBACK_FLAGS.map((f) => Promise.resolve().then(() => supportsFlag(bin, f))))
+    .then((a) => (a.every((v) => v === true) ? true : a.some((v) => v === false) ? false : null))
+  const late = new Promise((resolve) => { const t = setTimeout(() => resolve(null), timeoutMs); t.unref?.() })
+  const p = Promise.race([all, late]).catch(() => null)
+  FALLBACK.flags = { bin, until: now() + 60_000, p }
+  p.then((v) => { if (FALLBACK.flags && FALLBACK.flags.p === p) FALLBACK.flags.until = now() + (v === null ? 60_000 : 10 * 60_000) })
+  return p
+}
+
+// 跑一次 `claude -p /usage`;只在子进程 close(或起不来)后才落定 ⇒ 卡住的子进程不会与下一次重叠。
+// 超时:SIGTERM,再过 killGraceMs 还没 close 就 SIGKILL;两个计时器都 unref。
+function runUsageRefresh({ bin, spawn, buildEnv, tmpdir, log, timeoutMs, killGraceMs = FALLBACK_KILL_GRACE_MS }) {
+  return new Promise((resolve) => {
+    let child, settled = false, timedOut = false
+    const timers = []
+    const done = (ok, why) => { if (settled) return; settled = true; for (const t of timers) clearTimeout(t); if (why) log(why); resolve(ok) }
+    const later = (ms, fn) => { const t = setTimeout(fn, ms); t.unref?.(); timers.push(t) }
+    try {
+      const env = buildEnv({})
+      delete env.ANTHROPIC_API_KEY // 只认 OAuth 登录态
+      const { file, spawnArgs } = require('./winexec').resolveSpawn(bin, [...FALLBACK_ARGS])
+      child = spawn(file, spawnArgs, { cwd: tmpdir(), env, stdio: ['ignore', 'ignore', 'ignore'], windowsHide: true })
+    } catch (e) { return done(false, '额度兜底:claude 起不来(' + ((e && e.message) || '未知错误') + ')') }
+    later(timeoutMs, () => {
+      timedOut = true
+      try { child.kill('SIGTERM') } catch {}
+      later(killGraceMs, () => { try { child.kill('SIGKILL') } catch {} })
+    })
+    child.on('error', (e) => done(false, '额度兜底:claude 起不来(' + ((e && e.code) || (e && e.message) || '未知错误') + ')'))
+    child.on('close', (code) => {
+      if (timedOut) return done(false, `额度兜底:claude -p /usage 超时(${timeoutMs}ms),已终止`)
+      done(code === 0, code === 0 ? null : `额度兜底:claude -p /usage 退出码 ${code}`)
+    })
+  })
+}
+
+// 需要就在后台起一次刷新(不 await):进程内一次一个,同账号 10 分钟一次。
+function startRefreshIfDue(account, { bin, now, log, spawn, supportsFlag, buildEnv, tmpdir, timeoutMs, killGraceMs, intervalMs, flagProbeMs }) {
+  if (FALLBACK.inflight) return
+  const last = FALLBACK.lastAt.get(account) || 0
+  if (last && now() - last < intervalMs) return
+  FALLBACK.lastAt.set(account, now())
+  FALLBACK.inflight = (async () => {
+    const flags = await probeFlags(bin, supportsFlag, now, flagProbeMs)
+    if (flags !== true) { log('额度兜底:本机 claude 不认所需旗子,跳过'); return false }
+    const ok = await runUsageRefresh({ bin, spawn, buildEnv, tmpdir, log, timeoutMs, killGraceMs })
+    if (ok) FALLBACK.doneAt.set(account, now())
+    else FALLBACK.doneAt.delete(account)
+    return ok
+  })().catch(() => { FALLBACK.doneAt.delete(account); return false })
+    .finally(() => { FALLBACK.inflight = null })
+}
+
+// 过期/缺凭据时的那条腿:(必要时)后台让 CLI 刷新 → 读缓存(只信本进程刷成功后的)→ 核心判 →
+// 一行人话;任何一步不行 ⇒ null。调用方不会被挡住:这里只 await 一次文件读。
+async function cachedUsageFallback({ home = os.homedir(), bin = 'claude', now = Date.now, log = warn,
+  spawn = require('node:child_process').spawn, readFile = fs.promises.readFile, stat = fs.promises.stat, tmpdir = os.tmpdir,
+  supportsFlag = null, buildEnv = null, timeoutMs = FALLBACK_TIMEOUT_MS, killGraceMs = FALLBACK_KILL_GRACE_MS,
+  intervalMs = FALLBACK_INTERVAL_MS, flagProbeMs = FALLBACK_FLAG_PROBE_MS } = {}) {
+  const account = path.join(home, '.claude', '.credentials.json')
+  startRefreshIfDue(account, { bin, now, log, spawn, tmpdir, timeoutMs, killGraceMs, intervalMs, flagProbeMs,
+    supportsFlag: supportsFlag || supportsUsageFlag, buildEnv: buildEnv || require('./claudecode').buildEnv })
+  const doneAt = FALLBACK.doneAt.get(account)
+  if (!doneAt) return FALLBACK.inflight ? (FALLBACK.lastGood.get(account) || null) : null
+  const raw = await readClaudeJson(path.join(home, '.claude.json'), { readFile, stat })
+  if (!raw) return null
+  const body = raw.fetchedAtMs != null || raw.fetchedAt != null ? raw : { ...raw, fetchedAt: doneAt }
+  const parsed = require('./privatecore').usageParse('claude', 'cached', null, body, now())
+  if (!parsed.ok) return FALLBACK.inflight ? (FALLBACK.lastGood.get(account) || null) : null
+  const line = formatClaudeUsage(windowsToLimits(parsed.windows), now())
+  if (line) FALLBACK.lastGood.set(account, line)
+  return line
+}
+function resetFallback() { FALLBACK.inflight = null; FALLBACK.lastAt.clear(); FALLBACK.doneAt.clear(); FALLBACK.lastGood.clear(); FALLBACK.flags = null; FALLBACK.file = null }
+// 单测用:等后台那次刷新落定(没有就立刻回)。
+const settleFallback = () => (FALLBACK.inflight ? FALLBACK.inflight.then(() => undefined) : Promise.resolve())
+
 // 拉一次 → 一行人话;拿不到 null。走 fetchRaw ⇒ 与告警共享那份缓存。
 // 缓存口径与 fetchRaw 一致:成功 60s、失败 10s(两层都压死一分钟就白搭下层的重试了)。
+// 凭据缺失/过期 ⇒ 走 cachedUsageFallback(见上),不再直接 null。
 const CACHE = { at: 0, val: null }
 const TTL = 60_000
-async function usageLine({ ttl = TTL, now = Date.now, readToken = readAccessToken, ...io } = {}) {
+async function usageLine({ ttl = TTL, now = Date.now, readToken = readAccessToken, fallback = cachedUsageFallback, home, bin, ...io } = {}) {
   if (CACHE.at && now() - CACHE.at < (CACHE.val ? ttl : FAIL_TTL_MS)) return CACHE.val
   let val = null
   const token = readToken()
   if (token) {
-    const data = await fetchRaw(token, { ttl, now, ...io })
+    const data = await fetchRaw(token, { ttl, now, log: io.log, curl: io.curl, sleep: io.sleep })
     val = formatClaudeUsage(parseLimits(data), now())
+  } else {
+    try { val = await fallback({ now, ...(home ? { home } : {}), ...(bin ? { bin } : {}), ...io }) } catch { val = null }
   }
   CACHE.at = now(); CACHE.val = val
   return val
 }
 function clearCache() { CACHE.at = 0; CACHE.val = null; RAW.at = 0; RAW.data = null }
 
-module.exports = { usageLine, fetchRaw, clearCache, parseCredentials, parseLimits, formatClaudeUsage, readAccessToken, fetchCurl, fetchNative, readCurlResult, fmtDurDecimal, QUOTA_SEP, TIMEOUT_MS, FAIL_TTL_MS, RETRY_WAIT_MS }
+module.exports = { usageLine, fetchRaw, clearCache, parseCredentials, parseLimits, formatClaudeUsage, readAccessToken, fetchCurl, fetchNative, readCurlResult, fmtDurDecimal, cachedUsageFallback, readCachedUtilization, readClaudeJson, supportsUsageFlag, resetFallback, settleFallback, QUOTA_SEP, TIMEOUT_MS, FAIL_TTL_MS, RETRY_WAIT_MS, FALLBACK_ARGS, FALLBACK_FLAGS, FALLBACK_TIMEOUT_MS, FALLBACK_KILL_GRACE_MS, FALLBACK_INTERVAL_MS, FALLBACK_FLAG_PROBE_MS }

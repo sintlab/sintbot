@@ -1,5 +1,36 @@
 [
   {
+    "version": "1.4.17",
+    "date": "2026-11-12",
+    "name": "Feishu scan-to-connect and third-party quotas",
+    "items": [
+      {
+        "t": "Connect Feishu with one scan",
+        "d": "New command sintbot connect: scan a QR code in the Feishu app to create the bot app; SintBot self-checks, opens the contact and availability scope and publishes, creates ~/Projects/<name>, creates a group with you in it, writes the configuration and initializes journals. On failure it stops at that step and tells you how to resume (--app-id, --chat); non-admins in a company organization can use --basic. The manual path remains."
+      },
+      {
+        "t": "Simpler Feishu settings",
+        "d": "Connection status and project groups come first. New users get a three-step scan setup guide; manual setup and app details are folded away. Console administrator sign-in is separate."
+      },
+      {
+        "t": "Third-party quota and balance",
+        "d": "GLM shows the 5-hour and weekly windows and falls back to the balance without a plan; MiniMax shows the 5-hour and weekly windows; DeepSeek shows the balance. Invalid credentials are shown as such; transient failures keep the last value for 10 minutes."
+      },
+      {
+        "t": "Claude subscription quota fallback",
+        "d": "When the Claude Code login token has expired, the CLI refreshes it itself and SintBot reads its cached quota instead of showing \"unverified\"; read-only, never refreshing on its own, never blocking group commands or the console."
+      },
+      {
+        "t": "Environment conflict check",
+        "d": "Preflight and the console model cards list environment variables and ~/.claude/settings.json or ~/.codex/config.toml settings that would reroute Claude Code or Codex; key names only, warnings only."
+      },
+      {
+        "t": "Built-in core ABI 36",
+        "d": "Connect decisions and wording, QR encoding, quota parsing and environment checks live in the built-in core; the core build pins its toolchain and no longer depends on the crate mirror used by the builder."
+      }
+    ]
+  },
+  {
     "version": "1.4.16",
     "date": "2026-11-11",
     "name": "Per-group model and thinking depth",

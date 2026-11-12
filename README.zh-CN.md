@@ -45,7 +45,7 @@ curl -fsSL https://sintbot.com/install.sh | bash
 
 脚本会检查环境、安装 SintBot 并验证结果，不用 `sudo`。也可以先读 [install.sh](./install.sh)。安装本身不登录模型账号、不连接群，也不启动服务。
 
-**2. 接入群和项目。** 按[安装指南](https://sintbot.com/zh/guide/install/)准备 Codex 或 Claude Code、连接飞书应用，并把群绑定到本机项目目录。当前安装包的配置与启动步骤以指南为准。
+**2. 接入群和项目。** 运行 `sintbot connect`，用企业/团队身份的飞书扫码：它会创建应用、项目目录和群，并写好配置。参数、手动路径和启动步骤见[安装指南](https://sintbot.com/zh/guide/install/)。
 
 想让本机 AI 助手帮忙安装并完成首次使用？先看 [AI 安装与首次使用说明](./docs/zh-CN/AI-ASSISTED-INSTALL.md)。
 

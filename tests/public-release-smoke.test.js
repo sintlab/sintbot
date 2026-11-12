@@ -24,7 +24,7 @@ function run(args, options = {}) {
 
 test('installed entry reports this release and its supported commands', () => {
   const pkg = require('../package.json')
-  assert.equal(pkg.version, '1.4.16')
+  assert.equal(pkg.version, '1.4.17')
   assert.equal(pkg.bin.sintbot, 'bin/sintbot-v2.js')
   assert.equal(pkg.bin.sbot, pkg.bin.sintbot)
   const version = run([entry, '--version'])
@@ -34,6 +34,17 @@ test('installed entry reports this release and its supported commands', () => {
   assert.equal(help.status, 0, help.stderr)
   assert.match(help.stdout, /sintbot init/)
   assert.match(help.stdout, /sintbot start/)
+  assert.match(help.stdout, /sintbot connect/)
+  const connectHelp = run([entry, 'connect', '--help'])
+  assert.equal(connectHelp.status, 0, connectHelp.stderr)
+  assert.match(connectHelp.stdout, /sintbot connect \[--config/)
+})
+
+test('connect is an operator command, not an action of the agent-facing feishu skill', () => {
+  const result = run([entry, 'feishu', 'connect'])
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /unknown feishu action/)
+  assert.doesNotMatch(result.stdout + result.stderr, /accounts\.feishu\.cn/)
 })
 
 test('unsupported legacy commands fail instead of invoking an old engine', () => {

@@ -13,3 +13,9 @@ sbot.config.json
 # Claude Code: personal/local settings and notes (never commit)
 .claude/
 CLAUDE.local.md
+
+# per-slice worktrees (Plan v4 parallel rule)
+.wt/
+
+# Also ignore a local dependency symlink.
+/node_modules

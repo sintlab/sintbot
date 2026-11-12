@@ -43,6 +43,9 @@ async function startService(rest) {
     throw new Error('Console options require --ui or ui.enabled:true')
   }
   assertInstallationJournals(installation)
+  // Settings outside this installation that can reroute a CLI (daemon env,
+  // ~/.claude/settings.json, ~/.codex/config.toml): warn-only, keys not values.
+  if (preflightOnly) require('../src/agent/envconflicts').reportEnvConflicts(installation)
   // Every installation, including one group, runs the multi-group service:
   // chat commands, the console writer and per-group fault closing live there.
   return startMultiGroupService({ installation, preflightOnly, uiEnabled, uiHost, uiPort })
@@ -111,6 +114,7 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
   const { C2DurableRuntime } = require('../src/core/c2durableruntime')
   // /hud reads the group's model quota; /issue appends to the console's log.
   const usageProbe = require('../src/usage').createUsageProbe({
+    bin: cfg.agent?.bin || 'claude',
     codexUsage: async () => { const status = require('../src/agent/codexstatus')
       return status.formatUsage(await status.rateLimits('codex')) } })
   const issues = require('../src/core/issues').createIssues(path.join(stateDir, 'issues.jsonl'),
@@ -466,12 +470,17 @@ const HELP = `SintBot macOS Feishu multi-group candidate
 Usage:
   sintbot init [--config <absolute path>] [--data-dir <absolute path>]
   sintbot start [--config <absolute path>] [--data-dir <absolute path>] [--preflight] [--ui] [--ui-host <address>] [--ui-port <port>] [--no-open]
+  sintbot connect [--config <absolute path>] [--data-dir <absolute path>] [--workdir <absolute path>] [--name <project>] [--provider codex|claude] [--app-id <cli_…>] [--chat <oc_…>] [--basic] [--no-open]
   sintbot incident seal --group <oc_…> [--config <absolute path>] [--data-dir <absolute path>] [--reason <text>]
   sintbot feishu <action> [arguments…] [--chat <oc_…>] [--config <path>]
   sintbot version
   sintbot help
 
 Supports explicit Feishu groups using Codex or Claude Code. Start runs in the foreground.
+connect scans a Feishu QR code to create the app, then creates a group (or binds --chat), the project
+folder under ~/Projects, the configuration and the journals, in that order; a failed check stops before
+the folder and configuration exist. It refuses existing configuration, state or a running service;
+--app-id resumes only when no configuration or an empty-group one for that app exists.
 Initialization is for a new installation only; existing journals are never reset.
 Console shows live groups, binds groups and switches models or projects of idle groups;
 in a group, /model lists or switches models. Unsupported actions stay disabled.
@@ -492,7 +501,7 @@ async function main(argv = process.argv.slice(2)) {
     return
   }
   if (!sub || sub === 'help' || sub === '--help' || sub === '-h' ||
-      ['init', 'start'].includes(sub) && rest.length === 1 && ['--help', '-h'].includes(rest[0])) {
+      ['init', 'start', 'connect'].includes(sub) && rest.length === 1 && ['--help', '-h'].includes(rest[0])) {
     process.stdout.write(HELP)
     return
   }
@@ -504,10 +513,16 @@ async function main(argv = process.argv.slice(2)) {
     process.exitCode = outcome === 'done' ? 0 : 1
     return
   }
-  if (!['init', 'start', 'incident', 'feishu'].includes(sub)) {
+  if (!['init', 'start', 'connect', 'incident', 'feishu'].includes(sub)) {
     throw new Error(`${sub} is unavailable in this release; use sintbot help`)
   }
   if (process.platform !== 'darwin') throw new Error('this release supports macOS only')
+  if (sub === 'connect') {
+    // Operator-only onboarding; deliberately not an action of the feishu skill,
+    // which the agent may run from a group.
+    process.exitCode = await require('../src/connect').runConnect(rest)
+    return
+  }
   if (sub === 'feishu') {
     // The agent's group skills. Each call uses the app credentials directly;
     // the service need not run. Text after the action may itself start with

@@ -970,6 +970,28 @@ button.btn:not(:disabled):active{transform:translateY(1px)}
 @media(max-width:430px){nav{margin:0 0 22px;padding:4px;overflow-x:auto;border-radius:12px}nav button:not(.navplay){padding:10px 11px}.grid{gap:12px}.card{padding:16px}h2.sec{margin:24px 0 14px}.modal{padding:20px 16px}}
 @media(prefers-reduced-motion:reduce){button.btn:not(:disabled):hover,button.btn:not(:disabled):active{transform:none}}
 
+
+/* Feishu setup: a short connection summary, then optional help. */
+.feishu-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:18px}
+.feishu-heading .lbl{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.feishu-title{font-size:20px;font-weight:600;line-height:1.4;overflow-wrap:anywhere}
+.feishu-current{display:flex;align-items:center;gap:10px 18px;flex-wrap:wrap;font-size:12px;margin:18px 0;color:var(--muted)}
+.feishu-current strong{font-weight:500;color:var(--ink)}
+.feishu-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:14px 0}
+.feishu-actions .btn{display:inline-flex;align-items:center;justify-content:center;text-decoration:none;min-height:40px}
+.feishu-actions input{flex:1;min-width:180px}
+.feishu-details{border-top:1px solid var(--line);margin-top:18px;padding-top:4px}
+.feishu-details>summary{cursor:pointer;padding:14px 0;font-size:13px;font-weight:500;min-height:44px}
+.feishu-steps{padding-left:22px;margin:8px 0 18px;display:grid;gap:16px;font-size:13px}
+.feishu-steps li{padding-left:6px;line-height:1.7}
+.feishu-steps b{display:block;font-weight:600;color:var(--ink)}
+.feishu-steps span{display:block;color:var(--muted)}
+.feishu-help{font-size:12px;line-height:1.8;margin:8px 0 16px}
+.feishu-help dt{font-weight:600;margin-top:13px}
+.feishu-help dd{margin:3px 0;color:var(--muted);overflow-wrap:anywhere}
+.feishu-uri{overflow-wrap:anywhere;word-break:break-word;flex:1;min-width:0}
+@media(max-width:600px){.feishu-heading{gap:10px}.feishu-title{font-size:18px}.feishu-actions{align-items:stretch}.feishu-actions .btn{min-height:44px}.feishu-actions input{flex-basis:100%}.feishu-current{gap:8px 12px}}
+
 </style>
 <script>/* 防 FOUC:首屏绘制前定主题(默认 light;用户切换后按 localStorage)与界面语言
    (存过就按 localStorage,没存过跟随浏览器:zh* ⇒ 中文,其余 ⇒ 英文)*/
@@ -1562,15 +1584,24 @@ function claudeModelOptions(list,cur){
   return list.map(m=>`<option value="${esc(m.id)}" ${m.id===(cur||'')?'selected':''}>${esc(m.name)}${m.note?' — '+esc(m.note):''}${m.extra?' ★':''}</option>`)
     .concat(`<option value="__custom__" ${known?'':'selected'}>自定义…</option>`).join('');
 }
+// 环境冲突(B5):守护进程 env / ~/.claude/settings.json / ~/.codex/config.toml 里可能改接入点或型号的键。
+// 服务端只给键名与一句原因(核心 env_conflicts),这里只列、不改 —— buildEnv 清什么照旧。
+function envWarnHtml(list){
+  if(!Array.isArray(list)||!list.length)return '';
+  return `<div style="margin-top:5px;font-size:11.5px;color:var(--warn)" title="这些设置在 SintBot 之外,可能改变 CLI 的接入点或型号;只列键名,不含值">环境冲突:${list.map(w=>`<div><span class="mono" data-i18n-skip>${esc(w.key)}</span> — ${esc(w.reason)}</div>`).join('')}</div>`;
+}
+// codex 卡逐 provider 取(服务端按 baseUrl/key 各算一份):r = /api/codex/verify 的响应或 S.codexStatus。
+const cxEnvWarn=(r,name)=>(((r&&r.envWarningsByProvider)||{})[name])||[];
 // Claude 登录态区的内容(与卡片 chip 同一份 S.claudeStatus,措辞不各写一套)
 function clStatusHtml(){
   const s=S.claudeStatus;
   if(!s) return '<span class="faint">未检测 — 点下方按钮</span>';
   if(!s.ok) return `<span style="color:var(--warn)">未验证</span><div class="faint" style="margin-top:4px;font-size:11.5px">${esc(s.error||'')}</div>`;
-  if(!s.loggedIn) return '<span style="color:var(--fail)">'+IC.x+' 未登录</span><div class="faint" style="margin-top:4px;font-size:11.5px">在这台机器上跑 <span class="mono">claude auth login</span></div>';
+  if(!s.loggedIn) return '<span style="color:var(--fail)">'+IC.x+' 未登录</span><div class="faint" style="margin-top:4px;font-size:11.5px">在这台机器上跑 <span class="mono">claude auth login</span></div>'+envWarnHtml(s.envWarnings);
   return `<span style="color:var(--ok);font-weight:600">${IC.check} 已登录${s.plan?' · '+esc(s.plan):''}</span>`
     +`<div class="faint" style="margin-top:4px;font-size:11.5px">${esc(s.email||'')}${s.org?' · '+esc(s.org):''}${s.method?' · '+esc(s.method):''}</div>`
-    +(s.usage?`<div style="margin-top:5px">额度:<span style="color:var(--ok);font-weight:600" title="百分比 = 已用,括号 = 距重置 —— 与这台机器上交互式 Claude Code 共享的订阅窗口">${esc(s.usage)}</span></div>`:'');
+    +(s.usage?`<div style="margin-top:5px">额度:<span style="color:var(--ok);font-weight:600" title="百分比 = 已用,括号 = 距重置 —— 与这台机器上交互式 Claude Code 共享的订阅窗口">${esc(s.usage)}</span></div>`:'')
+    +envWarnHtml(s.envWarnings);
 }
 // codex 推理强度(-c model_reasoning_effort);''=默认(模型内置)。
 // RE_LEGAL = 服务端真正接受的合法集,2026-07-20 从 API 参数校验报错里逼出来的权威清单:
@@ -1607,10 +1638,10 @@ function fmtReset(w){if(!w||w.resetsAt==null)return'';const ms=w.resetsAt>1e9?(w
 function winLabel(mins){if(!mins)return'窗口';if(mins>=1440){const d=Math.round(mins/1440);return d===7?'7d':d+'d';}return Math.round(mins/60)+'h';}
 function fmtUsage(u){if(!u)return'';const f=(w)=>{if(!w)return'';const r=fmtReset(w);return `${winLabel(w.windowMins)}:${Math.min(100,Math.max(0,Math.round(w.usedPercent||0)))}%${r?` (${r})`:''}`;};return [f(u.primary),f(u.secondary)].filter(Boolean).join(' │ ');}
 // 页面加载时从 /api/state 缓存回填 codex 登录态+额度 → 刷新不丢(客户端已有则不覆盖,避免盖掉刚验证的)。
-function seedCodexStatus(){if(!S||!S.codexStatus)return;const lg=S.codexStatus.login||{},usageText=fmtUsage(S.codexStatus.usage);(S.providers||[]).filter(p=>p.runner==='codex').forEach(p=>{if(!codexStatus[p.name])codexStatus[p.name]={loggedIn:lg.loggedIn,mode:lg.mode,dead:lg.dead,verified:lg.verified,text:lg.text,usageText};});}
+function seedCodexStatus(){if(!S||!S.codexStatus)return;const lg=S.codexStatus.login||{},usageText=fmtUsage(S.codexStatus.usage);(S.providers||[]).filter(p=>p.runner==='codex').forEach(p=>{if(!codexStatus[p.name])codexStatus[p.name]={loggedIn:lg.loggedIn,mode:lg.mode,dead:lg.dead,verified:lg.verified,text:lg.text,usageText,envWarnings:cxEnvWarn(S.codexStatus,p.name)};});}
 // codex ⚙ 面板「Codex 订阅」区的状态 HTML(登录态 + 额度),点「刷新」后就地更新。
 // 三态(服务端文案 text 是单一事实源):已验证 / 登录态已失效(服务端拒绝令牌 ⇒ 要重新登录)/ 未验证(探不到,不等于未登录)。
-function cxStatusHtml(name){const c=codexStatus[name];const login=c&&c.loggedIn&&c.verified?`<span style="color:var(--ok);font-weight:600">${IC.check} ${esc(c.text||'已验证')}</span>`:(c&&c.dead?'<span style="color:var(--fail)">'+IC.x+' '+esc(c.text||'登录态已失效 — 机器上重新跑 codex login')+'</span>':(c?`<span class="faint" title="${esc(c.text||'')}">${c.loggedIn?'未验证(本机有登录文件,服务端暂时没探到)':esc(c.text||'未登录 — 机器上跑 codex login')}</span>`:'<span class="faint">未验证</span>'));return `<div>登录:${login}</div>${c&&c.usageText?`<div style="margin-top:5px">额度:<span style="color:var(--ok);font-weight:600" title="百分比 = 已用,括号 = 距重置">${esc(c.usageText)}</span></div>`:''}`;}
+function cxStatusHtml(name){const c=codexStatus[name];const login=c&&c.loggedIn&&c.verified?`<span style="color:var(--ok);font-weight:600">${IC.check} ${esc(c.text||'已验证')}</span>`:(c&&c.dead?'<span style="color:var(--fail)">'+IC.x+' '+esc(c.text||'登录态已失效 — 机器上重新跑 codex login')+'</span>':(c?`<span class="faint" title="${esc(c.text||'')}">${c.loggedIn?'未验证(本机有登录文件,服务端暂时没探到)':esc(c.text||'未登录 — 机器上跑 codex login')}</span>`:'<span class="faint">未验证</span>'));return `<div>登录:${login}</div>${c&&c.usageText?`<div style="margin-top:5px">额度:<span style="color:var(--ok);font-weight:600" title="百分比 = 已用,括号 = 距重置">${esc(c.usageText)}</span></div>`:''}${envWarnHtml(c&&c.envWarnings)}`;}
 // 首次打开控制台、服务端无缓存时,后台自动验一次 codex 登录+额度(查询不耗消息额度,服务端缓存),卡片状态无需手动点。
 // 开局自动探一次 Claude 登录态(`claude auth status --json`,0.2s、不吃订阅额度),
 // 与 autoVerifyCodex 对称 —— 让卡片一进来就说真话,而不是永远挂着「未验证」等人去点。
@@ -1621,7 +1652,7 @@ async function autoVerifyClaude(){
   if(!has)return;
   try{S.claudeStatus=await api('/api/claude/verify','POST',{});renderProviders();}catch(e){}
 }
-async function autoVerifyCodex(){const cxs=((S&&S.providers)||[]).filter(p=>p.runner==='codex'&&!codexStatus[p.name]);if(!cxs.length)return;try{const r=await api('/api/codex/verify','POST',{});const lg=r.login||{},usageText=fmtUsage(r.usage);cxs.forEach(p=>codexStatus[p.name]={loggedIn:lg.loggedIn,mode:lg.mode,dead:lg.dead,verified:lg.verified,text:lg.text,usageText});renderProviders();}catch(e){}}
+async function autoVerifyCodex(){const cxs=((S&&S.providers)||[]).filter(p=>p.runner==='codex'&&!codexStatus[p.name]);if(!cxs.length)return;try{const r=await api('/api/codex/verify','POST',{});const lg=r.login||{},usageText=fmtUsage(r.usage);cxs.forEach(p=>codexStatus[p.name]={loggedIn:lg.loggedIn,mode:lg.mode,dead:lg.dead,verified:lg.verified,text:lg.text,usageText,envWarnings:cxEnvWarn(r,p.name)});renderProviders();}catch(e){}}
 // Claude 订阅登录 chip:此前只能写死「登录态·未验证」(判据是「没填 baseUrl 就当登录了」),
 // 真没登录也照样绿。现在有 `claude auth status --json` 这个官方非交互探针,报真状态;
 // 探不到(老版本 CLI / 不在 PATH)显式说「未验证」,**不当成未登录** —— 两种情况要分得开。
@@ -1666,6 +1697,7 @@ function renderProviders(){
       ${p.vision===false?'<div class="kv"><span class="kk">识图</span><span class="vv" title="纯文本模型:送给它的图片(群里发的图/网页截图/读取的图片文件)自动降级成占位文本,不会 400 崩掉整轮">不支持 · 图片自动降级</span></div>':''}
       ${usage[p.name]?`<div class="kv"><span class="kk" style="flex:none">${esc(usage[p.name].label)}${usageRefreshBtn(false)}</span><span class="vv" title="${esc(usage[p.name].value)}${usage[p.name].label==='订阅额度'?' —— 百分比 = 已用,括号 = 距重置,与这台机器上交互式 Claude Code 共享的订阅窗口':''}" style="color:var(--ok);font-weight:600;white-space:normal;overflow:visible;max-width:none;flex:1;min-width:0;line-height:1.5">${esc(usage[p.name].value)}</span></div>`:''}
       ${(cs&&cs.usageText)?`<div class="kv"><span class="kk" style="flex:none">订阅额度${usageRefreshBtn(true)}</span><span class="vv" title="百分比 = 已用,括号 = 距重置 —— 与交互式 Codex 共享的订阅窗口(时长随官方口径)" style="color:var(--ok);font-weight:600;white-space:normal;overflow:visible;max-width:none;flex:1;min-width:0;line-height:1.5">${esc(cs.usageText)}</span></div>`:''}
+      ${(()=>{const ew=p.runner==='codex'?(cs&&cs.envWarnings):(p.loggedIn&&S.claudeStatus?S.claudeStatus.envWarnings:null);return (ew&&ew.length)?`<div class="kv"><span class="kk" style="flex:none">环境冲突</span><span class="vv" title="${esc(ew.map(w=>w.key+' — '+w.reason).join('\n'))}" style="color:var(--warn);white-space:normal;overflow:visible;max-width:none;flex:1;min-width:0;line-height:1.5" data-i18n-skip>${ew.map(w=>`<span class="mono">${esc(w.key)}</span>`).join(' · ')}</span></div>`:'';})()}
       <div class="acts"><button class="btn" data-act="test">测试</button>${p.hidden?'<span class="hint" style="align-self:center">已隐藏</span>':''}</div>
       <div class="reply-slot"></div>
     </div>`;
@@ -1725,7 +1757,7 @@ function renderProviders(){
           if(cx){const r=await api('/api/codex/verify','POST',{force:true});const lg=r.login||{};text=fmtUsage(r.usage);
             /* 探测失败(fmtUsage 给空串)时保住原来的额度:这一行的 DOM 留着旧值,内存态却清空的话,
                下次重画整行会凭空消失 —— 同一份状态两个消费者,漏一个就自相矛盾。 */
-            codexStatus[name]={loggedIn:lg.loggedIn,mode:lg.mode,dead:lg.dead,verified:lg.verified,text:lg.text,usageText:text||(lg.dead?'':((codexStatus[name]||{}).usageText||''))};}
+            codexStatus[name]={loggedIn:lg.loggedIn,mode:lg.mode,dead:lg.dead,verified:lg.verified,text:lg.text,usageText:text||(lg.dead?'':((codexStatus[name]||{}).usageText||'')),envWarnings:cxEnvWarn(r,name)};}
           else{const r=await api('/api/usage/refresh','POST',{name});if(r.usage){usage[name]=r.usage;text=r.usage.value;}}
           /* 就地改这一行,不走 renderProviders —— 整页重画会把这颗按钮连同它的 finally 一起换掉,
              还会打断 hover 与试跑回执。拉不到时**留着旧值**:清空会被读成「这个模型没额度」。 */
@@ -1933,7 +1965,7 @@ function openProviderModal(name,opts){
   })();
   $('#amCancel').onclick=closeModal;
   if(isCodex){$('#cxVerify').onclick=async()=>{const cb=$('#cxVerify');cb.disabled=true;const old=cb.innerHTML;cb.innerHTML='<span class="spin"></span>验证中';
-    try{const r=await api('/api/codex/verify','POST',{});const lg=r.login||{},usageText=fmtUsage(r.usage);codexStatus[cxKey]={loggedIn:lg.loggedIn,mode:lg.mode,dead:lg.dead,verified:lg.verified,text:lg.text,usageText};
+    try{const r=await api('/api/codex/verify','POST',{});const lg=r.login||{},usageText=fmtUsage(r.usage);codexStatus[cxKey]={loggedIn:lg.loggedIn,mode:lg.mode,dead:lg.dead,verified:lg.verified,text:lg.text,usageText,envWarnings:cxEnvWarn(r,cxKey)};
       if($('#cxStatus'))$('#cxStatus').innerHTML=cxStatusHtml(cxKey);
       toast(lg.loggedIn?('Codex 订阅 ✓'+(usageText?' · '+usageText:(r.usage===null?'(额度取用失败:app-server?)':''))):(lg.dead?'登录态已失效 — 机器上重新跑 codex login':'未登录 — 机器上跑 codex login'),lg.loggedIn?'ok':'err');
       renderProviders();
@@ -3695,6 +3727,7 @@ function renderSettings(){
       <div id="verhistBox"><div class="empty">加载中…</div></div></div>
   </div>`;
   $('#settings').innerHTML=`<div class="grid cols2 stagger">
+    ${fxFeishuCard(fe)}
     ${netCard}
     <div class="card"><div class="lbl">运行限制</div>
       <div class="inline" style="align-items:flex-start">
@@ -3710,10 +3743,8 @@ function renderSettings(){
       <div class="hint" style="margin-top:10px">执行权限已改<b>按群设</b> —— 见「群·项目」每张卡(缺省 <b>dontAsk 只读 · fail-closed</b>)。</div>
     </div>
     ${botCard}
-    <div class="fx-sub" style="grid-column:1/-1;margin:6px 0 0"><span style="flex:none">聊天平台</span><span class="faint" style="font-weight:400;letter-spacing:0">配了哪个就接哪个,可以同时在线;每个群项目自己选属于哪边。点卡头展开</span></div>
-    ${fxFeishuCard(fe)}
-    ${fxSlackCard(S.slack||null)}
-    ${fxWecomCard(S.wecom||null)}
+    ${fxFeishuAccessCard(fe)}
+    ${!S.runtimeCapabilities?fxSlackCard(S.slack||null)+fxWecomCard(S.wecom||null):''}
     ${aboutCard}
     ${updateCard}
   </div>`;
@@ -3761,9 +3792,8 @@ function renderSettings(){
   const la=$('#logoutAllBtn');if(la)la.onclick=async()=>{try{const r=await api('/api/logout/all','POST',{});toast('已退出 '+(r.n||0)+' 个登录','ok');}catch(e){toast(e.message,'err');return;}dropToken();TOKEN='';setTimeout(()=>location.reload(),600);};
   $('#aSave').onclick=async()=>{const patch={maxConcurrent:+$('#aConc').value,maxTurnTimeMins:+$('#aWall').value,ackDelayMs:Math.round((+$('#aAck').value||0)*1000),timezone:$('#aTz').value.trim()};
     try{S=await api('/api/agent','POST',patch);toast('已保存','ok');renderGroups();renderSettings();startClock();}catch(e){toast(e.message,'err');}};
-  $('#fSave').onclick=async()=>{const b={botOpenId:$('#fBot').value.trim(),onlyWhenMentioned:$('#fGate').value==='1'};const id=$('#fId').value.trim();if(id)b.appId=id;const sec=$('#fSecret').value.trim();if(sec)b.appSecret=sec; // 空 appId 不回传:env: 引用时字段渲染为空,回传空串会清掉凭据
-    try{S=await api('/api/feishu','POST',b);toast('飞书已保存','ok');renderAll();}catch(e){toast(e.message,'err');}}; // 管理员单独管理(见下)
   // ── Slack 应用卡 ──(与上面飞书那组同结构:凭证先落盘,预检再读已存配置)
+  if($('#slSave')){
   const slSaveCreds=async()=>{const b={};const bt=$('#slBot').value.trim();if(bt)b.botToken=bt;const at=$('#slApp').value.trim();if(at)b.appToken=at;if(Object.keys(b).length)S=await api('/api/slack','POST',b);};
   $('#slSave').onclick=async()=>{const b={onlyWhenMentioned:$('#slGate').value==='1',replyInThread:$('#slThread').value!=='0',commandAlias:($('#slAlias').value.trim()||'!')};
     const bt=$('#slBot').value.trim();if(bt)b.botToken=bt;const at=$('#slApp').value.trim();if(at)b.appToken=at;
@@ -3775,41 +3805,13 @@ function renderSettings(){
       toast('预检完成','ok');}
     catch(e2){toast(e2.message,'err');}
     finally{btn.disabled=false;btn.textContent='🩺 预检';}};
-  // 预检 / 通讯录 都要先落盘当前填的凭证(端点读的是已存配置);env: 引用或空值不覆盖。
-  const saveCreds=async()=>{const creds={};const id=$('#fId').value.trim();if(id)creds.appId=id;const sec=$('#fSecret').value.trim();if(sec)creds.appSecret=sec;if(Object.keys(creds).length)await api('/api/feishu','POST',creds);};
-  // 应用身份条:头像走 JS 注入(远端图,加载不到就退回 🤖 —— 控制台可能开在断外网的机器上),
-  // 刷新只打「身份」这一个端点,不跑整套预检。原地重画,不整页 render:预检清单还在下面开着。
-  const paintIdent=()=>{const el=$('.fx-ident');if(!el)return;el.outerHTML=fxIdentity(S.feishu||null);bindIdent();updateTopFxApp();};
-  const bindIdent=()=>{
-    const id=(S.feishu&&S.feishu.identity)||null,av=$('#fIdentAv');
-    if(av&&id&&id.avatar){const img=new Image();img.alt='';img.onload=()=>{av.textContent='';av.appendChild(img);};img.onerror=()=>{av.innerHTML=IC.bot;};img.src=id.avatar;}
-    const btn=$('#fIdentRefresh');if(!btn)return;
-    btn.onclick=async()=>{const t=btn.innerHTML;btn.disabled=true;btn.innerHTML='<span class="spin"></span> 刷新中…';
-      try{await saveCreds();const r=await api('/api/feishu/appinfo','POST',{});
-        S.feishu=S.feishu||{};S.feishu.identity=r.identity;
-        if(r.botOpenId){S.feishu.botOpenId=r.botOpenId;const f=$('#fBot');if(f&&!f.value)f.value=r.botOpenId;}
-        paintIdent();toast('应用身份已更新','ok');
-      }catch(e){toast(e.message,'err');btn.disabled=false;btn.innerHTML=t;}};
-  };
-  bindIdent();
-  const fcs=$('#fCopyScopes'); if(fcs) fcs.onclick=(e)=>{e.preventDefault();const txt=fcs.dataset.json||'';if(!txt)return;
-    const done=()=>{fcs.textContent='已复制';setTimeout(()=>fcs.textContent='复制导入 JSON',1200);};
-    const pick=()=>{const ta=document.createElement('textarea');ta.value=txt;ta.setAttribute('style','position:fixed;top:0;left:0;opacity:0');document.body.appendChild(ta);ta.select();try{document.execCommand('copy');done();}catch(_){toast('复制失败,请手动选择','err');}ta.remove();};
-    if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(txt).then(done).catch(pick); else pick();};
-  $('#fPrecheck').onclick=async()=>{const btn=$('#fPrecheck'),box=$('#fCheck');
-    btn.disabled=true;btn.innerHTML='<span class="spin"></span> 预检中…';box.innerHTML='';
-    try{await saveCreds();const r=await api('/api/feishu/precheck','POST',{});
-      if(r.botOpenId)$('#fBot').value=r.botOpenId;
-      if(r.identity){S.feishu=S.feishu||{};S.feishu.identity=r.identity;if(r.botOpenId)S.feishu.botOpenId=r.botOpenId;paintIdent();}
-      renderFxCheck(box,r.checks);toast('预检完成','ok');
-    }catch(e){box.innerHTML=`<div class="fx-check"><div class="fx-crow"><span class="dot fail"></span><span class="cd" style="color:var(--fail)">${esc(e.message)}</span></div></div>`;toast(e.message,'err');}
-    finally{btn.disabled=false;btn.innerHTML=IC.steth+' 预检并自动获取';}};
+  }
   // 管理员(可多个):chips 列表 + 从组织通讯录搜索选人(单一入口)。
   let admins=(fe&&Array.isArray(fe.admins))?fe.admins.slice():[];
   const drawAdmins=()=>{const el=$('#fAdminList');if(!el)return;
     el.innerHTML=admins.length
       ?admins.map((x,i)=>`<span class="fx-admin-chip">${IC.user} ${esc(x.name||x.openId)}<button class="fx-admin-x" data-i="${i}" title="移除">${IC.x}</button></span>`).join('')
-      :'<span class="hint">未配置 — 建群需拉入管理员,否则纯 bot 群飞书里谁都看不到</span>';
+      :'<span class="hint">尚未添加管理员；使用公网飞书登录前请先添加。</span>';
     el.querySelectorAll('.fx-admin-x').forEach(b=>b.onclick=async()=>{admins.splice(+b.dataset.i,1);await saveAdmins();});};
   const saveAdmins=async()=>{try{S=await api('/api/feishu/admins','POST',{admins});admins=(S.feishu&&Array.isArray(S.feishu.admins))?S.feishu.admins.slice():admins;drawAdmins();}catch(e){toast(e.message,'err');}};
   const addAdmin=async(openId,name)=>{if(admins.some(x=>x.openId===openId))return;admins.push({openId,name:name||openId});await saveAdmins();};
@@ -3819,7 +3821,7 @@ function renderSettings(){
   $('#fAdminOrg').onclick=async()=>{const btn=$('#fAdminOrg'),pick=$('#fAdminPick');
     if(pick.dataset.open==='1'){pick.innerHTML='';pick.dataset.open='';btn.innerHTML=IC.plus+' 从通讯录添加';return;} // 再点=收起
     btn.disabled=true;btn.innerHTML='<span class="spin"></span> 加载通讯录…';
-    try{await saveCreds();const r=await api('/api/feishu/org-users');const users=r.users||[];
+    try{const r=await api('/api/feishu/org-users');const users=r.users||[];
       if(!users.length){toast('通讯录可见 0 人 — 去开放平台把应用「通讯录授权范围/数据权限」放开到全部成员(scope 已够,这是数据授权范围)','err');return;}
       const has=(id)=>admins.some(x=>x.openId===id);
       const rows=(q)=>{const f=users.filter(u=>!q||(u.name||'').toLowerCase().indexOf(q)>-1||u.openId.indexOf(q)>-1);
@@ -3945,6 +3947,7 @@ function fxWecomCard(we){
 }
 function bindWecomCard(){
   if(!$('#wecomCard'))return;
+  if(!$('#wecomCard'))return;
   const parseNames=()=>{const out={};for(const line of $('#wNames').value.split(/\n+/)){const m=line.trim().match(/^(\S+)[\s=:,]+(.+)$/);if(m)out[m[1]]=m[2].trim();}return out;};
   const creds=()=>{const b={};const id=$('#wId').value.trim();if(id)b.botId=id;const sec=$('#wSecret').value.trim();if(sec)b.secret=sec;return b;}; // 空值不回传:env: 引用时字段渲染为空,回传空串会清掉凭据
   $('#wSave').onclick=async()=>{const b={...creds(),welcome:$('#wWelcome').value.trim(),names:parseNames(),pollSec:$('#wPoll').value.trim(),followSec:$('#wFollow').value.trim(),gatekeeper:{provider:$('#wGate').value,model:$('#wGateModel').value.trim()},keywords:$('#wKeywords').value.trim(),cliOff:$('#wCliOff').checked};
@@ -3962,88 +3965,56 @@ function bindWecomCard(){
     }catch(e){box.innerHTML=`<div class="fx-check"><div class="fx-crow"><span class="dot fail"></span><span class="cd" style="color:var(--fail)">${esc(e.message)}</span></div></div>`;toast(e.message,'err');}
     finally{btn.disabled=false;btn.innerHTML=IC.steth+' 预检';}};
 }
-// 飞书应用卡:开通指引(可折叠)→ 凭证 → 预检并自动获取(内联 ✓/✗ 清单)→ 身份(应用身份条 + bot/管理员从通讯录选)→ 响应范围。
+// The connection view is read-only; onboarding is completed on the host Mac.
+// Public console actions are limited to group management and access administration.
 function fxFeishuCard(fe){
-  const fl=Object.assign({},(S.net||{}).feishuLogin||{},{publicUrl:(S.net||{}).publicUrl||''}); // 服务端算好的就绪态与回调地址
-  const on=!!(fe&&fe.botOpenId);
-  const lvTxt={req:'必需',rec:'推荐',opt:'可选'};
-  const scopes=[
-    // 逐项对照代码实际调用的 API 核准(2026-07-16 按官方文档核对):send_as_bot 覆盖 发/回复/编辑/撤回自己的消息;
-    // readonly 覆盖 拉历史/下载附件/撤回事件;上传(im:resource)与表情(reactions)各有独立 scope,谁都不覆盖谁。
-    ['im:message.group_msg','接收群消息(配长连接订阅事件)','req'],
-    ['im:message:readonly','拉群历史 / 下载群附件(基础技能 history·download)+ 消息撤回事件(撤回即停)','req'],
-    ['im:message:send_as_bot','发送 / 回复 / 编辑 / 撤回自己的消息','req'],
-    ['im:resource','上传图片 / 文件(基础技能 send-image·send-file 必需,缺则发不出)','req'],
-    ['im:message.reactions:write_only','消息表情回应(基础技能 react 必需)','req'],
-    ['im:chat','建群 / 解散 / 群成员管理','req'],
-    ['cardkit:card:write','流式打字机卡片(缺则回退纯文本)','req'],
-    ['contact:contact.base:readonly','发送者真名 + 通讯录选管理员','req'],
-    ['contact:department.base:readonly','通讯录选管理员 · 读部门树','req'],
-    // 2026-09-05 两个租户对照验出:没有它,「从通讯录添加」列表与发送者名字全显示成 open_id(scope 够、数据范围也够,就是没名字)。
-    ['contact:user.base:readonly','通讯录成员真名(缺则列表与发送者名字显示成 open_id)','req'],
-    ['contact:department.organize:readonly','通讯录选人 · 完整部门层级(单层组织可不开)','opt'],
-    ['contact:user.id:readonly','邮箱 / 手机号查 openid','opt'],
-    // 应用名称/头像/启用状态来自「获取机器人信息」接口,官方标「权限要求:无」——白拿,不用列;
-    // 只有「应用描述」在应用信息接口里,才需要下面这条(admin:app.info:readonly 亦可,任开其一)。
-    ['application:application:self_manage','显示应用描述(不开则只显示名称 / 头像 / 状态)','opt'],
-    // 设计画布(docs/BOARD.md;2026-07-21 真机逐 API 核准)— 不用画布可全不开,开则整组开:
-    ['docx:document:create','设计画布 · 创建画布文档','opt'],
-    ['docx:document:write_only','设计画布 · 文档内建画板块','opt'],
-    ['docs:document.media:upload','设计画布 · 上传画板图片素材','opt'],
-    ['board:whiteboard:node:read','设计画布 · 读画板节点(标注)','opt'],
-    ['board:whiteboard:node:create','设计画布 · 写画板节点(放图)','opt'],
-    ['board:whiteboard:node:delete','设计画布 · 覆写清理节点','opt'],
-    ['docs:permission.member:create','设计画布 · 文档分享给群','opt'],
-    ['drive:drive.metadata:readonly','设计画布 · 查询文档链接','opt'],
-    ['im:chat.tabs:write_only','设计画布 · 画布挂群标签页(缺则仅发链接)','opt'],
-    ['docs:document.comment:read','设计画布 · 读文档评论(第二意见通道)','opt'],
-    ['docs:document.comment:update','设计画布 · 评论标记已解决(反馈闭环)','opt'],
-    ['docs:document.media:download','设计画布 · 下载评论附图/画板素材','opt'],
-  ];
-  const scopeRows=scopes.map(([sc,us,lv])=>`<div class="fx-scope"><span class="fx-lv ${lv}">${lvTxt[lv]}</span><span class="sc">${sc}</span><span class="us">${us}</span></div>`).join('');
-  // 开放平台「批量导入/导出权限」认的格式;全表导出,不用画布的自己删那组(按钮上 data-json,点击处读)
-  const scopeJson=JSON.stringify({scopes:{tenant:scopes.map(x=>x[0]),user:[]}});
-  const open=fxFoldUser.feishu===undefined?false:fxFoldUser.feishu; // 默认一律收起(用户 10-12 定)
-  const brief=on?[(fe.identity&&fe.identity.name)||'',fe.onlyWhenMentioned?'只答 @':'答所有消息',fl.ready?'飞书登录已就绪':'飞书登录未就绪',fe.admins&&fe.admins.length?`管理员 ${fe.admins.length} 人`:''].filter(Boolean).join(' · '):'展开填写';
-  return `<div class="card" style="grid-column:1/-1" id="feishuCard"><details class="fx-fold" data-fold="feishu"${open?' open':''}>
-    <summary class="fx-head"><div class="lbl" style="margin:0;display:flex;align-items:center;min-width:0"><span class="caret">${IC.chevronRight}</span>${platLogo('feishu')}飞书应用<span class="fold-hint">${esc(brief)}</span></div>
-      <span class="fx-status ${on?'on':''}"><span class="dot ${on?'ok':'skip'}"></span>${on?('已配置'+(fe&&fe.identity&&fe.identity.name?' · '+esc(fe.identity.name):'')):'未配置'}</span></summary>
-    <details class="fx-guide">
-      <summary><span class="caret">${IC.chevronRight}</span><span>如何在飞书开放平台开通</span><span class="sp"></span><a class="lnk" href="https://open.feishu.cn/app" target="_blank" rel="noopener">开放平台 ${IC.ext}</a></summary>
-      <div class="fx-body">
-        <div class="fx-step"><span class="n">1</span><span class="t">新建<b>自建应用</b> → 「添加应用能力」加上 <b>机器人</b>(否则拉不进群、收不到消息)。建应用时<b>图标必填</b>,选一个内置图标即可。下面这套 scope 在开放平台里全部标「免审权限」,自建应用发版也免审(创建者即企业管理员时自动通过)—— <b>不需要企业认证 / 营业执照</b>,个人用手机号建的团队就能跑通。</span></div>
-        <div class="fx-step"><span class="n">2</span><span class="t"><b>事件订阅</b> → 连接方式选 <b>长连接</b> → 订阅事件 <code>im.message.receive_v1</code>(接收群消息);建议同时订阅 <code>im.message.recalled_v1</code>(后台按中文名索引 —— 添加事件时搜「<b data-i18n-skip>撤回</b>」选「消息撤回」;权限即下面清单里的 im:message:readonly。作用:用户撤回后 bot 自动跳过/停止处理该消息;不订阅则此功能不生效)。</span></div>
-        <div class="fx-step"><span class="n">3</span><span class="t"><b>回调配置</b>(${IC.warn} 与「事件订阅」<b>并排的另一个页签</b>,极易漏)→ 订阅方式同样选 <b>长连接</b> → 添加「<b>卡片回传交互 card.action.trigger</b>」。作用:群里卡片上的按钮(画布反馈的「同步/忽略」、各类确认按钮)点了才有响应;<b>漏配的症状 = 点按钮弹「尚未配置卡片回调」</b>。这项平台没有查询接口,预检无法自动核对 —— 见到那个报错就是漏了这里(配完照样要发版)。</span></div>
-        <div class="fx-step"><span class="n">4</span><span class="t"><b>权限管理 → 权限配置</b> 开通以下 scope(逐条搜索勾选;或点「批量导入/导出权限」,把 <button class="btn" id="fCopyScopes" data-json="${esc(scopeJson)}" style="padding:1px 8px;font-size:11px">复制导入 JSON</button> 粘进去 —— 那个编辑器只认手工粘贴。不用画布可把「设计画布」那组从 JSON 里删掉):<div class="fx-scopes">${scopeRows}</div></span></div>
-        <div class="fx-step"><span class="n">5</span><span class="t"><b>权限管理 → 数据权限</b>:把<b>通讯录授权范围</b>设为 <b>全部成员</b>(或指定人)。只开 scope 不设范围,「从通讯录选管理员」和发送者真名会报 <code>40004</code> / 回退 open_id —— <b>scope ≠ 数据授权范围</b>。另:<b>应用发布 → 可用范围</b>须包含要拉进群的管理员,否则建群报 <code>232043 bot invisible</code>(数据授权范围管「读到谁」,可用范围管「bot 对谁可见 / 能拉谁」)。</span></div>
-        <div class="fx-step"><span class="n">6</span><span class="t"><b>创建版本并发布</b> —— 机器人能力 / 权限 / <b>事件订阅</b> / <b>回调配置</b>改动都<b>发版后才生效</b>(数据授权范围通常即时);长连接连着 ≠ 收得到新订阅的事件,不发版事件无声无息。填好下面凭证点「预检」逐项核对。</span></div>
-        <div class="fx-step"><span class="n">7</span><span class="t">${IC.warn} <b>换了 appId / appSecret(比如换应用、换企业主体)之后必须重启守护进程</b> —— 飞书长连接在启动时就绑死了凭证,这里保存只是热重载配置、不会重建连接。不重启的症状:新群发消息<b>没有任何反应</b>,日志里出现 <code>230002 Bot/User can NOT be out of the chat</code>(旧应用的连接在替新群发通知)。</span></div>
-      </div>
+  const configured=!!(fe&&(fe.appId||fe.appIdRef)&&fe.appSecretStatus&&fe.appSecretStatus!=='none');
+  const c=connDict(S.conn).feishu,online=!!(c&&c.state==='connected');
+  const status=online?'已连接':configured?'等待连接':'尚未接入';
+  const app=(fe&&fe.identity)||{};
+  const appUrl=fe&&/^cli_[A-Za-z0-9]+$/.test(fe.appId||'')?'https://open.feishu.cn/app/'+encodeURIComponent(fe.appId):'https://open.feishu.cn/app';
+  const groupCount=(S.groups||[]).filter(g=>!g.platform||g.platform==='feishu').length;
+  return `<div class="card feishu-setup" id="feishuCard" style="grid-column:1/-1">
+    <div class="feishu-heading"><div><div class="lbl">${platLogo('feishu')}飞书</div><div class="feishu-title">${esc(app.name||(configured?'项目群已配置':'扫码，把项目带进飞书'))}</div></div><span class="fx-status ${online?'on':''}"><span class="dot ${online?'ok':configured?'warn':'skip'}"></span>${status}</span></div>
+    <p class="hint">${configured?'在项目群里发任务，机器人会把进度和结果回复到群里。':'用手机飞书确认一次，自动创建机器人和项目群。'}</p>
+    ${configured?`<div class="feishu-current"><span>已绑定项目群</span><strong>${groupCount}</strong><span>消息响应</span><strong>${fe.onlyWhenMentioned?'仅回复 @ 机器人的消息':'接收群内普通消息'}</strong></div>
+      ${!online?'<p class="hint">应用已配置，连接尚未确认。请确认这台 Mac 上的 SintBot 正在运行。</p>':''}
+      <div class="feishu-actions"><button class="btn primary" data-gotab="groups">管理项目群</button><a class="btn" href="https://sintbot.com/guide/usage/" target="_blank" rel="noopener">查看使用指南</a></div>`:''}
+    <details class="feishu-details" ${configured?'':'open'}><summary>首次接入：三步开始</summary><ol class="feishu-steps">
+      <li><b>手机扫码</b><span>按安装指南在 Mac 上开始接入，用手机飞书选择企业或团队身份，确认授权。</span></li>
+      <li><b>自动建群</b><span>接入流程创建机器人应用、项目目录和群，把你加入群并保存配置。</span></li>
+      <li><b>群里发任务</b><span>按提示启动后，在新群发「读取 README 第一行」。收到回复就可以开始工作。</span></li>
+    </ol><div class="feishu-actions"><a class="btn ${configured?'':'primary'}" href="https://sintbot.com/guide/install/#feishu" target="_blank" rel="noopener">查看扫码接入指南</a></div>
+    <p class="hint">已经接入的应用可以继续使用，添加项目群请到「群 · 项目」。</p></details>
+    <details class="feishu-details"><summary>接入遇到问题</summary><dl class="feishu-help">
+      <dt>没有企业或团队身份</dt><dd>先在飞书创建团队或切换到已有团队，再开始扫码。</dd>
+      <dt>需要管理员批准</dt><dd>按飞书页面提示联系组织管理员。权限和发布审核以所在组织的设置为准。</dd>
+      <dt>扫码后没有建群成功</dt><dd>按接入流程给出的提示续做；已有应用可以复用，无需反复新建。</dd>
+      <dt>消息没有回复</dt><dd>确认机器人在群内、项目群已绑定，且这台 Mac 上的 SintBot 正在运行。</dd>
+      <dt>模型卡点了没反应</dt><dd>在应用后台检查卡片回调是否使用长连接，并订阅 card.action.trigger；修改后发布应用版本。</dd>
+    </dl><a class="lnk" href="${appUrl}" target="_blank" rel="noopener">打开飞书应用后台 ${IC.ext}</a></details>
+    <details class="feishu-details"><summary>高级：应用信息与手动接入</summary>
+      <p class="hint">当前应用信息仅供核对；此页不会修改应用凭据或重新扫码。</p>
+      <dl class="feishu-help"><dt>App ID</dt><dd class="mono">${esc(fe&&(fe.appId||(fe.appIdRef?'env:'+fe.appIdRef:''))||'未配置')}</dd>
+      <dt>应用凭据</dt><dd>${configured?'已设置，不显示密钥':'尚未配置完整'}</dd>
+      <dt>Bot ID</dt><dd class="mono">${esc(fe&&fe.botOpenId||'尚未获取')}</dd></dl>
+      <p class="hint">更换应用或凭据需要在这台 Mac 上完成，并在所有任务结束后重新启动。请保留已有配置和任务记录。</p>
+      <p class="hint">手动接入需配置机器人、消息事件和卡片回调、必要权限与可用范围，再发布应用版本。</p>
+      <a class="lnk" href="https://sintbot.com/guide/install/#feishu" target="_blank" rel="noopener">查看完整安装指南 ${IC.ext}</a>
     </details>
-    <div class="fx-sub">凭证</div>
-    <div class="grid cols2" style="row-gap:0">
-      <div class="field"><label class="f">appId</label><input id="fId" placeholder="cli_..." value="${esc(fe?fe.appId:'')}"/>${fe&&fe.appIdRef?`<div class="hint" style="margin-top:5px">当前:env:${esc(fe.appIdRef)}</div>`:''}</div>
-      <div class="field"><label class="f">appSecret ${fe&&fe.appSecretStatus!=='none'?'<span class="faint">(留空=保持)</span>':''}</label><input id="fSecret" placeholder="${fe&&fe.appSecretStatus!=='none'?'已设置 · 留空保持':'输入 appSecret'}"/></div>
-    </div>
-    <div class="inline" style="flex-wrap:wrap;margin:2px 0 2px"><button class="btn" id="fPrecheck">${IC.steth} 预检并自动获取</button><span class="faint" style="font-size:11px">验证凭证 / bot 身份 / 权限,自动回填 botOpenId</span></div>
-    <div id="fCheck"></div>
-    <div class="fx-sub" style="margin-top:22px">身份</div>
-    ${fxIdentity(fe)}
-    <div class="field"><label class="f">bot openId</label><input id="fBot" placeholder="ou_…(预检自动获取)" value="${esc(fe?fe.botOpenId:'')}"/></div>
-    <div class="field"><label class="f">管理员 <span class="faint" style="text-transform:none;letter-spacing:0">— 可多个 · 建群时可选择拉入</span></label>
-      <div id="fAdminList" class="fx-admins"></div>
-      <button class="btn" id="fAdminOrg" title="从组织通讯录搜索并选人加为管理员">${IC.plus} 从通讯录添加</button>
-      <div id="fAdminPick"></div>
-    </div>
-    <div class="fx-sub" style="margin-top:22px">用飞书登录控制台</div>
-    <div class="field"><label class="f">公网地址 <span class="faint" style="text-transform:none;letter-spacing:0">— https://域名(不带路径);填好后登录页出现「用飞书登录」,只放行上面的管理员</span></label>
-      <div class="inline"><input id="fPublicUrl" placeholder="https://console.example.com" value="${esc(fl.publicUrl||'')}" style="flex:1"/><button class="btn" id="fPubSave">保存地址</button></div>
-      ${fl.redirectUri?`<div class="hint" style="margin-top:6px">开放平台「安全设置 → 重定向 URL」加这一条:<span class="mono">${esc(fl.redirectUri)}</span> <button class="btn" id="fPubCopy" data-uri="${esc(fl.redirectUri)}" style="padding:2px 8px;margin-left:6px">复制</button></div>`:''}
-      <div class="hint" style="margin-top:4px">${fl.ready?'<span style="color:var(--ok)">'+IC.check+' 飞书登录已就绪</span>':'飞书登录未就绪:'+esc(fl.why||'')}</div>
-    </div>
-    <div class="field" style="margin-top:8px"><label class="f">群消息响应范围</label>
-      <select id="fGate"><option value="" ${fe&&fe.onlyWhenMentioned?'':'selected'}>所有消息(仅跳过只@他人的)— 依赖模型 NO_REPLY 自判静默</option><option value="1" ${fe&&fe.onlyWhenMentioned?'selected':''}>仅 @bot 的消息</option></select></div>
-    <button class="btn primary" id="fSave">保存飞书</button>
+  </div>`;
+}
+function fxFeishuAccessCard(fe){
+  const fl=Object.assign({},(S.net||{}).feishuLogin||{},{publicUrl:(S.net||{}).publicUrl||''});
+  return `<div class="card" id="feishuAccessCard" style="grid-column:1/-1"><details class="fx-fold" data-fold="feishuAccess"${fxFoldUser.feishuAccess?' open':''}>
+    <summary class="fx-head"><div class="lbl" style="margin:0"><span class="caret">${IC.chevronRight}</span>管理员与控制台登录</div><span class="fold-hint">按需设置</span></summary>
+    <p class="hint">机器人在群里工作不需要公网地址。需要从外网管理这台 Mac 时，再配置飞书登录。</p>
+    <div class="fx-sub">允许登录的管理员</div><p class="hint">公网控制台仅允许以下飞书账号登录。扫码接入时会加入扫码确认的账号。</p>
+    <div id="fAdminList" class="fx-admins"></div><button class="btn" id="fAdminOrg">${IC.plus} 从通讯录添加</button><div id="fAdminPick"></div>
+    <div class="fx-sub">公网控制台地址</div><p class="hint">先准备可访问的 HTTPS 地址，再在「服务器」中启用公网飞书登录。</p>
+    <div class="field"><label class="f" for="fPublicUrl">HTTPS 地址</label><div class="feishu-actions"><input id="fPublicUrl" type="url" placeholder="https://console.example.com" value="${esc(fl.publicUrl||'')}"/><button class="btn" id="fPubSave">保存地址</button></div></div>
+    ${fl.redirectUri?`<p class="hint">在飞书应用后台「安全设置 → 重定向 URL」添加：</p><div class="feishu-actions"><code class="feishu-uri">${esc(fl.redirectUri)}</code><button class="btn" id="fPubCopy" data-uri="${esc(fl.redirectUri)}">复制回调地址</button></div>`:''}
+    <p class="hint">${fl.ready?'飞书登录配置已就绪':!fl.publicUrl?'未设置公网地址，仅使用本机控制台时无需填写':'飞书登录未就绪:'+esc(fl.why||'')}</p>
   </details></div>`;
 }
 // Slack 应用身份条:bot 名 + workspace(没预检过就直说"尚未获取",别留白 —— 留白看起来像坏了)
@@ -4423,6 +4394,62 @@ updateThemeBtn();
 /* I18N_DICT_BEGIN —— 合并翻译片段时整块替换这两个数组,不要改此标记之外的代码
    ⚠ 正则一律 ^…$ 整串、不加 g 标志;更具体的条目必须排在泛化条之前。 */
 const I18N_EN=[
+  ["扫码，把项目带进飞书", "Scan to connect your project to Feishu"],
+  ["项目群已配置", "Project groups configured"],
+  ["尚未接入", "Not connected yet"],
+  ["等待连接", "Waiting for connection"],
+  ["在项目群里发任务，机器人会把进度和结果回复到群里。", "Send a task in your project group. The bot replies with progress and results."],
+  ["用手机飞书确认一次，自动创建机器人和项目群。", "Confirm in Feishu on your phone to create the bot and project group automatically."],
+  ["已绑定项目群", "Bound project groups"],
+  ["消息响应", "Messages"],
+  ["仅回复 @ 机器人的消息", "Replies when the bot is mentioned"],
+  ["接收群内普通消息", "Receives regular group messages"],
+  ["应用已配置，连接尚未确认。请确认这台 Mac 上的 SintBot 正在运行。", "The app is configured, but its connection is not confirmed. Check that SintBot is running on this Mac."],
+  ["管理项目群", "Manage project groups"],
+  ["查看使用指南", "Read the usage guide"],
+  ["首次接入：三步开始", "First connection: three steps"],
+  ["手机扫码", "Scan with your phone"],
+  ["按安装指南在 Mac 上开始接入，用手机飞书选择企业或团队身份，确认授权。", "Start the connection on your Mac using the install guide. Select an enterprise or team identity in Feishu on your phone and confirm."],
+  ["自动建群", "Create the group automatically"],
+  ["接入流程创建机器人应用、项目目录和群，把你加入群并保存配置。", "The setup creates the bot app, project folder and group, adds you to the group and saves the configuration."],
+  ["群里发任务", "Send a task in the group"],
+  ["按提示启动后，在新群发「读取 README 第一行」。收到回复就可以开始工作。", "Start as instructed, then ask the new group to read the first line of README. Once it replies, you can start working."],
+  ["查看扫码接入指南", "Read the scan setup guide"],
+  ["已经接入的应用可以继续使用，添加项目群请到「群 · 项目」。", "Keep using your connected app. Add project groups under Groups · Projects."],
+  ["接入遇到问题", "Connection help"],
+  ["没有企业或团队身份", "No enterprise or team identity"],
+  ["先在飞书创建团队或切换到已有团队，再开始扫码。", "Create a team in Feishu or switch to an existing team before scanning."],
+  ["需要管理员批准", "Administrator approval required"],
+  ["按飞书页面提示联系组织管理员。权限和发布审核以所在组织的设置为准。", "Follow the Feishu page and contact your organization administrator. Permissions and publishing approval depend on your organization settings."],
+  ["扫码后没有建群成功", "Group creation did not complete"],
+  ["按接入流程给出的提示续做；已有应用可以复用，无需反复新建。", "Follow the setup instructions to continue. Reuse the existing app rather than creating it again."],
+  ["消息没有回复", "Messages get no reply"],
+  ["确认机器人在群内、项目群已绑定，且这台 Mac 上的 SintBot 正在运行。", "Check that the bot is in the group, the group is bound to a project, and SintBot is running on this Mac."],
+  ["模型卡点了没反应", "Model card taps do not respond"],
+  ["在应用后台检查卡片回调是否使用长连接，并订阅 card.action.trigger；修改后发布应用版本。", "In the app settings, use a long connection for card callbacks and subscribe to card.action.trigger. Publish an app version after changes."],
+  ["打开飞书应用后台", "Open Feishu app settings"],
+  ["高级：应用信息与手动接入", "Advanced: app details and manual setup"],
+  ["当前应用信息仅供核对；此页不会修改应用凭据或重新扫码。", "App details are read-only here. This page does not change credentials or start another scan."],
+  ["应用凭据", "App credentials"],
+  ["已设置，不显示密钥", "Configured; secret is not displayed"],
+  ["尚未配置完整", "Configuration incomplete"],
+  ["更换应用或凭据需要在这台 Mac 上完成，并在所有任务结束后重新启动。请保留已有配置和任务记录。", "Change the app or credentials on this Mac, then restart after all tasks finish. Preserve the existing configuration and task records."],
+  ["手动接入需配置机器人、消息事件和卡片回调、必要权限与可用范围，再发布应用版本。", "Manual setup requires the bot, message events, card callbacks, permissions and app availability, followed by publishing an app version."],
+  ["查看完整安装指南", "Read the full install guide"],
+  ["管理员与控制台登录", "Administrators and console sign-in"],
+  ["按需设置", "Optional"],
+  ["机器人在群里工作不需要公网地址。需要从外网管理这台 Mac 时，再配置飞书登录。", "Group tasks do not require a public URL. Configure Feishu sign-in when you need to manage this Mac remotely."],
+  ["允许登录的管理员", "Administrators allowed to sign in"],
+  ["公网控制台仅允许以下飞书账号登录。扫码接入时会加入扫码确认的账号。", "Only these Feishu accounts can sign in to the public console. Setup adds the account that confirms the scan."],
+  ["公网控制台地址", "Public console URL"],
+  ["先准备可访问的 HTTPS 地址，再在「服务器」中启用公网飞书登录。", "Prepare an accessible HTTPS URL, then enable public Feishu sign-in under Server."],
+  ["HTTPS 地址", "HTTPS URL"],
+  ["在飞书应用后台「安全设置 → 重定向 URL」添加：", "Add this in the Feishu app under Security settings → Redirect URL:"],
+  ["复制回调地址", "Copy callback URL"],
+  ["飞书登录配置已就绪", "Feishu sign-in configuration is ready"],
+  ["未设置公网地址，仅使用本机控制台时无需填写", "No public URL set. Leave it empty when using only the local console."],
+  ["尚未添加管理员；使用公网飞书登录前请先添加。", "No administrators added. Add one before using public Feishu sign-in."],
+
   ["正在处理任务", "Task in progress"],
   ["已受理", "Accepted"],
   ["等待模型读取，尚未确认加入", "Waiting for the model to read it; not yet confirmed joined"],
@@ -4464,6 +4491,9 @@ const I18N_EN=[
   ["型号与推理", "Model and reasoning"],
   ["上下文与压缩", "Context and compaction"],
   ["连接与登录", "Connection and sign-in"],
+  ["环境冲突", "Environment conflicts"],
+  ["环境冲突:", "Environment conflicts: "],
+  ["这些设置在 SintBot 之外,可能改变 CLI 的接入点或型号;只列键名,不含值", "These settings live outside SintBot and may change the CLI endpoint or model; key names only, no values"],
   ["模型容量参考", "Model capacity reference"],
   ["目录默认窗口", "Catalog default context"],
   ["最近上报可用窗口", "Last reported usable context"],

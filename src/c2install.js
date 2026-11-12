@@ -323,6 +323,6 @@ function registerAddedGroups(installation) {
   return addedRoutes.map(route => route.chatId)
 }
 
-module.exports = { registerAddedGroups, loadInstallation, loadInstallationFromRaw, initializeInstallation, assertPrivateDirectory,
+module.exports = { registerAddedGroups, loadInstallation, loadInstallationFromRaw, initializeInstallation, installationStateDir, assertPrivateDirectory,
   assertJournalScope, assertInstallationJournals, assertRunnerExecutable, SUPPORTED_RUNNERS, MANIFEST,
   VALIDATORS }

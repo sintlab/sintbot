@@ -1,4 +1,4 @@
-# 安装 SintBot 1.4.16
+# 安装 SintBot 1.4.17
 
 [English](../install.md) · 简体中文
 
@@ -10,11 +10,45 @@
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-安装器会自动检查环境，把 `sintbot@1.4.16` 装到 `~/.local/share/sintbot`，并验证程序入口、内置核心和飞书模块。看到 `Installed and verified SintBot 1.4.16` 就可以继续。不需要 sudo。
+安装器会自动检查环境，把 `sintbot@1.4.17` 装到 `~/.local/share/sintbot`，并验证程序入口、内置核心和飞书模块。看到 `Installed and verified SintBot 1.4.17` 就可以继续。不需要 sudo。
 
 可选预览：在命令末尾加 `-s -- --dry-run`。要自定义安装位置，设置 `SINTBOT_INSTALL_DIR` 环境变量，并同步修改后面的可执行文件路径。
 
-## 2. 连接飞书
+## 2. 扫码接入（推荐）
+
+前提：手机飞书当前处于企业/团队身份；没有组织的个人身份扫不了，需先新建一个团队（免费）。扫码创建的应用归扫码人所在的组织，公司普通成员建了自己删不掉。
+
+```bash
+"$HOME/.local/share/sintbot/bin/sintbot" connect
+```
+
+终端先打印扫码链接，并打开一个本机页面显示二维码；用飞书扫码、在手机上确认。随后它依次：取得应用凭证（并打印应用 ID）→ 自检 → 放开通讯录范围与可用范围并发布版本 → 创建群并把你拉进去 → 新建项目目录 `~/Projects/sintbot`（含一个 `README.md`）→ 写入 `~/.sbot/config.json` → 初始化消息日志。每一步的结果都会打印。扫码一旦确认，应用就已在你的组织里创建；之后任一检查或建群失败都会在建目录、写配置之前停下，并给出带 `--app-id` 的重跑命令。
+
+- 凭证明文写在 `~/.sbot/config.json`（文件 0600、目录 0700）。要改回环境变量，把 `appId` / `appSecret` 改成 `"env:FEISHU_APP_ID"` / `"env:FEISHU_APP_SECRET"`，并在每次启动前导出这两个变量。
+- `--basic`：公司组织里的非管理员使用。不申请 `application:application:patch`，跳过放开范围与发布；之后请管理员在开放平台补这两步。
+- `--app-id cli_…`：复用已有应用（给它追加权限，不新建），用于中途停下后重跑或审核通过后继续。只在没有配置文件、或配置文件属于这个应用且还没绑定任何群时允许；已绑定群的配置不会被替换。
+- `--chat oc_…`：不自动建群，直接绑定你手动建好并拉入机器人的群（建群失败时的提示里会给出这条命令）。
+- `--workdir /绝对路径`：绑定一个已存在的目录，不新建；`--name` 换默认目录名；`--provider codex|claude` 指定执行器（本机只装了一个时自动选）；`--no-open` 只打印链接、不打开页面。
+- 已有飞书配置或服务正在运行时，`connect` 会拒绝执行。扫码会申请模型卡所需的卡片回调。`/model` 点选卡没有反应时，按第 4 节检查回调订阅。
+
+## 3. 首次启动
+
+`connect` 已经完成初始化，直接启动：
+
+```bash
+"$HOME/.local/share/sintbot/bin/sintbot" start --config "$HOME/.sbot/config.json" --ui
+```
+
+它会预检配置和执行器、连接飞书并打开本机控制台。保持终端开启。在群里发“读取项目 README 的第一行，只回复这一行”，并和 `~/Projects/sintbot/README.md` 对照。预检通过不代表飞书认证或消息送达已经验证。
+
+## 4. 手动接入（备选）
+
+扫码失败、管理员不放行，或者想自己管理应用时，走下面的手动路径；内容与之前的安装步骤相同。
+
+<details>
+<summary>展开手动步骤</summary>
+
+#### 4.1 创建应用
 
 在 [飞书开放平台](https://open.feishu.cn/) 创建企业自建应用，启用机器人、接收和回复消息的权限，事件订阅选择长连接并订阅消息接收；回调订阅同样选择长连接接收回调并订阅卡片回传交互（群里点选 `/model` 卡片要用）。发布应用后，把机器人加入要使用的群，取得每个群的 `oc_…` 群 ID。
 
@@ -29,7 +63,7 @@ export FEISHU_APP_ID FEISHU_APP_SECRET
 
 不要把密钥发进群或提交到仓库。后续步骤都在这个终端里做；新开终端时需要重新设置这两个变量。
 
-## 3. 绑定项目
+#### 4.2 手写配置
 
 用 `mkdir -p ~/.sbot && chmod 700 ~/.sbot` 创建私有配置目录，再创建 `~/.sbot/config.json`。把群 ID 和项目绝对路径换成你自己的，项目目录必须已经存在。下面的示例绑定两个群：一个用 Codex，一个用 Claude Code。只有一个群时删掉另一项即可。
 
@@ -69,9 +103,9 @@ export FEISHU_APP_ID FEISHU_APP_SECRET
 - 要固定 Claude 型号，可在 `providers.claude` 里加 `"model"`；不写就用这台机器上 Claude Code 的默认模型。
 - 同时运行的任务默认最多 2 个，可在顶层加 `"agent": { "maxConcurrent": 4 }` 调整（1–32）。
 
-## 4. 首次启动
+#### 4.3 初始化并启动
 
-在刚才的终端里一次复制执行：
+在刚才的终端里一次复制执行（手动路径需要自己执行 `init`）：
 
 ```bash
 SINTBOT="$HOME/.local/share/sintbot/bin/sintbot"
@@ -83,6 +117,8 @@ SINTBOT="$HOME/.local/share/sintbot/bin/sintbot"
 这组命令依次初始化消息日志、预检配置和执行器、连接飞书并打开本机控制台，任一步失败就停止。**初始化只运行一次**；以后重启不要再执行 `init`。保持终端开启。
 
 在群里发“读取项目 README 的第一行，只回复这一行”，并和本地文件对照。预检通过不代表飞书认证或消息送达已经验证。
+
+</details>
 
 ## 5. 在群里使用
 
@@ -123,7 +159,7 @@ Codex 和 Claude Code 的忙时跟进默认开启；`steer:false` 改为排队�
 
 ## 停止与重启
 
-按 Ctrl-C 并等待退出。确认飞书环境变量已设置，再执行：
+按 Ctrl-C 并等待退出。配置里用的是 `env:` 引用时，先确认环境变量已设置，再执行：
 
 ```bash
 "$HOME/.local/share/sintbot/bin/sintbot" start --config "$HOME/.sbot/config.json" --ui

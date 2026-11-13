@@ -2262,7 +2262,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
       // witness; the host projection must still classify the turn as stopped.
       const settledResult = controller.signal.aborted && result?.aborted === false
         ? { ...result, aborted: true } : result
-      // Codex reports cumulative session usage. Use the same private-core
+      // Codex reports cumulative session usage. Use the same built-in core
       // arithmetic as the legacy path, without writing session state before
       // terminal effects have been confirmed.
       const usage = settledResult?.result?.usage

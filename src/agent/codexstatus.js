@@ -13,7 +13,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { IS_WIN, resolveSpawn } = require('./winexec')
-const { classifyError } = require('./privatecore') // 服务端拒绝原话 → 账号档(与出错轮同一张判据表,判据在闭源核心)
+const { classifyError } = require('./privatecore') // 服务端拒绝原话 → 账号档(与出错轮同一张判据表,判据由内置核心统一提供)
 
 // `codex login status` output → { loggedIn, mode }. The line typically reads
 // "Logged in using ChatGPT" (subscription) or mentions an API key.

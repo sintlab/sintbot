@@ -1,4 +1,4 @@
-// ABI v37 adapter for the private binary decision core. Manifest assembly still stays in JS.
+// ABI v37 adapter for the built-in decision core. Manifest assembly still stays in JS.
 const fs = require('node:fs')
 const path = require('node:path')
 const { createHash } = require('node:crypto')

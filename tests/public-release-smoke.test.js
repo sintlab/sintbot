@@ -81,7 +81,7 @@ test('a missing or changed core fails without a JavaScript fallback', t => {
   assert.match(mismatch.stderr, /binary core does not match its loader/)
 })
 
-test('the package ships its declared files and no private development sources', () => {
+test('the package ships its declared runtime files without development artifacts', () => {
   const pkg = require('../package.json')
   assert.equal(pkg.private, false)
   for (const file of pkg.files) assert.ok(fs.existsSync(path.join(root, file)), file)

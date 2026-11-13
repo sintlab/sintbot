@@ -1,4 +1,4 @@
-# Install SintBot 1.4.19
+# Install SintBot 1.4.20
 
 English · [简体中文](./zh-CN/install.md)
 
@@ -14,7 +14,7 @@ On an Apple silicon Mac, [download SintBot for macOS](https://github.com/sintlab
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-The installer checks the environment, installs `sintbot@1.4.19` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.19`. No sudo is needed.
+The installer checks the environment, installs `sintbot@1.4.20` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.20`. No sudo is needed.
 
 To preview, append `-s -- --dry-run`. To choose another location, set `SINTBOT_INSTALL_DIR` and adjust the executable paths below.
 

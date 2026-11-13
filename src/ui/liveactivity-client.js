@@ -1,6 +1,6 @@
 /* Injected into the console's existing script; no framework or extra connection. */
 const activityPanel = (() => {
-  let root, groupBody, listBody, taskBody, selected = '', count = 5
+  let root, groupBody, listBody, taskBody, capacityNode, selected = '', count = 5
   try { selected = sessionStorage.getItem('sintbot.activity.group') || '' } catch {}
   let epoch = '', revision = -1, loaded = false, pending = null, frames = [], scheduled = false
   const rows = new Map(), groups = new Map(), detailCache = new Map(), detailPending = new Set(), detailErrors = new Map(), open = new Set()
@@ -29,38 +29,57 @@ const activityPanel = (() => {
   function setup() {
     if (root) return
     root = node('section', 'la'); root.setAttribute('data-i18n-skip', '')
+    /* The panel owns its whole look and uses the console's tokens (--hover, --sel,
+       --faint, --focus, the 11/12/13/14 type scale); the console adds no overrides. */
     const style = node('style'); style.textContent = `
-      .la{margin:20px 0}.la [hidden]{display:none!important}.la .la-panel{padding:0;overflow:hidden}
-      .la .la-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:20px 24px;border-bottom:1px solid var(--line)}
-      .la h2{font-size:15px;font-weight:600;letter-spacing:0;margin:0}.la .la-capacity{font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;text-align:right}
-      .la .la-select,.la .la-toggle{font:inherit;width:100%;border:0;border-radius:0;background:transparent;color:inherit;text-align:left;cursor:pointer;min-height:48px}
-      .la .la-group{position:relative;display:flex;align-items:center;border-bottom:1px solid var(--line);transition:background .18s ease}.la .la-select{flex:1;min-width:0;display:grid;grid-template-columns:minmax(160px,1.2fr) minmax(120px,1fr) minmax(160px,1fr);gap:20px;padding:15px 20px 15px 24px}.la .la-select>div{min-width:0}
-      .la .la-group:last-child{border-bottom:0}.la .la-group:before{content:'';position:absolute;inset:12px auto 12px 0;width:3px;border-radius:0 3px 3px 0;background:var(--ember);opacity:0;transform:scaleY(.4);transition:opacity .18s,transform .18s}
-      .la .la-select strong,.la .la-select small,.la .la-model>span,.la .la-context>span{display:block;white-space:normal;overflow-wrap:anywhere}.la .la-tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}.la .la-tags .tag{font-size:10px;padding:2px 6px}.la .la-tags [data-status=running]{color:var(--ember);border-color:color-mix(in srgb,var(--ember) 30%,var(--line))}.la .la-tags [data-status=attention]{color:var(--fail)}.la .la-path{font-family:var(--mono);font-size:10.5px}
-      .la .la-group:hover,.la .la-toggle:hover{background:color-mix(in srgb,var(--ember) 4%,transparent)}
-      .la .la-group.selected{background:color-mix(in srgb,var(--ember) 7%,transparent)}.la .la-group.selected:before{opacity:1;transform:scaleY(1)}
-      .la button:focus-visible{outline:2px solid var(--ember);outline-offset:-3px}.la button:active:not(:disabled){background:color-mix(in srgb,var(--ember) 11%,transparent)}
-      .la small{display:block;color:var(--dim);font-size:11px;line-height:1.5;margin-top:4px}.la strong{font-size:13px;font-weight:600}.la .la-model{font-size:12px}.la .la-model small[data-status=running]{color:var(--ember)}.la .la-model small[data-status=attention]{color:var(--fail)}.la .la-context{font-size:12px;font-variant-numeric:tabular-nums}
-      .la .la-track{height:3px;margin-top:8px;background:var(--line);overflow:hidden;border-radius:2px}.la .la-fill{height:100%;background:var(--ember);transform-origin:left;transition:transform .3s ease-out;transform:scaleX(0)}
-      .la .la-groups{max-height:560px;overflow:auto;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
-      .la .la-task-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:22px 0 12px}.la .la-task-head strong{font-size:14px;overflow-wrap:anywhere}
-      .la .la-actions{display:flex;gap:6px;flex-shrink:0;padding-right:24px}.la .la-actions .iconbtn{padding:0;transition:background .15s,border-color .15s,transform .15s}.la .la-actions .iconbtn:active:not(:disabled){transform:scale(.92)}.la button:disabled{cursor:default;opacity:.45}
+      .la{margin:8px 0 0}.la [hidden]{display:none!important}.la .la-panel{padding:0;overflow:hidden}
+      .la .la-head{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:42px;padding:10px 16px;border-bottom:1px solid var(--line)}
+      .la h2{font-size:14px;line-height:20px;font-weight:600;letter-spacing:0;margin:0}
+      .la-capacity{font-size:12px;color:var(--faint);font-variant-numeric:tabular-nums;white-space:nowrap}
+      .la .la-select,.la .la-toggle{font:inherit;width:100%;border:0;border-radius:0;background:transparent;color:inherit;text-align:left;cursor:pointer}
+      .la .la-group{position:relative;display:flex;align-items:center;border-bottom:1px solid var(--line);transition:background-color .18s ease}
+      .la .la-select{flex:1;min-width:0;display:grid;grid-template-columns:minmax(200px,1.5fr) minmax(110px,1fr) minmax(170px,1fr);gap:16px;align-items:center;padding:9px 8px 9px 16px}.la .la-select>div{min-width:0}
+      .la .la-group:last-child{border-bottom:0}.la .la-group:before{content:'';position:absolute;inset:8px auto 8px 0;width:2px;border-radius:0 2px 2px 0;background:var(--ember);opacity:0;transform:scaleY(.4);transition:opacity .18s,transform .18s}
+      .la .la-select strong,.la .la-select small,.la .la-model>span,.la .la-context>span{display:block;white-space:normal;overflow-wrap:anywhere}
+      .la .la-model>span,.la .la-path{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .la .la-tags{display:flex;flex:none;flex-wrap:nowrap;gap:4px;margin:0}
+      .la .la-tags [data-status=running]{color:var(--ember);background:rgba(var(--ember-rgb),.10)}.la .la-tags [data-status=attention]{color:var(--fail);background:rgba(var(--fail-rgb),.10)}
+      .la .la-path{font-family:var(--mono);font-size:12px}
+      .la .la-group:hover,.la .la-toggle:hover{background:var(--hover)}
+      .la .la-group.selected{background:rgba(var(--ember-rgb),.07)}.la .la-group.selected:before{opacity:1;transform:scaleY(1)}
+      .la button:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}.la button:active:not(:disabled){background:rgba(var(--ember-rgb),.11)}
+      .la small{display:block;color:var(--faint);font-size:12px;line-height:18px;margin-top:2px}.la strong{font-size:14px;line-height:20px;font-weight:500}
+      .la .la-model,.la .la-context{font-size:13px;line-height:20px}.la .la-model small[data-status=running]{color:var(--ember)}.la .la-model small[data-status=attention]{color:var(--fail)}.la .la-context{font-variant-numeric:tabular-nums}
+      .la .la-track{height:3px;margin-top:5px;background:var(--line);overflow:hidden;border-radius:2px}.la .la-fill{height:100%;background:var(--ember);transform-origin:left;transition:transform .3s ease-out;transform:scaleX(0)}
+      .la .la-groups{overflow:auto}
+      .la .la-task-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 0 8px}.la .la-task-head strong{font-size:15px;line-height:22px;font-weight:600;overflow-wrap:anywhere}
+      .la .la-actions{display:flex;gap:2px;flex-shrink:0;padding-right:10px}.la .la-actions .iconbtn{padding:0;background:transparent;border-color:transparent;transition:background-color .15s,border-color .15s,transform .15s}.la .la-actions .iconbtn:hover{background:var(--sel)}.la .la-actions .iconbtn:active:not(:disabled){transform:scale(.92)}.la button:disabled{cursor:default;opacity:.45}
       .la .la-list{padding:0;overflow:hidden}.la .la-row{border-bottom:1px solid var(--line)}.la .la-row:last-child{border-bottom:0}
-      .la .la-toggle{padding:16px 20px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;transition:background .15s}
-      .la .la-title{font-size:13px;line-height:1.6;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-top:5px;overflow-wrap:anywhere}
-      .la .la-preview{font-size:12px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:5px}
-      .la .la-state{font-size:11px;color:var(--dim);white-space:nowrap;padding-top:4px}.la .la-state:after{content:'';display:inline-block;width:5px;height:5px;border-right:1px solid currentColor;border-bottom:1px solid currentColor;transform:rotate(45deg);margin:0 2px 3px 14px;transition:transform .18s}
+      .la .la-toggle{padding:8px 16px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;transition:background-color .15s}
+      .la .la-title{font-size:13px;line-height:20px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-top:2px;overflow-wrap:anywhere}
+      .la .la-preview{font-size:12px;color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px}
+      .la .la-state{font-size:12px;color:var(--dim);white-space:nowrap;padding-top:2px}.la .la-state:after{content:'';display:inline-block;width:5px;height:5px;border-right:1px solid currentColor;border-bottom:1px solid currentColor;transform:rotate(45deg);margin:0 2px 3px 14px;transition:transform .18s}
       .la [aria-expanded=true] .la-state:after{transform:rotate(225deg)}.la .la-state[data-state=running],.la .la-state[data-state=sending]{color:var(--ember)}
       .la .la-state[data-state=error],.la .la-state[data-state=unknown],.la .la-state[data-state=timeout]{color:var(--fail)}
       .la .la-fold{display:grid;grid-template-rows:0fr;opacity:0;transition:grid-template-rows .2s ease,opacity .2s ease}.la .la-fold.open{grid-template-rows:1fr;opacity:1}
-      .la .la-fold-inner{min-height:0;overflow:hidden}.la .la-detail{padding:0 20px 18px;font-size:13px;line-height:1.7;overflow-wrap:anywhere}
-      .la .la-detail .aexp{margin:0;max-height:360px;white-space:normal}.la .la-detail .aereply{white-space:pre-wrap}.la .la-detail .aemeta{gap:6px 16px;white-space:normal}.la .la-detail .la-source{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}.la .la-source summary{cursor:pointer;color:var(--dim);font-size:11px}.la .la-source summary:focus-visible{outline:2px solid var(--ember);outline-offset:3px}.la .la-detail .la-error{color:var(--fail)}.la .la-detail p{white-space:pre-wrap;margin:8px 0}.la .la-detail h3{font-size:11px;color:var(--dim);margin:16px 0 5px;font-weight:500}.la .la-notice{font-size:12px;color:var(--dim);margin:12px 0;line-height:1.6}
-      .la .la-more{margin:12px auto 0;display:block;min-height:40px;font-size:12px}
-      @media(max-width:640px){.la .la-head{padding:16px;gap:10px}.la .la-capacity{font-size:11px}.la .la-group{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start}.la .la-select{grid-column:1/-1;grid-row:1;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px 16px;padding:14px 16px}.la .la-select>div:first-child{padding-right:94px;grid-column:1/-1}.la .la-actions{grid-column:2;grid-row:1;z-index:1;padding:14px 16px 0 0}.la .la-model{grid-column:1/-1}.la .la-context{grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:0 8px}.la .la-context small{margin:0;font-size:10px}.la .la-track{grid-column:1/-1;margin-top:6px}.la .la-task-head{align-items:flex-start;flex-direction:column;gap:10px}.la .la-actions{flex-wrap:wrap}.la .la-toggle{grid-template-columns:minmax(0,1fr);gap:7px;padding:14px 16px}.la .la-state{white-space:normal;padding:0}.la .la-state:after{float:right}.la .la-detail{padding:0 16px 16px}}
+      .la .la-fold-inner{min-height:0;overflow:hidden}.la .la-detail{padding:0 16px 12px;font-size:13px;line-height:20px;overflow-wrap:anywhere}
+      .la .la-detail .aexp{margin:0;max-height:360px;white-space:normal}.la .la-detail .aereply{white-space:pre-wrap}.la .la-detail .aemeta{gap:6px 16px;white-space:normal}.la .la-detail .la-source{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}.la .la-source summary{cursor:pointer;color:var(--dim);font-size:12px}.la .la-source summary:focus-visible{outline:2px solid var(--focus);outline-offset:3px}.la .la-detail .la-error{color:var(--fail)}.la .la-detail p{white-space:pre-wrap;margin:8px 0}.la .la-detail h3{font-size:12px;color:var(--dim);margin:16px 0 5px;font-weight:500}.la .la-notice{font-size:12px;line-height:18px;color:var(--faint);margin:8px 0}
+      .la .la-more{margin:8px auto 0;display:block;font-size:13px}.la .empty{padding:10px 16px}
+      @media(min-width:641px){
+        /* name and tags share a line: the name may shrink to an ellipsis, the tags may not; the path takes its own line */
+        .la .la-select>div:first-child{display:grid;grid-template-columns:minmax(0,max-content) max-content;justify-content:start;align-items:center;column-gap:8px}
+        .la .la-select>div:first-child>strong{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        /* the path spans both columns; without a zero width its content would be spread into the tag column */
+        .la .la-path{grid-column:1/-1;width:0;min-width:100%}
+        .la .la-context{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:8px;align-items:baseline}
+        .la .la-context>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.la .la-context small{margin:0;white-space:nowrap}.la .la-track{grid-column:1/-1}
+      }
+      @media(max-width:640px){.la .la-head{padding:10px 12px;gap:10px}.la .la-group{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start}.la .la-select{grid-column:1/-1;grid-row:1;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:6px 12px;padding:10px 12px}.la .la-select>div:first-child{padding-right:88px;grid-column:1/-1}.la .la-actions{grid-column:2;grid-row:1;z-index:1;padding:8px 8px 0 0;flex-wrap:wrap}.la .la-model{grid-column:1/-1}.la .la-context{grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:0 8px}.la .la-track{grid-column:1/-1}.la .la-task-head{align-items:flex-start;flex-direction:column;gap:10px}.la .la-toggle{grid-template-columns:minmax(0,1fr);gap:4px;padding:8px 12px}.la .la-state{white-space:normal}.la .la-state:after{float:right}.la .la-detail{padding:0 12px 12px}}
       @media(prefers-reduced-motion:reduce){.la *{transition:none!important;animation:none!important}}`
     root.append(style)
     const panel = node('div', 'card la-panel'), head = node('div', 'la-head')
-    head.append(node('h2'), node('span', 'la-capacity')); panel.append(head)
+    capacityNode = node('span', 'la-capacity'); capacityNode.setAttribute('data-i18n-skip', ''); capacityNode.dataset.for = 'overview'
+    head.append(node('h2'), capacityNode); panel.append(head)
     groupBody = node('div', 'la-groups'); panel.append(groupBody); root.append(panel)
     const note = node('div', 'la-notice'); note.dataset.la = 'note'; note.setAttribute('role', 'status'); root.append(note)
     taskBody = node('div', 'la-task-body'); taskBody.hidden = true
@@ -117,7 +136,7 @@ const activityPanel = (() => {
     a.children[2].title = g.workdir || g.project
     text(a.children[1].children[0], g.runner === 'codex' ? 'codex' : 'claude')
     const state = a.children[1].children[1]
-    text(state, g.held || g.queueFaulted ? tr('需要处理','Needs attention') : g.paused ? tr('已暂停','Paused') : g.finalizing ? tr('收尾中','Finishing') : g.waitingForCapacity ? tr('等待容量','Waiting for capacity') : g.busy ? 'busy' : 'idle')
+    text(state, g.held || g.queueFaulted ? tr('需要处理','Needs attention') : g.paused ? tr('已暂停','Paused') : g.finalizing ? tr('收尾中','Finishing') : g.waitingForCapacity ? tr('等待容量','Waiting for capacity') : g.busy ? tr('忙','busy') : tr('空闲','idle'))
     state.dataset.status = g.held || g.queueFaulted ? 'attention' : g.busy ? 'running' : 'idle'
     if (g.busy) text(state, state.textContent + ' ' + Math.floor((g.sinceMs || 0)/1000) + 's')
     if (g.queue) text(state, state.textContent + ' · ' + tr('排队 ','Queued ') + g.queue)
@@ -137,6 +156,7 @@ const activityPanel = (() => {
     text(c.children[0], valid ? `${num(ctx.usedTokens)}${capacity ? ' / ' + num(ctx.windowTokens) + ' · ' + percent + '%' : ' · ' + tr('容量未知','capacity unknown')}` : ctx?.quality === 'compacted' ? tr('压缩后待上报','Awaiting usage after compaction') : !g.sessionId && !g.busy ? tr('未开始','No session') : tr('待上报','Awaiting usage'))
     const quality = ctx?.quality === 'reported' ? tr('上下文 · 最新上报','Context · Latest report') : ctx?.quality === 'historical' ? tr('上下文 · 历史采样','Context · Historical sample') : tr('上下文 · 上次上报','Context · Last report')
     text(c.children[1], ctx ? quality + ' · ' + stamp(ctx.measuredAt) : tr('上下文','Context'))
+    c.children[2].hidden = percent == null
     c.children[2].children[0].style.transform = 'scaleX(' + (percent == null ? 0 : Math.max(0, Math.min(100, percent)) / 100) + ')'
     n.title = g.name + ' · ' + g.project + ' · ' + g.model + ' · ' + g.chatId.slice(-6)
     n.classList.toggle('selected',selected === g.chatId); n.children[0].setAttribute('aria-pressed', String(selected === g.chatId)); return n
@@ -227,7 +247,7 @@ const activityPanel = (() => {
     lang = langOf()
     text(root.querySelector('h2'),tr('群 · 项目','Groups · Projects'))
     const concurrency = S?.live?.concurrency, capacity = concurrency?.max ?? S?.agent?.maxConcurrent ?? 0
-    text(root.querySelector('.la-capacity'), tr('运行 ','Running ') + (concurrency?.active ?? [...groups.values()].filter(g=>g.busy).length) + (capacity > 0 ? ' / ' + capacity : '') + ' · ' + tr('排队 ','Queued ') + (S?.live?.queue || 0))
+    text(capacityNode, tr('运行 ','Running ') + (concurrency?.active ?? [...groups.values()].filter(g=>g.busy).length) + (capacity > 0 ? ' / ' + capacity : '') + ' · ' + tr('排队 ','Queued ') + (S?.live?.queue || 0))
     if (loaded && selected && !groups.has(selected)) { selected = ''; try { sessionStorage.removeItem('sintbot.activity.group') } catch {} }
     reconcile(groupBody, groups.size ? [...groups.values()].map(groupNode) : [node('div','empty',loaded ? tr('暂无群项目','No projects') : tr('正在同步…','Syncing…'))])
     const group = groups.get(selected)
@@ -267,7 +287,8 @@ const activityPanel = (() => {
   new MutationObserver(schedule).observe(document.documentElement,{attributes:true,attributeFilter:['data-lang']})
   return {
     preserve(){focusBeforeRender=root?.contains(document.activeElement)?document.activeElement:null;groupScroll=groupBody?.scrollTop||0},
-    mount(){setup();const target=document.getElementById('liveActivity');if(target&&root.parentNode!==target)target.append(root);groupBody.scrollTop=groupScroll;if(focusBeforeRender?.isConnected)focusBeforeRender.focus({preventScroll:true});focusBeforeRender=null;schedule();void sync()},
+    // The running/queued readout sits in the console's page-header slot (shown there while Overview is the open tab).
+    mount(){setup();const target=document.getElementById('liveActivity');if(target&&root.parentNode!==target)target.append(root);const slot=document.getElementById('pSlot');if(slot&&capacityNode.parentNode!==slot)slot.append(capacityNode);groupBody.scrollTop=groupScroll;if(focusBeforeRender?.isConnected)focusBeforeRender.focus({preventScroll:true});focusBeforeRender=null;schedule();void sync()},
     sync,
     receive(data){if(pending){frames.push(data);if(frames.length>200)frames.shift()}else apply(data,false)},
     live(live){for(const [id,value]of Object.entries(live?.groups||{})){const g=groups.get(id);if(g)Object.assign(g,value)}schedule()},

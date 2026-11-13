@@ -1,6 +1,6 @@
 {
   "name": "sintbot",
-  "version": "1.4.19",
+  "version": "1.4.20",
   "private": false,
   "description": "A personal AI agent on your Mac: local conversations and Feishu project groups with Codex or Claude Code.",
   "bin": {

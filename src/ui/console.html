@@ -99,7 +99,7 @@
 }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%}
-html{color-scheme:light}                           /* 默认亮;暗色主题在 [data-theme=dark] 覆盖 */
+html{color-scheme:light}                           /* data-theme 由首屏脚本定(没存过 = 跟随系统);暗色在 [data-theme=dark] 覆盖 */
 :root[data-theme="dark"]{color-scheme:dark}        /* 原生下拉 / 滚动条跟着切暗色 */
 body{
   background:var(--bg); color:var(--ink); font:400 13px/20px var(--sans);
@@ -117,10 +117,7 @@ body{
 /* ── 外壳:侧栏 200(在左)+ 右侧(52px 页头 + 独立滚动的内容区) ── */
 .app{display:grid;grid-template-columns:200px minmax(0,1fr);height:100vh;height:100dvh}
 .side{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(--side);border-right:1px solid var(--line);padding:12px 8px 8px}
-/* ⚠ .main 是页头里那几样「长在各页内容里」的东西的定位基准(见 .pact 与概览的并发读数):
-   它们的 DOM 留在各自的 .tab 里由渲染函数管,只是画到页头的位置上。所以 .main 到它们之间的祖先
-   (.pbody / .tab / .card)都不能定位、也不能带 transform —— 否则基准就换人了。 */
-.main{position:relative;display:flex;flex-direction:column;min-width:0;min-height:0}
+.main{display:flex;flex-direction:column;min-width:0;min-height:0}
 .phead{flex:none;display:flex;align-items:center;gap:12px;height:52px;padding:0 24px;border-bottom:1px solid var(--line)}
 .ptitle{margin:0;font-size:16px;line-height:24px;font-weight:600;white-space:nowrap}
 .ptitle>span{display:none}
@@ -132,12 +129,43 @@ body{
 .pbody{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable;padding:16px 24px 40px}
 .tab{display:none;max-width:1120px}
 .tab.on{display:block;animation:tabin var(--dur) var(--ease)}
-/* 只淡入、不位移:transform 会让 .tab 成为定位基准(见 .main 那条) */
 @keyframes tabin{from{opacity:0}to{opacity:1}}
 #settings{max-width:800px}
+/* 设置页的页内目录(.stoc):默认是标题下面一行可横向滚动的胶囊,吸在内容区顶上(底色与页面相同,卡片从它下面滚过去);
+   窗口 ≥1240 时改成右侧空栏里的竖排目录 —— 800 的表单列 + 32 间距 + 160 目录正好放进内容区。 */
+.stoc{position:sticky;top:-16px;z-index:5;display:flex;align-items:center;gap:4px;margin:-16px -24px 8px;padding:10px 24px 8px;background:var(--bg);
+  overflow-x:auto;scrollbar-width:none}
+.stoc::-webkit-scrollbar{display:none}
+.stoc:empty{display:none}
+.stoc-h{display:none}
+.stoc-i{appearance:none;flex:none;height:24px;margin:0;padding:0 10px;border:0;border-radius:999px;background:transparent;color:var(--faint);
+  font:400 12px/18px var(--sans);white-space:nowrap;cursor:pointer;transition:var(--tr-ui)}
+.stoc-i:hover{color:var(--ink);background:var(--hover)}
+.stoc-i.on{color:var(--ink);background:var(--sel);font-weight:500}
+#settings>.grid>.card{scroll-margin-top:44px}
+@media(min-width:1240px){
+  #settings{max-width:992px}
+  #settings.on{display:grid;grid-template-columns:minmax(0,800px) 160px;column-gap:32px;align-items:start}
+  #settings>.grid{grid-column:1;grid-row:1}
+  #settings>.stoc{grid-column:2;grid-row:1;top:0;flex-direction:column;align-items:stretch;gap:1px;margin:0;padding:2px 0 2px 12px;background:none;border-left:1px solid var(--line);overflow:visible}
+  .stoc-h{display:block;padding:0 8px 6px;font-size:11px;line-height:16px;font-weight:600;color:var(--muted)}
+  .stoc-i{position:relative;height:auto;min-height:26px;padding:4px 8px;border-radius:var(--r-ctl);text-align:left;white-space:normal}
+  .stoc-i.on{background:transparent;color:var(--ember)}
+  .stoc-i.on:hover{background:var(--hover)}
+  .stoc-i.on::before{content:'';position:absolute;left:-13px;top:5px;bottom:5px;width:2px;border-radius:2px;background:var(--ember)}
+  #settings>.grid>.card{scroll-margin-top:0}
+}
 #playground{max-width:880px}
-/* 页级主操作(配置群项目 / 添加模型):每页至多一个实心按钮,画在页头右端 */
-.pact{position:absolute;top:10px;right:24px;display:flex;align-items:center;gap:8px}
+#playground[data-lc]{max-width:none}
+/* 页头右端的插槽(#pSlot):页级主操作(配置群项目 / 添加模型,每页至多一个实心按钮)与概览的「运行 / 排队」读数。
+   各页的渲染函数照旧生成自己的 .pact,渲染完由 mountPageActions 挪进插槽;插槽里每样东西带 data-for=页 id,
+   只显示当前页的那一份(与页标题同一个 :has 判据,切页的几处脚本不用多管一处)。 */
+.pslot{flex:none;display:flex;align-items:center;gap:8px;margin-left:auto;min-width:0}
+.pslot>[data-for]{display:none}
+.main:has(#overview.on) .pslot>[data-for="overview"],.main:has(#groups.on) .pslot>[data-for="groups"],
+.main:has(#providers.on) .pslot>[data-for="providers"],.main:has(#settings.on) .pslot>[data-for="settings"],
+.main:has(#playground.on) .pslot>[data-for="playground"]{display:flex}
+.pact{display:flex;align-items:center;gap:8px}
 .pact .btn{height:var(--h-md);padding:0 14px;font-size:13px}
 
 /* 品牌字标:系统黑体,不再带走线装饰(<i class="trace"> 留在标记里只是占位,不显示) */
@@ -191,7 +219,7 @@ nav button.active .ic{color:var(--ink)}
 .topbtns{display:flex;gap:2px;padding:2px 2px 0}
 .topbtns .iconbtn{background:transparent;border-color:transparent;color:var(--faint)}
 /* 页头的服务器时钟:「服务器 · 时区 · 时:分:秒」,12px 次要色;tabular-nums 走秒不抖 */
-.svwrap{display:flex;align-items:center;min-width:0;overflow:hidden}
+.svwrap{display:flex;align-items:center;flex:0 1 auto;min-width:0;overflow:hidden}   /* 页头挤时被裁掉的是时钟,不是右端的插槽 */
 .svwrap[hidden]{display:none}
 .svclock{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--faint);white-space:nowrap;cursor:default}
 .svclock .tzn{display:inline-flex;align-items:center;gap:5px}
@@ -226,6 +254,13 @@ a{color:var(--ember-soft)}
 p.hint{margin:0 0 8px}
 /* 页首那段说明:限宽,读起来是脚注而不是正文 */
 .hint.lead{max-width:760px;margin:0 0 12px}
+/* 页首说明的收起形态:一句话 +「了解更多」;完整说明点开才出 */
+.lead-more{max-width:760px;margin:0 0 12px;font-size:12px;line-height:18px;color:var(--faint)}
+.lead-more>summary{list-style:none;cursor:pointer;display:flex;flex-wrap:wrap;align-items:baseline;gap:0 8px;border-radius:4px}
+.lead-more>summary::-webkit-details-marker{display:none}
+.lead-more>summary .lnk2::after{content:'›';display:inline-block;margin-left:4px;transition:transform var(--dur) var(--ease)}
+.lead-more[open]>summary .lnk2::after{transform:rotate(90deg)}
+.lead-more>.hint{margin-top:6px}
 /* 说明气泡 —— 接管原生 title(原生延迟约 1–1.5s 且无法用 CSS/JS 调整,那是浏览器/系统行为)。
    见下方 tip 接管逻辑:摘掉 title 自绘,延迟 TIP_DELAY,样式随主题。 */
 .tip{position:fixed;z-index:9999;display:none;pointer-events:none;max-width:290px;
@@ -246,6 +281,21 @@ p.hint{margin:0 0 8px}
 .hpill.warn{color:var(--warn-ink);background:rgba(var(--warn-rgb),.14)}.hpill.warn .led{background:var(--warn)}
 .hpill.fail{color:var(--fail);background:rgba(var(--fail-rgb),.12)}.hpill.fail .led{background:var(--fail)}
 #ovHealth{container-type:inline-size}
+/* 一行态(.hcard.folded):44px 的条 —— 标题 · 各项读数(放不下就省略)· 汇总胶囊 · 展开箭头 */
+.card.hcard{padding:0}
+.hcard .hfold{appearance:none;display:flex;align-items:center;gap:12px;width:100%;min-height:44px;margin:0;padding:0 12px 0 16px;border:0;border-radius:var(--r);
+  background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.hcard .hfold .lbl{flex:none;margin:0}
+.hcard .hsum{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:12px;line-height:18px;color:var(--dim)}
+.hcard .hsum .k{color:var(--faint)}
+.hcard .hfact+.hfact::before{content:'·';margin:0 8px;color:var(--muted)}
+.hcard:not(.folded) .hsum{visibility:hidden}          /* 展开时读数在下面的检查行里,这一行只留标题与胶囊(占位不撤,胶囊不跳) */
+.hcard .hcaret{flex:none;display:inline-flex;color:var(--muted);transition:transform var(--dur) var(--ease)}
+.hcard .hcaret .ic{width:14px;height:14px}
+.hcard:not(.folded) .hcaret{transform:rotate(180deg)}
+.hcard.locked .hfold{cursor:default}.hcard.locked .hcaret{display:none}
+.hcard .hrows{padding:0 16px 8px;border-top:1px solid var(--line)}
+.hcard.folded .hrows{display:none}
 .hrows{display:grid;grid-template-columns:minmax(0,1fr);column-gap:32px}
 .hrow{display:flex;align-items:center;gap:8px;min-height:30px;border-top:1px solid var(--line);font-size:13px;min-width:0}
 .hrow:first-child{border-top:0}
@@ -441,6 +491,19 @@ input:focus,select:focus,textarea:focus{border-color:var(--focus);box-shadow:0 0
 /* 填路径、地址、型号 id、cron 表达式的输入框走等宽(它们是数据不是文案) */
 input.mono,input[type="url"],#pgWd,#amBase,#amModel,#amKey,#mChat,#mWd,#pxHttp,#aTz,.cronexpr,.gcustomv,#libClaudeIn,#libCodexIn,textarea.gallow,textarea.gdeny{font-family:var(--mono);font-size:12px}
 input[type="checkbox"],input[type="radio"]{width:14px;height:14px;padding:0;margin:0;flex:none;accent-color:var(--ember);cursor:pointer}
+/* 开关(.switch):「开 / 关」类的设置画成开关 —— 还是同一个 <input type=checkbox>(id、处理函数、表单语义都不变),只换外观。
+   多选清单(插件、要拉进群的管理员)与弹窗里的一次性选项仍是勾选框。 */
+input[type="checkbox"].switch{appearance:none;-webkit-appearance:none;position:relative;width:28px;height:16px;border:0;border-radius:999px;background:var(--line-hi);
+  vertical-align:middle;transition:background-color var(--dur) var(--ease),box-shadow var(--dur) var(--ease)}
+input[type="checkbox"].switch::after{content:'';position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:#fff;
+  box-shadow:0 1px 2px rgba(0,0,0,.28);transition:transform var(--dur) var(--ease)}
+input[type="checkbox"].switch:hover{background:var(--muted)}
+input[type="checkbox"].switch:checked{background:var(--ember)}
+input[type="checkbox"].switch:checked:hover{background:var(--ember-soft)}
+input[type="checkbox"].switch:checked::after{transform:translateX(12px)}
+input[type="checkbox"].switch:focus{box-shadow:none}
+input[type="checkbox"].switch:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+input[type="checkbox"].switch:disabled{opacity:.5;cursor:default}
 /* :focus-visible 只在键盘导航时亮(鼠标点击不留残影),outline 不参与布局 */
 :focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 input:focus-visible,select:focus-visible,textarea:focus-visible{outline:none}
@@ -659,6 +722,54 @@ h4.sec{font-size:12px;line-height:18px;font-weight:600;color:var(--dim);margin:1
 .pg-in textarea{flex:1;min-height:52px;max-height:180px}
 .pg-in .btn{height:var(--h-md);padding:0 14px;font-size:13px}
 .pg-empty{color:var(--faint);font-size:13px;text-align:center;padding:48px 0}
+/* 本机对话:左侧对话清单 + 右侧消息与输入。整块占满页头以下的高度,消息区自己滚。 */
+.lc{display:grid;grid-template-columns:208px minmax(0,1fr);gap:0;height:calc(100vh - 52px - 48px);min-height:360px;border:1px solid var(--line);border-radius:var(--r-lg,14px);background:var(--panel);overflow:hidden}
+.lc-side{border-right:1px solid var(--line);display:flex;flex-direction:column;min-width:0;background:var(--bg)}
+.lc-side[hidden],.lc-main[hidden],.lc-none[hidden]{display:none}
+.lc-side-h{display:flex;align-items:center;justify-content:space-between;height:44px;padding:0 8px 0 14px;font-size:12px;font-weight:600;color:var(--dim);border-bottom:1px solid var(--line)}
+.lc-list{flex:1;overflow:auto;padding:6px}
+.lc-item{position:relative;display:grid;grid-template-columns:8px minmax(0,1fr);column-gap:8px;row-gap:1px;align-items:center;width:100%;padding:7px 8px;border:0;border-radius:var(--r-sm,6px);background:none;text-align:left;cursor:pointer;color:var(--ink);font:inherit}
+.lc-item:hover{background:var(--hover)}.lc-item.on{background:var(--hover)}
+.lc-item .lc-nm{font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lc-item .lc-sub{grid-column:2;font-size:11px;color:var(--faint);font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lc-dot{width:7px;height:7px;border-radius:50%;background:var(--line-strong,var(--faint));opacity:.7}
+.lc-dot.busy{background:var(--ember);opacity:1}.lc-dot.held{background:var(--fail);opacity:1}.lc-dot.paused{background:none;border:1.5px solid var(--faint)}
+.lc-new{position:absolute;right:8px;top:12px;width:6px;height:6px;border-radius:50%;background:var(--ember)}
+.lc-main{display:flex;flex-direction:column;min-width:0;min-height:0}
+.lc-head{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:12px;row-gap:1px;align-items:center;padding:8px 14px;border-bottom:1px solid var(--line);min-height:52px}
+.lc-title{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}
+.lc-name{font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.lc-path{grid-column:1;font-size:11px;color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lc-acts{grid-column:2;grid-row:1 / span 2;display:flex;gap:6px}
+.lc-msgs{flex:1;min-height:0;overflow:auto;padding:16px 18px;display:flex;flex-direction:column;gap:14px}
+.lc-hello{margin:auto;max-width:420px;text-align:center;color:var(--faint);font-size:13px;line-height:20px}
+.lc-msg{display:flex;flex-direction:column;max-width:min(760px,88%);min-width:0}
+.lc-msg.user{align-self:flex-end;align-items:flex-end}
+.lc-msg.assistant{align-self:flex-start}
+.lc-msg.notice{align-self:center;max-width:90%}
+.lc-bubble{font-size:13px;line-height:21px;color:var(--ink);white-space:pre-wrap;word-break:break-word;min-width:0;max-width:100%}
+.lc-msg.user .lc-bubble{padding:7px 12px;border-radius:12px 12px 3px 12px;background:var(--ember-wash,var(--hover));border:1px solid var(--line)}
+.lc-msg.assistant .lc-bubble{padding:0}
+.lc-meta{margin-top:3px;font-size:11px;color:var(--faint);font-family:var(--mono)}
+.lc-note{font-size:12px;line-height:18px;color:var(--dim);background:var(--hover);border-radius:999px;padding:3px 12px;text-align:center}
+.lc-text code,.lc-bubble code{font-family:var(--mono);font-size:12px}
+.lc-text code{padding:1px 5px;border-radius:4px;background:var(--hover)}
+.lc-text a{color:var(--ember);text-decoration:underline;text-underline-offset:2px}
+.lc-hd{display:inline-block;font-size:14px;margin-top:2px}
+.lc-code{margin:6px 0;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r,10px);background:var(--bg);overflow:auto;white-space:pre;font-size:12px;line-height:18px;max-width:100%}
+.lc-busy{display:flex;align-items:center;gap:10px;margin:0 14px;padding:7px 10px 7px 12px;border:1px solid var(--line);border-radius:var(--r,10px);font-size:12px;color:var(--dim)}
+.lc-busy[hidden]{display:none}
+.lc-busy>span:nth-child(2){flex:1;min-width:0}.lc-st{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.lc-st>i{font-style:normal;color:var(--faint)}
+.lc-busy.warn{color:var(--warn-ink,var(--warn));border-color:var(--warn)}.lc-busy.warn .ic{flex:none}
+.lc-spin{width:12px;height:12px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--ember);animation:lcspin .8s linear infinite;flex:none}
+@keyframes lcspin{to{transform:rotate(360deg)}}
+.lc-in{display:flex;gap:8px;align-items:flex-end;padding:10px 14px 6px}
+.lc-in textarea{flex:1;height:36px;min-height:36px;max-height:180px;resize:none;line-height:20px;padding:7px 10px}
+.lc-in .btn{height:var(--h-lg,36px);padding:0 16px}
+.lc-foot{display:flex;gap:6px;flex-wrap:wrap;padding:0 14px 10px;font-size:11px;color:var(--faint)}.lc-foot>i{font-style:normal}
+.lc-none{grid-column:1 / -1;display:flex;align-items:center;justify-content:center;padding:24px}
+.lc-none-in{max-width:420px;text-align:center;display:flex;flex-direction:column;gap:12px;align-items:center}
+.lc-none-t{font-size:16px;font-weight:600}
 
 /* 向群里插一句 —— 撰写形态:输入整宽、动作在底。
    ⚠ 主动作必须在输入框**下方**:人写完字视线落在底部,按钮在上面等于让他往回找。
@@ -794,71 +905,7 @@ button.btn.nsmini{height:20px;padding:0 8px;font-size:11px;vertical-align:1px}
 .feishu-details>p.hint{margin:8px 0 0}
 .feishu-uri{overflow-wrap:anywhere;word-break:break-word;flex:1;min-width:0}
 
-/* ── 概览的群 · 项目面板(标记与自带样式由 liveactivity-client.js 注入,选择器是 `.la …`)。
-   这里用 `#overview .la …` 压过它,把它收进同一套密度:群行约 58px —— 群名 14/500 与标签同一行,
-   路径 / 型号 / 上下文是 12px 次要信息,操作图标靠右。 */
-#overview .la{margin:8px 0 0}
-#overview .la .la-head{padding:10px 16px;min-height:42px}
-#overview .la h2{font-size:14px;line-height:20px;font-weight:600}
-#overview .la .la-capacity{font-size:12px;color:var(--faint)}
-#overview .la small{font-size:12px;line-height:18px;margin-top:2px;color:var(--faint)}
-#overview .la strong{font-size:14px;line-height:20px;font-weight:500}
-#overview .la .la-select,#overview .la .la-toggle{min-height:0}
-#overview .la .la-group:hover,#overview .la .la-toggle:hover{background:var(--hover)}
-#overview .la .la-group.selected{background:rgba(var(--ember-rgb),.07)}
-#overview .la .la-group:before{inset:8px auto 8px 0;width:2px}
-#overview .la button:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
-#overview .la .la-tags{flex:none;flex-wrap:nowrap;gap:4px;margin:0}
-#overview .la .la-tags .tag{font-size:11px;padding:0 8px}
-#overview .la .la-tags [data-status=running]{color:var(--ember);background:rgba(var(--ember-rgb),.10)}
-#overview .la .la-tags [data-status=attention]{color:var(--fail);background:rgba(var(--fail-rgb),.10)}
-#overview .la .la-path{font-size:12px}
-#overview .la .la-model,#overview .la .la-context{font-size:13px;line-height:20px}
-#overview .la .la-model>span,#overview .la .la-path{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#overview .la .la-track{height:3px;margin-top:5px}
-#overview .la .la-groups{max-height:none}
-#overview .la .la-actions{gap:2px;padding-right:10px}
-#overview .la .la-actions .iconbtn{background:transparent;border-color:transparent}
-#overview .la .la-actions .iconbtn:hover{background:var(--sel)}
-#overview .la .la-task-head{padding:16px 0 8px}
-#overview .la .la-task-head strong{font-size:15px;line-height:22px;font-weight:600}
-#overview .la .la-toggle{padding:8px 16px;gap:12px}
-#overview .la .la-title{font-size:13px;line-height:20px;margin-top:2px}
-#overview .la .la-preview{font-size:12px;margin-top:2px;color:var(--faint)}
-#overview .la .la-state{font-size:12px;padding-top:2px}
-#overview .la .la-detail{padding:0 16px 12px;font-size:13px;line-height:20px}
-#overview .la .la-detail h3{font-size:12px}
-#overview .la .la-source summary{font-size:12px}
-#overview .la .la-notice{font-size:12px;line-height:18px;margin:8px 0;color:var(--faint)}
-#overview .la .la-more{min-height:0;margin:8px auto 0;font-size:13px}
-#overview .la .empty{padding:10px 16px}
-@media(min-width:641px){
-  #overview .la .la-select{grid-template-columns:minmax(200px,1.5fr) minmax(110px,1fr) minmax(170px,1fr);gap:16px;padding:9px 8px 9px 16px;align-items:center}
-  /* 群名 + 标签同一行:群名那一列可以缩到省略(完整名在整行的悬浮提示里),标签列不缩;路径另起一行 */
-  #overview .la .la-select>div:first-child{display:grid;grid-template-columns:minmax(0,max-content) max-content;justify-content:start;align-items:center;column-gap:8px}
-  #overview .la .la-select>div:first-child>strong{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  /* ⚠ 路径横跨两列:不把它自身的宽度清零,它的内容宽度会被摊进标签列,把群名那一列挤成一个字 */
-  #overview .la .la-path{grid-column:1/-1;width:0;min-width:100%}
-  /* 上下文:用量与来源同一行,下面压一条 3px 的进度线 */
-  #overview .la .la-context{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:8px;align-items:baseline}
-  #overview .la .la-context>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  #overview .la .la-context small{margin:0;white-space:nowrap}
-  #overview .la .la-track{grid-column:1/-1}
-}
-/* 「运行 1 / 4 · 排队 1」画在页头右端(定位基准见 .main);窄屏回到卡头。
-   页头右侧留出这块(与页级主操作)的位置,窗口窄时被裁掉的是时钟而不是它们。 */
-@media(min-width:861px){
-  .phead{padding-right:236px}
-  #overview .la .la-capacity{position:absolute;top:0;right:24px;height:52px;display:flex;align-items:center}
-}
-@media(max-width:640px){
-  #overview .la .la-head{padding:10px 12px}
-  #overview .la .la-select{padding:10px 12px;gap:6px 12px}
-  #overview .la .la-select>div:first-child{padding-right:88px}
-  #overview .la .la-actions{padding:8px 8px 0 0}
-  #overview .la .la-toggle{padding:8px 12px;gap:4px}
-  #overview .la .la-detail{padding:0 12px 12px}
-}
+/* 概览的群 · 项目面板:标记与样式都在 liveactivity-client.js 里(选择器 `.la …`),用的是这里的同一套令牌;本文件不再叠覆盖层。 */
 
 /* ── 窄窗(≤860px):侧栏收成顶栏(品牌 + 状态 + 可横向滚动的导航),整页改回文档滚动 ── */
 @media(max-width:860px){
@@ -876,19 +923,25 @@ button.btn.nsmini{height:20px;padding:0 8px;font-size:11px;vertical-align:1px}
   .phead{height:44px;padding:0 16px}
   .pbody{overflow:visible;padding:12px 16px 40px}
   .tab{max-width:none}
-  /* 页级主操作回到内容流里(页头只剩标题与时钟) */
-  .pact{position:static;margin-bottom:10px;flex-wrap:wrap}
+  .pact .btn{height:var(--h-sm);padding:0 10px;font-size:12px}
+  /* 整页滚动时顶栏高度不定,目录不吸顶,留在设置页开头 */
+  .stoc{position:static;margin:-4px -16px 8px;padding:0 16px}
+  #settings>.grid>.card{scroll-margin-top:104px}
   .row .meta{max-width:150px}
 }
 /* ── 手机(≤640px):单列、流式、零横向滚动。
    溢出的根因是 min-content:一条定宽 nowrap 的行会把容器撑出视口,连带每张卡一起。
    所以下面的修法都是让行内的东西能缩、能折。 ── */
 @media(max-width:640px){
-  .phead{padding:0 12px}
+  .phead{height:auto;min-height:44px;padding:6px 12px;flex-wrap:wrap;gap:6px 12px}
+  .pslot{max-width:100%}
   .pbody{padding:12px 12px 32px}
   .card{padding:12px}
   .fxapp .nm{display:none} /* 窄屏只留应用头像,名称让位给运行状态(全名在「设置 → 飞书」) */
   .svclock .lab,.svclock .dot,.svclock .tzn,.svclock #svSec{display:none} /* 窄屏只留时:分,其余看悬浮提示 */
+  .main:has(#groups.on) .svwrap,.main:has(#providers.on) .svwrap{display:none} /* 这两页的页头右端有主操作,时钟让位 */
+  .stoc{margin:-4px -12px 8px;padding:0 12px}
+  .hcard .hsum{visibility:hidden}   /* 一行放不下几项读数:只留标题、汇总胶囊与箭头 */
   /* 健康行:标签按内容定宽,值吃剩余并省略 */
   .hrow .k{min-width:0} .hrow .v{text-align:right}
   /* 行列表(群 / 活动):纵向信息流 —— 名字独占一行,其余折到下面 */
@@ -921,6 +974,11 @@ button.btn.nsmini{height:20px;padding:0 8px;font-size:11px;vertical-align:1px}
   /* 成簇的控件改成堆叠 */
   .pg-ctl{flex-direction:column;align-items:stretch} .pg-ctl select,.pg-ctl input,.pg-ctl .csel{width:100%;min-width:0}
   .pg-in{flex-direction:column;align-items:stretch} .pg-in textarea{min-height:64px}
+  .lc{grid-template-columns:minmax(0,1fr);height:auto;min-height:calc(100vh - 150px)}
+  .lc-side{border-right:0;border-bottom:1px solid var(--line)}.lc-side-h{height:40px}
+  .lc-list{display:flex;gap:6px;overflow-x:auto;padding:6px}.lc-item{width:auto;flex:none;max-width:200px}
+  .lc-msgs{min-height:260px;max-height:calc(100vh - 330px)}
+  .lc-head{grid-template-columns:minmax(0,1fr)}.lc-acts{grid-column:1;grid-row:auto;margin-top:4px}
   .inline{flex-wrap:wrap}
   .modal{width:94vw;padding:0 16px}
   .modal::after{height:16px}
@@ -938,17 +996,36 @@ button.btn.nsmini{height:20px;padding:0 8px;font-size:11px;vertical-align:1px}
 /* 减少动态效果:过渡与装饰性动画关掉;转圈是进度指示,留着 */
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{transition-duration:0s!important}
-  .tab.on,.csel-pop,.conn.live,.mark .update-dot,.msg .cursor,.upg-bar.run>i::after{animation:none}
+  .tab.on,.csel-pop,.conn.live,.mark .update-dot,.msg .cursor,.upg-bar.run>i::after,.lc-spin{animation:none}
 }
 
 /* Group projects share the desktop WebView: one project per row, with two
    settings panels only when the card itself has enough room. */
-#ggrid{grid-template-columns:minmax(0,1fr);gap:16px;align-items:start}
+#ggrid{grid-template-columns:minmax(0,1fr);gap:8px;align-items:start}
 #ggrid>.card{padding:20px;container-type:inline-size}
+/* 群卡可收起:卡头(群名 + 标签 + 暂停)与下面一行(目录 + 摘要)一直在;收起时卡片是两行高的一条。
+   摘要只在收起时显示 —— 展开后同样的信息就在下面的控件里。 */
+#ggrid>.card.gfolded{padding:12px 20px}
+#ggrid .gfold{appearance:none;display:inline-flex;align-items:flex-start;gap:6px;min-width:0;margin:0;padding:0;border:0;border-radius:var(--r-ctl);
+  background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}
+#ggrid .gfold .caret{flex:none;display:inline-flex;align-items:center;height:20px;color:var(--muted);transition:transform var(--dur) var(--ease),color var(--dur) var(--ease)}
+#ggrid .gfold .caret .ic{width:14px;height:14px}
+#ggrid .gfold:hover .caret{color:var(--ink)}
+#ggrid .gfold[aria-expanded="true"] .caret{transform:rotate(90deg)}
+#ggrid .gmeta{display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px;min-width:0;margin:0 0 18px 38px}
+#ggrid .gfolded .gmeta{margin-bottom:0;flex-wrap:nowrap}
+/* 收起时目录只占一行,放不下省略的是**开头**(末尾的项目名才是要认的那一段):rtl 让省略号落在左边,<bdi> 保住路径自身的顺序 */
+#ggrid .gfolded .gproject{flex:0 1 auto;direction:rtl;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal}
+#ggrid .gfolded .ph{margin-bottom:2px}
+#ggrid .gsum{display:none;align-items:center;gap:6px;min-width:0;flex:none}
+#ggrid .gfolded .gsum{display:inline-flex}
+#ggrid .gsum-t{font-size:12px;color:var(--dim);white-space:nowrap}
+#ggrid .gfolded .gbody{display:none}
+.tag.risk{color:var(--risk);background:rgba(var(--risk-rgb),.10)}
 #ggrid .ph{gap:12px;align-items:flex-start;margin-bottom:8px}
 #ggrid .ph>.inline{flex-wrap:wrap;justify-content:flex-end}
 #ggrid .gname{white-space:normal;overflow-wrap:anywhere;line-height:1.45}
-#ggrid .gproject{color:var(--faint);font-size:12px;line-height:1.6;overflow-wrap:anywhere;margin:0 0 18px 24px}
+#ggrid .gproject{color:var(--faint);font-size:12px;line-height:1.6;overflow-wrap:anywhere;min-width:0}
 .gprimary-grid{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:24px}
 .gprimary-grid>section{min-width:0}
 #ggrid .gprimary-grid .kv{padding:8px 0;align-items:flex-start}
@@ -977,17 +1054,22 @@ button.btn.nsmini{height:20px;padding:0 8px;font-size:11px;vertical-align:1px}
   #ggrid>.card{padding:16px}
   #ggrid .ph{flex-wrap:wrap}
   #ggrid .ph>.inline{justify-content:flex-start;margin-left:24px}
-  #ggrid .gproject{margin-left:0;margin-bottom:12px}
+  #ggrid .gmeta{margin-left:0;margin-bottom:12px}
+  #ggrid .gfolded .gmeta{flex-wrap:wrap}
+  #ggrid>.card.gfolded{padding:12px 16px}
   #ggrid .gmore>summary>.hint{display:none}
   #ggrid .gprimary-grid .kv:has(>.kk:empty){display:block}
   #ggrid .gprimary-grid .kv:has(>.kk:empty)>.vv{display:block;text-align:left}
 }
 
 </style>
-<script>/* 防 FOUC:首屏绘制前定主题(默认 light;用户切换后按 localStorage)与界面语言
-   (存过就按 localStorage,没存过跟随浏览器:zh* ⇒ 中文,其余 ⇒ 英文)*/
-(function(){var d=document.documentElement,t='light',l='';try{t=localStorage.getItem('sbot-theme')||'light';l=localStorage.getItem('sbot-lang')||'';}catch(e){}
-d.dataset.theme=t;if(l!=='en'&&l!=='zh')l=/^zh/i.test((navigator.language||''))?'zh':'en';d.dataset.lang=l;d.lang=l;})()</script>
+<script>/* 防 FOUC:首屏绘制前定主题与界面语言。
+   主题:存过 light / dark 就用它;没存过 = 跟随系统(prefers-color-scheme),系统切换时页面跟着切(见脚本区 setTheme)。
+   data-theme 始终是算好的 light / dark(样式只认它);data-theme-pref 记用户选的是 system / light / dark。
+   语言:存过就按 localStorage,没存过跟随浏览器:zh* ⇒ 中文,其余 ⇒ 英文 */
+(function(){var d=document.documentElement,t='',l='';try{t=localStorage.getItem('sbot-theme')||'';l=localStorage.getItem('sbot-lang')||'';}catch(e){}
+var p=(t==='light'||t==='dark')?t:'system';if(p==='system'){t='light';try{if(matchMedia('(prefers-color-scheme: dark)').matches)t='dark';}catch(e){}}
+d.dataset.themePref=p;d.dataset.theme=t;if(l!=='en'&&l!=='zh')l=/^zh/i.test((navigator.language||''))?'zh':'en';d.dataset.lang=l;d.lang=l;})()</script>
 </head>
 <body>
 <div class="app">
@@ -1010,7 +1092,7 @@ d.dataset.theme=t;if(l!=='en'&&l!=='zh')l=/^zh/i.test((navigator.language||''))?
       <span class="topdiv" id="topFxDiv" hidden></span>
       <div class="topbtns">
         <button class="iconbtn" id="refresh" title="刷新"><svg class="ic ic-refresh" aria-hidden="true"><use href="#lu-refresh"/></svg></button>
-        <button class="iconbtn" id="themeBtn" title="切换亮/暗主题"></button>
+        <button class="iconbtn" id="themeBtn" title="主题"></button>
         <!-- 界面语言。title/aria-label 写的是**目标语言**,所以整枚按钮不参与 DOM 翻译(data-i18n-skip)。 -->
         <button class="iconbtn" id="langBtn" data-i18n-skip></button>
       </div>
@@ -1021,6 +1103,7 @@ d.dataset.theme=t;if(l!=='en'&&l!=='zh')l=/^zh/i.test((navigator.language||''))?
       <!-- 页标题:五页各一枚,显示哪枚由 CSS 按当前 .tab.on 决定(切页的几处脚本只切 .tab / nav 的类,不用再多管一处) -->
       <h1 class="ptitle"><span data-for="overview">概览</span><span data-for="groups">群 · 项目</span><span data-for="providers">模型 · 库</span><span data-for="settings">设置</span><span data-for="playground">试跑</span></h1>
       <div class="svwrap" id="svClockWrap" hidden><span class="svclock"><span class="lab">服务器</span><span class="tzn"><span class="dot">·</span><span id="svTz"></span></span><span class="dot">·</span><span><span id="svTime"></span><span id="svSec"></span></span></span></div>
+      <div class="pslot" id="pSlot"></div>
     </header>
     <div class="pbody">
       <section id="overview" class="tab on"><div class="empty" style="padding:48px;text-align:center"><span class="spin"></span>　加载中…</div></section>
@@ -1034,7 +1117,7 @@ d.dataset.theme=t;if(l!=='en'&&l!=='zh')l=/^zh/i.test((navigator.language||''))?
 
 <div id="toast"></div>
 <!-- 图标 sprite:全部来自 Lucide(ISC,lucide-static v1.31.0);控制台是自包含单文件,不外连 CDN。用法见脚本里的 IC 助手 -->
-<svg id="lu-sprite" style="display:none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><symbol id="lu-x" viewBox="0 0 24 24"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></symbol><symbol id="lu-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5" /></symbol><symbol id="lu-warn" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" /><path d="M12 9v4" /><path d="M12 17h.01" /></symbol><symbol id="lu-plus" viewBox="0 0 24 24"><path d="M5 12h14" /><path d="M12 5v14" /></symbol><symbol id="lu-rotate" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></symbol><symbol id="lu-square" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2" /></symbol><symbol id="lu-pause" viewBox="0 0 24 24"><rect x="14" y="3" width="5" height="18" rx="1" /><rect x="5" y="3" width="5" height="18" rx="1" /></symbol><symbol id="lu-play" viewBox="0 0 24 24"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z" /></symbol><symbol id="lu-settings" viewBox="0 0 24 24"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" /><circle cx="12" cy="12" r="3" /></symbol><symbol id="lu-bot" viewBox="0 0 24 24"><path d="M12 8V4H8" /><rect width="16" height="12" x="4" y="8" rx="2" /><path d="M2 14h2" /><path d="M20 14h2" /><path d="M15 13v2" /><path d="M9 13v2" /></symbol><symbol id="lu-user" viewBox="0 0 24 24"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></symbol><symbol id="lu-folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" /></symbol><symbol id="lu-up" viewBox="0 0 24 24"><path d="M14 9 9 4 4 9" /><path d="M20 20h-7a4 4 0 0 1-4-4V4" /></symbol><symbol id="lu-chevronRight" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></symbol><symbol id="lu-chevronDown" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></symbol><symbol id="lu-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" /><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" /><path d="M8 16H3v5" /></symbol><symbol id="lu-say" viewBox="0 0 24 24"><path d="M12 2a10 10 0 0 1 7.38 16.75" /><path d="M12 8v8" /><path d="M16 12H8" /><path d="M2.5 8.875a10 10 0 0 0-.5 3" /><path d="M2.83 16a10 10 0 0 0 2.43 3.4" /><path d="M4.636 5.235a10 10 0 0 1 .891-.857" /><path d="M8.644 21.42a10 10 0 0 0 7.631-.38" /></symbol><symbol id="lu-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401" /></symbol><symbol id="lu-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /><path d="M12 2v2" /><path d="M12 20v2" /><path d="m4.93 4.93 1.41 1.41" /><path d="m17.66 17.66 1.41 1.41" /><path d="M2 12h2" /><path d="M20 12h2" /><path d="m6.34 17.66-1.41 1.41" /><path d="m19.07 4.93-1.41 1.41" /></symbol><symbol id="lu-empty" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><line x1="9" x2="15" y1="15" y2="9" /></symbol><symbol id="lu-grip" viewBox="0 0 24 24"><circle cx="9" cy="12" r="1" /><circle cx="9" cy="5" r="1" /><circle cx="9" cy="19" r="1" /><circle cx="15" cy="12" r="1" /><circle cx="15" cy="5" r="1" /><circle cx="15" cy="19" r="1" /></symbol><symbol id="lu-ext" viewBox="0 0 24 24"><path d="M7 7h10v10" /><path d="M7 17 17 7" /></symbol><symbol id="lu-down" viewBox="0 0 24 24"><path d="M12 5v14" /><path d="m19 12-7 7-7-7" /></symbol><symbol id="lu-upArrow" viewBox="0 0 24 24"><path d="m5 12 7-7 7 7" /><path d="M12 19V5" /></symbol><symbol id="lu-corner" viewBox="0 0 24 24"><path d="m15 10 5 5-5 5" /><path d="M4 4v7a4 4 0 0 0 4 4h12" /></symbol><symbol id="lu-wrench" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z" /></symbol><symbol id="lu-steth" viewBox="0 0 24 24"><path d="M11 2v2" /><path d="M5 2v2" /><path d="M5 3H4a2 2 0 0 0-2 2v4a6 6 0 0 0 12 0V5a2 2 0 0 0-2-2h-1" /><path d="M8 15a6 6 0 0 0 12 0v-3" /><circle cx="20" cy="10" r="2" /></symbol><symbol id="lu-languages" viewBox="0 0 24 24"><path d="m5 8 6 6" /><path d="m4 14 6-6 2-3" /><path d="M2 5h12" /><path d="M7 2h1" /><path d="m22 22-5-10-5 10" /><path d="M14 18h6" /></symbol><symbol id="lu-dashboard" viewBox="0 0 24 24"><rect width="7" height="9" x="3" y="3" rx="1" /><rect width="7" height="5" x="14" y="3" rx="1" /><rect width="7" height="9" x="14" y="12" rx="1" /><rect width="7" height="5" x="3" y="16" rx="1" /></symbol><symbol id="lu-chats" viewBox="0 0 24 24"><path d="M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" /><path d="M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1" /></symbol><symbol id="lu-cpu" viewBox="0 0 24 24"><path d="M12 20v2" /><path d="M12 2v2" /><path d="M17 20v2" /><path d="M17 2v2" /><path d="M2 12h2" /><path d="M2 17h2" /><path d="M2 7h2" /><path d="M20 12h2" /><path d="M20 17h2" /><path d="M20 7h2" /><path d="M7 20v2" /><path d="M7 2v2" /><rect x="4" y="4" width="16" height="16" rx="2" /><rect x="8" y="8" width="8" height="8" rx="1" /></symbol></svg>
+<svg id="lu-sprite" style="display:none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><symbol id="lu-x" viewBox="0 0 24 24"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></symbol><symbol id="lu-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5" /></symbol><symbol id="lu-warn" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" /><path d="M12 9v4" /><path d="M12 17h.01" /></symbol><symbol id="lu-plus" viewBox="0 0 24 24"><path d="M5 12h14" /><path d="M12 5v14" /></symbol><symbol id="lu-rotate" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></symbol><symbol id="lu-square" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2" /></symbol><symbol id="lu-pause" viewBox="0 0 24 24"><rect x="14" y="3" width="5" height="18" rx="1" /><rect x="5" y="3" width="5" height="18" rx="1" /></symbol><symbol id="lu-play" viewBox="0 0 24 24"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z" /></symbol><symbol id="lu-settings" viewBox="0 0 24 24"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" /><circle cx="12" cy="12" r="3" /></symbol><symbol id="lu-bot" viewBox="0 0 24 24"><path d="M12 8V4H8" /><rect width="16" height="12" x="4" y="8" rx="2" /><path d="M2 14h2" /><path d="M20 14h2" /><path d="M15 13v2" /><path d="M9 13v2" /></symbol><symbol id="lu-user" viewBox="0 0 24 24"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></symbol><symbol id="lu-folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" /></symbol><symbol id="lu-up" viewBox="0 0 24 24"><path d="M14 9 9 4 4 9" /><path d="M20 20h-7a4 4 0 0 1-4-4V4" /></symbol><symbol id="lu-chevronRight" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></symbol><symbol id="lu-chevronDown" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></symbol><symbol id="lu-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" /><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" /><path d="M8 16H3v5" /></symbol><symbol id="lu-say" viewBox="0 0 24 24"><path d="M12 2a10 10 0 0 1 7.38 16.75" /><path d="M12 8v8" /><path d="M16 12H8" /><path d="M2.5 8.875a10 10 0 0 0-.5 3" /><path d="M2.83 16a10 10 0 0 0 2.43 3.4" /><path d="M4.636 5.235a10 10 0 0 1 .891-.857" /><path d="M8.644 21.42a10 10 0 0 0 7.631-.38" /></symbol><symbol id="lu-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401" /></symbol><symbol id="lu-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /><path d="M12 2v2" /><path d="M12 20v2" /><path d="m4.93 4.93 1.41 1.41" /><path d="m17.66 17.66 1.41 1.41" /><path d="M2 12h2" /><path d="M20 12h2" /><path d="m6.34 17.66-1.41 1.41" /><path d="m19.07 4.93-1.41 1.41" /></symbol><symbol id="lu-empty" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><line x1="9" x2="15" y1="15" y2="9" /></symbol><symbol id="lu-grip" viewBox="0 0 24 24"><circle cx="9" cy="12" r="1" /><circle cx="9" cy="5" r="1" /><circle cx="9" cy="19" r="1" /><circle cx="15" cy="12" r="1" /><circle cx="15" cy="5" r="1" /><circle cx="15" cy="19" r="1" /></symbol><symbol id="lu-ext" viewBox="0 0 24 24"><path d="M7 7h10v10" /><path d="M7 17 17 7" /></symbol><symbol id="lu-down" viewBox="0 0 24 24"><path d="M12 5v14" /><path d="m19 12-7 7-7-7" /></symbol><symbol id="lu-upArrow" viewBox="0 0 24 24"><path d="m5 12 7-7 7 7" /><path d="M12 19V5" /></symbol><symbol id="lu-corner" viewBox="0 0 24 24"><path d="m15 10 5 5-5 5" /><path d="M4 4v7a4 4 0 0 0 4 4h12" /></symbol><symbol id="lu-wrench" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z" /></symbol><symbol id="lu-steth" viewBox="0 0 24 24"><path d="M11 2v2" /><path d="M5 2v2" /><path d="M5 3H4a2 2 0 0 0-2 2v4a6 6 0 0 0 12 0V5a2 2 0 0 0-2-2h-1" /><path d="M8 15a6 6 0 0 0 12 0v-3" /><circle cx="20" cy="10" r="2" /></symbol><symbol id="lu-languages" viewBox="0 0 24 24"><path d="m5 8 6 6" /><path d="m4 14 6-6 2-3" /><path d="M2 5h12" /><path d="M7 2h1" /><path d="m22 22-5-10-5 10" /><path d="M14 18h6" /></symbol><symbol id="lu-dashboard" viewBox="0 0 24 24"><rect width="7" height="9" x="3" y="3" rx="1" /><rect width="7" height="5" x="14" y="3" rx="1" /><rect width="7" height="9" x="14" y="12" rx="1" /><rect width="7" height="5" x="3" y="16" rx="1" /></symbol><symbol id="lu-chats" viewBox="0 0 24 24"><path d="M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" /><path d="M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1" /></symbol><symbol id="lu-monitor" viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2" /><line x1="8" x2="16" y1="21" y2="21" /><line x1="12" x2="12" y1="17" y2="21" /></symbol><symbol id="lu-cpu" viewBox="0 0 24 24"><path d="M12 20v2" /><path d="M12 2v2" /><path d="M17 20v2" /><path d="M17 2v2" /><path d="M2 12h2" /><path d="M2 17h2" /><path d="M2 7h2" /><path d="M20 12h2" /><path d="M20 17h2" /><path d="M20 7h2" /><path d="M7 20v2" /><path d="M7 2v2" /><rect x="4" y="4" width="16" height="16" rx="2" /><rect x="8" y="8" width="8" height="8" rx="1" /></symbol></svg>
 <div class="modal-bg" id="modalBg"><div class="modal" id="modal"></div></div>
 <div class="modal-bg" id="fsBg"><div class="modal" id="fsModal" style="width:min(560px,94vw)"></div></div>
 
@@ -1048,6 +1131,14 @@ TOKEN=TOKEN||localStorage.getItem('sbot-token')||sessionStorage.getItem('sbot-to
 const FEISHU_LOGIN='__SBOT_FEISHU_LOGIN__'; // 服务端算好:公网地址 + 凭证 + 管理员名单三样齐才是 '1'
 const dropToken=()=>{try{localStorage.removeItem('sbot-token');sessionStorage.removeItem('sbot-token');}catch{}};
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
+/* 页头插槽:把某一页刚渲染出来的 .pact 挪进 #pSlot(先撤掉这一页上次留下的那份)。
+   必须紧跟在该页 innerHTML 赋值之后、绑定按钮处理之前调用 —— 之后按 id 找到的就是插槽里这一份。 */
+function mountPageActions(tab){
+  const slot=document.getElementById('pSlot'); if(!slot)return;
+  for(const old of slot.querySelectorAll('.pact[data-for="'+tab+'"]'))old.remove();
+  const fresh=document.querySelector('#'+tab+'>.pact'); if(!fresh)return;
+  fresh.dataset.for=tab; slot.append(fresh);
+}
 // 图标统一走 Lucide 内联 sprite(#lu-sprite):IC.x / IC.plus / IC.warn … 返回一枚 <svg><use>,尺寸随字号、颜色随 currentColor。
 // 全部描边型、同一 24 网格 —— 与项目图标体检对群产物的要求(不拿 emoji 当操作图标、线性实心不混用)是同一条尺子。
 const IC=new Proxy({},{get:(_,k)=>`<svg class="ic ic-${k}" aria-hidden="true"><use href="#lu-${k}"/></svg>`});
@@ -1142,6 +1233,20 @@ function toast(msg,kind=''){msg=trText(msg);const t=$('#toast');clearTimeout(_to
 
 function healthClass(h){return h.fails?'fail':h.warns?'warn':'ok';}
 function healthText(h){return h.fails?`${h.fails} 失败 · ${h.warns} 警告`:h.warns?`${h.warns} 警告`:'全部正常';}
+/* 概览的健康卡(持久处理流程那一版):全部正常时收成一行 —— 汇总胶囊 + 各项读数排成一句;点一下展开成检查行。
+   有警告 / 失败时一直展开、不能收起(异常行必须看得见)。展开与否记在 localStorage,只在「全部正常」时起作用。 */
+let healthUserOpen=false; try{healthUserOpen=localStorage.getItem('sbot-health-open')==='1';}catch(e){}
+function healthAbnormal(h){return !!(h&&(h.fails||h.warns));}
+function healthFoldOpen(h){return healthAbnormal(h)||healthUserOpen;}
+function healthSumHtml(h){const conn=new Set(Object.values(CONN_LABEL)),rows=((h&&h.rows)||[]);   // 连接行排最前:会变的是它们,放不下被省略的应当是版本号
+  return rows.filter(r=>conn.has(r.label)).concat(rows.filter(r=>!conn.has(r.label))).map(r=>`<span class="hfact"><span class="k">${esc(r.label)}</span> ${esc(r.detail)}</span>`).join('');}
+function syncHealthFold(){
+  const c=$('#ovHealth'); if(!c||!c.classList.contains('hcard')||!S||!S.health)return;
+  const open=healthFoldOpen(S.health);
+  c.classList.toggle('folded',!open); c.classList.toggle('locked',healthAbnormal(S.health));
+  const b=$('#ovHealthFold'); if(b)b.setAttribute('aria-expanded',String(open));
+  const sum=$('#ovHealthSum'); if(sum){const html=healthSumHtml(S.health); if(sum.dataset.sig!==html){sum.dataset.sig=html;sum.innerHTML=html;}}
+}
 
 /* ── overview ── */
 // Full structure — rendered once on load / after an action (with the entrance
@@ -1156,6 +1261,18 @@ function startCardHtml(){
   const anyModel=mrow?mrow.status!=='fail':(S.providers||[]).some(p=>p.configured&&!p.hidden);
   const step=(done,title,hint,tab,btn)=>`<div class="inline" style="gap:10px;margin:10px 0;align-items:flex-start"><span class="dot ${done?'ok':'warn'}" style="margin-top:6px;flex:none"></span><div style="flex:1;min-width:0"><div>${title}</div><div class="hint">${hint}</div></div>${!done&&tab?`<button class="btn" data-gotab="${tab}" style="flex:none">${btn}</button>`:''}</div>`;
   const sm=S.setupMode;
+  // 持久处理流程 + 本机对话:不接聊天平台也是完整可用的安装。只在还没接平台时提示两件事,可以收起。
+  if(S.runtimeCapabilities&&S.runtimeCapabilities.localChat){
+    let hidden=false;try{hidden=localStorage.getItem('sbot-start-hide')==='1';}catch{}
+    if(anyPlat||hidden)return '';
+    const hasLocal=(S.groups||[]).some(g=>g.platform==='local');
+    const row=(cls,title,hint,tab,btn)=>`<div class="inline" style="gap:10px;margin:10px 0;align-items:flex-start"><span class="dot ${cls}" style="margin-top:6px;flex:none"></span><div style="flex:1;min-width:0"><div>${title}</div><div class="hint">${hint}</div></div>${tab?`<button class="btn" data-gotab="${tab}" style="flex:none">${btn}</button>`:''}</div>`;
+    return `<div class="card" id="ovStart" style="margin-bottom:8px"><div class="inline" style="justify-content:space-between"><div class="lbl" style="margin:0">开始使用</div><a class="lnk2" href="#" id="ovStartHide">不再显示</a></div>
+      ${anyModel?'':row('warn','配好模型','还没有能用的模型:在「模型 · 库」里添加、测试','providers','去「模型 · 库」')}
+      ${row(hasLocal?'ok':'warn','在「对话」里交代第一件事',hasLocal?'不用接聊天平台，在这台电脑上直接说':'新建一段本机对话，选一个项目目录就能开始','playground','去「对话」')}
+      ${row('skip','接入飞书（可选）','接入后在手机上也能派活，还能把它拉进项目群。方法见「设置」里的飞书卡','settings','去「设置」')}
+    </div>`;
+  }
   return `<div class="card" id="ovStart" style="margin-bottom:16px"><div class="lbl">开始使用</div>
     ${step(anyModel,'配好模型',anyModel?'换模型、加模型在「模型 · 库」':'还没有能用的模型:在「模型 · 库」里添加、测试','providers','去「模型 · 库」')}
     ${step(anyPlat,'接聊天平台','飞书 / Slack / 企业微信,「设置」里每个平台都有分步指南','settings','去「设置」')}
@@ -1182,8 +1299,11 @@ function renderOverview(){
       <button class="iconbtn sm" data-onew="${esc(g.chatId)}" title="${S.runtimeCapabilities?'开新会话 — 仅在该群空闲、记录全部结账后可用;运行中请先停止,结束后再开(同群内 /new)':'开新会话 — 运行中会先中断当前任务并清空队列(同群内 /new)'}" style="flex:none">${IC.rotate}</button>`:''}</div>`).join('')
     :'<div class="empty">还没有群项目 · 去「群·项目」配置</div>';
   $('#overview').innerHTML=`${startCardHtml()}<div id="ovInboxWrap">${inboxHtml()}</div><div class="grid ${S.runtimeCapabilities?'':'cols2'} stagger">
-    <div class="card" id="ovHealth"><div class="chead"><div class="lbl">健康</div>
-      <span class="hpill ${healthClass(h)}" id="ovHealthPill"><span class="led"></span><span id="ovHealthTxt">${healthText(h)}</span></span></div>
+    <div class="card${S.runtimeCapabilities?` hcard${healthFoldOpen(h)?'':' folded'}${healthAbnormal(h)?' locked':''}`:''}" id="ovHealth">${S.runtimeCapabilities
+      ?`<button type="button" class="hfold" id="ovHealthFold" aria-controls="ovHrows" aria-expanded="${healthFoldOpen(h)}" title="展开或收起健康检查"><span class="lbl">健康</span><span class="hsum" id="ovHealthSum">${healthSumHtml(h)}</span>
+      <span class="hpill ${healthClass(h)}" id="ovHealthPill"><span class="led"></span><span id="ovHealthTxt">${healthText(h)}</span></span><span class="hcaret">${IC.chevronDown}</span></button>`
+      :`<div class="chead"><div class="lbl">健康</div>
+      <span class="hpill ${healthClass(h)}" id="ovHealthPill"><span class="led"></span><span id="ovHealthTxt">${healthText(h)}</span></span></div>`}
       <div class="hrows" id="ovHrows">${h.rows.map(r=>`<div class="hrow" data-hk="${esc(r.label)}"><span class="dot ${r.status}"></span>
         <span class="k">${esc(r.label)}</span><span class="v" title="${esc(r.detail)}">${esc(r.detail)}</span></div>`).join('')}</div>
     </div>
@@ -1203,6 +1323,8 @@ function renderOverview(){
   ${previewsHtml()}
   ${leftoversHtml()}`;
   lastActSig='';
+  {const hf=$('#ovHealthFold'); if(hf)hf.onclick=()=>{if(healthAbnormal(S.health))return;   // 有异常时不收
+    healthUserOpen=!healthUserOpen; try{localStorage.setItem('sbot-health-open',healthUserOpen?'1':'0');}catch(e){} syncHealthFold();};}
   bindActivityClicks();
   if(S.runtimeCapabilities&&typeof activityPanel!=='undefined')activityPanel.mount();
   bindInbox();
@@ -1697,9 +1819,14 @@ function renderProviders(){
     </div>`;
   }).join('');
   const extra=S.providers.filter(p=>p.hidden||!p.configured).length;
+  const provLead=runtimeAllows('POST','/api/providers/add')?RUNTIME_UI_TEXT.providers:RUNTIME_UI_TEXT.providersView;
+  const provLeadOpen=!!($('#providers .lead-more')||{}).open;
   const toggle=extra?`<button class="btn ghost" id="showAll">${showAll?'只看已配置':`显示全部 (${extra})`}</button>`:'';
   $('#providers').innerHTML=`<div class="pact">${toggle}<button class="btn primary" id="addModel">${IC.plus} 添加模型</button></div>
-    <div class="hint lead">${S.runtimeCapabilities?esc(runtimeAllows('POST','/api/providers/add')?RUNTIME_UI_TEXT.providers:RUNTIME_UI_TEXT.providersView):`管理模型 · 拖 ${IC.grip} 排序 · ${IC.settings} 配端点/key/压缩 · 型号与思考深度按群在「群·项目」选`}</div>
+    ${S.runtimeCapabilities?(provLead===RUNTIME_UI_TEXT.providers
+      ?`<details class="lead-more"${provLeadOpen?' open':''}><summary><span>在这里管理模型的端点、密钥与登录状态；型号与思考深度按群在「群·项目」里选。</span><span class="lnk2">了解更多</span></summary><div class="hint">${esc(provLead)}</div></details>`
+      :`<div class="hint lead">${esc(provLead)}</div>`)
+      :`<div class="hint lead">管理模型 · 拖 ${IC.grip} 排序 · ${IC.settings} 配端点/key/压缩 · 型号与思考深度按群在「群·项目」选</div>`}
     <div class="grid cols2 stagger" id="pgrid">${cards}</div>
     <h2 class="sec">插件库 · MCP</h2>
     <div class="hint lead">本机装好的 MCP · 按运行时分两套 · 命令行安装、即时刷新</div>
@@ -1721,6 +1848,7 @@ function renderProviders(){
         <div id="iconLib"><span class="spin"></span></div>
       </div>
     </details>`;
+  mountPageActions('providers');
   // 风格库按需展开再加载与绘制,默认折叠以降低存在感;页内重绘时保留用户刚才的展开状态。
   const styleFold=$('#styleLibFold');
   if(styleFold){
@@ -1870,9 +1998,9 @@ function openProviderModal(name,opts){
       <div id="cxStatus" class="statbox">${cxStatusHtml(cxKey)}</div>
       <button class="btn" id="cxVerify" style="margin-top:8px">验证登录 / 刷新额度</button>
       <div class="hint" style="margin-top:6px">显示本机账号返回的额度与重置时间，不发起模型对话。</div></div>`:''}
-    ${(isCodex||isClaudeLogin)?'':`<div class="inline" style="margin:2px 0 2px"><input type="checkbox" id="amVision" ${edit&&p.vision===false?'checked':''} style="width:auto"/> <span class="dim">此模型不支持识图(纯文本模型)</span></div>
+    ${(isCodex||isClaudeLogin)?'':`<div class="inline" style="margin:2px 0 2px"><input type="checkbox" class="switch" id="amVision" ${edit&&p.vision===false?'checked':''}/> <span class="dim">此模型不支持识图(纯文本模型)</span></div>
       <div class="hint" style="margin:0 0 10px">勾选后,送给它的图片(群里发的图、网页截图、读取的图片文件)会自动降级成一句占位文本 —— 不勾则整轮会被模型以「只支持文本输入」打断。拿不准就先跑一轮试:报这个错就回来勾上。</div>`}
-    ${edit?`<div class="inline" style="margin:2px 0 10px"><input type="checkbox" id="amHide" ${p.hidden?'checked':''} style="width:auto"/> <span class="dim">在列表中隐藏此模型</span></div>`:''}
+    ${edit?`<div class="inline" style="margin:2px 0 10px"><input type="checkbox" class="switch" id="amHide" ${p.hidden?'checked':''}/> <span class="dim">在列表中隐藏此模型</span></div>`:''}
     <div class="mfoot" style="justify-content:space-between">
       ${edit?'<button class="btn ghost" id="amDel">移除</button>':'<span></span>'}
       <div class="inline"><button class="btn" id="amCancel">取消</button><button class="btn primary" id="amSave">${edit?'保存':'添加'}</button></div></div>`;
@@ -2516,14 +2644,14 @@ function openStyleModal(form,opt){
         <div class="field"><label class="f">投影</label>${seg('nsElev',NS_ELEVS,F.elevation||'flat')}
           <div class="hint" style="margin-top:6px">这套有没有「层」—— 不写清楚,出图时就会随机长出卡片和投影 · <b>彩色</b>档把投影染成强调色</div></div>
         <div class="field"><label class="f">强调渐变(可选)</label>
-          <label class="inline" style="gap:6px;cursor:pointer"><input type="checkbox" id="nsGradOn" ${F.gradientTo?'checked':''} style="width:auto"/> <span class="dim">强调色用渐变</span></label>
+          <label class="inline" style="gap:6px;cursor:pointer"><input type="checkbox" class="switch" id="nsGradOn" ${F.gradientTo?'checked':''}/> <span class="dim">强调色用渐变</span></label>
           <div id="nsGradWrap" style="display:${F.gradientTo?'block':'none'};margin-top:8px">
             <div class="nscolor"><span class="lb">渐变到</span>
               <input type="color" id="nsGradCol" value="${esc(F.gradientTo||'#000000')}"/>
               <input type="text" id="nsGradHex" class="mono" value="${esc(F.gradientTo||'')}" maxlength="7"/></div></div>
           <div class="hint" style="margin-top:6px">从强调色渐到这个色(135°)· 只给主按钮和头图这类大块用 —— 预览图上的按钮当场就是它</div></div>
         <div class="field"><label class="f">状态色(可选)</label>
-          <label class="inline" style="gap:6px;cursor:pointer"><input type="checkbox" id="nsStatOn" ${F.statusColors?'checked':''} style="width:auto"/> <span class="dim">这套定了成功 / 警告 / 危险三色</span></label>
+          <label class="inline" style="gap:6px;cursor:pointer"><input type="checkbox" class="switch" id="nsStatOn" ${F.statusColors?'checked':''}/> <span class="dim">这套定了成功 / 警告 / 危险三色</span></label>
           <div id="nsStatWrap" style="display:${F.statusColors?'block':'none'};margin-top:8px">
             ${NS_STATUS.map(([k,l])=>`<div class="nscolor"><span class="lb">${l}</span>
               <input type="color" id="nsSt_${k}" value="${esc((F.statusColors||NS_STATUS_DEF)[k]||NS_STATUS_DEF[k])}"/>
@@ -2759,6 +2887,16 @@ function groupBrainRows(g){
     ${win?`<div class="kv"><span class="kk">上下文</span><span class="vv" title="${esc(win)}">${esc(win)}</span></div>`:''}
     <div class="kv"><span class="kk"></span><span class="faint" style="font-size:11px">换后端会开新对话；换型号或调深度接着当前对话 · 群空闲时才能改</span></div>`;
 }
+/* 群卡折叠:每群记一份(localStorage `sbot-gfold` = {chatId:0|1});没记过的按群数定默认 —— 两个以内全展开,再多就先收成一行。
+   ⚠ 这几个助手在单测抠出来的那段脚本里(那里没有 document / localStorage),所以只用 try 包着的全局。 */
+let GFOLD=null;
+function groupFoldState(){if(GFOLD)return GFOLD;try{GFOLD=JSON.parse(localStorage.getItem('sbot-gfold')||'{}')||{};}catch(e){GFOLD={};}return GFOLD;}
+function groupCardOpen(chatId,total){const st=groupFoldState();return Object.prototype.hasOwnProperty.call(st,chatId)?!!st[chatId]:total<=2;}
+function setGroupCardOpen(chatId,open){const st=groupFoldState();st[chatId]=open?1:0;
+  const live=new Set(((S&&S.groups)||[]).map(g=>g.chatId));for(const k of Object.keys(st))if(!live.has(k))delete st[k];   // 解绑的群不留记录
+  try{localStorage.setItem('sbot-gfold',JSON.stringify(st));}catch(e){}}
+// 路径只为显示缩成 ~/…(完整路径在悬浮提示与「更多设置」里)
+function tildePath(p){return String(p==null?'':p).replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/,'~');}
 async function saveGroupBrain(chatId,change){
   try{
     const r=await api('/api/groups/brain','POST',{chatId,...change});S=r;renderOverview();renderGroups();
@@ -2770,6 +2908,7 @@ async function saveGroupBrain(chatId,change){
 }
 function renderGroups(){
   const groupDetailsOpen=new Set($$('#ggrid details[open]').map(d=>d.dataset.gdetails));
+  const leadOpen=!!($('#groups .lead-more')||{}).open;
   const provOf=g=>S.providers.find(pp=>pp.name===(g.provider||S.defaultProvider));
   const cards=S.groups.map(g=>{
     // Codex(GPT)跑自己的 agent 框架:只吃 permissionMode→沙箱层级,allow/deny 与 MCP 门控
@@ -2956,9 +3095,12 @@ function renderGroups(){
           <div style="flex:1;min-width:0">${g.board&&g.board.url
             ?`<span class="tag">${IC.check} 已创建</span> <a href="${esc(g.board.url)}" target="_blank" rel="noopener" style="color:var(--ember-soft)">打开画板 ${IC.ext}</a>${S.runtimeCapabilities?'<div class="hint">'+esc(RUNTIME_UI_TEXT.board)+'</div>':''}`
             :`<span class="dim">${S.runtimeCapabilities?esc(RUNTIME_UI_TEXT.board):'未创建 · 群里让 agent 需要放图时会自动建'}</span>`}</div></div>`}`
-    return `<div class="card${g.paused?' gpaused':''}" data-gid="${esc(g.chatId)}">
+    // 收起时的一行摘要:后端 · 型号 · 思考深度 + 执行模式;「完全访问」在这里也必须看得见(警示色)
+    const gopen=groupCardOpen(g.chatId,S.groups.length), gb=g.brain||{provider:g.effectiveProvider||g.provider||S.defaultProvider,model:'',effort:''};
+    const gsum=`<span class="tag">${esc(gb.provider||'')}</span><span class="gsum-t">${gb.model?esc(modelName(gb.model)):'型号未选'}${gb.effort?' · '+esc(gb.effort):''}</span>${isBypass?`<span class="tag risk" title="${fullTech}:跳过所有权限校验与目录围栏,可读写整机">${IC.warn} 完全访问</span>`:`<span class="tag">${safeLabel}</span>`}`;
+    return `<div class="card${g.paused?' gpaused':''}${gopen?'':' gfolded'}" data-gid="${esc(g.chatId)}">
     <div class="ph">
-      <div class="pn"><span class="drag" draggable="true" title="拖动排序">${IC.grip}</span><span class="gname">${esc(g.name||g.chatId)}</span></div>
+      <div class="pn"><span class="drag" draggable="true" title="拖动排序">${IC.grip}</span><button type="button" class="gfold" data-gfold="${esc(g.chatId)}" aria-expanded="${gopen}" title="展开或收起本群设置"><span class="caret">${IC.chevronRight}</span><span class="gname">${esc(g.name||g.chatId)}</span></button></div>
       <div class="inline" style="gap:6px;flex-shrink:0">
         ${g.paused?'<span class="tag pz" title="'+esc(S.runtimeCapabilities?RUNTIME_UI_TEXT.paused:'暂停中:消息静默丢弃 · 定时任务与画布播报停发 · 配置全保留')+'">'+IC.pause+' 已暂停</span>':''}
         ${platTag}
@@ -2967,7 +3109,8 @@ function renderGroups(){
         <button class="btn ghost" data-gpause="${esc(g.chatId)}" data-p="${g.paused?'1':'0'}" title="${S.runtimeCapabilities?esc(g.paused?RUNTIME_UI_TEXT.resume:RUNTIME_UI_TEXT.pause):g.paused?'恢复本群:bot 重新响应消息、定时任务与画布播报恢复':'暂停本群:期间消息静默丢弃、排队清空、定时任务与画布播报停发;进行中的任务跑完;完全可逆,配置全保留'}">${g.paused?IC.play+' '+(S.runtimeCapabilities?RUNTIME_UI_TEXT.resumeLabel:'恢复'):IC.pause+' 暂停'}</button>
       </div>
     </div>
-    <div class="gproject mono" title="${esc(g.workdir)}">${esc(g.workdir)}</div>
+    <div class="gmeta"><span class="gproject mono" title="${esc(g.workdir)}"><bdi>${esc(tildePath(g.workdir))}</bdi></span><span class="gsum">${gsum}</span></div>
+    <div class="gbody">
     <div class="gprimary-grid">
       <section class="gmodel-panel" aria-label="模型设置">${groupBrainRows(g)}</section>
       <section class="gaccess-panel" aria-label="执行设置">
@@ -2975,7 +3118,7 @@ function renderGroups(){
         <div class="gpermission">${permInner}</div>
     <div class="kv" style="align-items:flex-start"><span class="kk">忙时跟进</span><span class="vv" style="min-width:0">
       <label class="inline" style="gap:6px;cursor:pointer" title="${esc(S.runtimeCapabilities?RUNTIME_UI_TEXT.steer:'开启后，处理任务期间：群成员的后续消息、控制台勾了「回复」的插话，都会加入当前任务 —— 相关要求及时吸收，独立请求按先后回应。定时任务和不回复的插话仍排在后面。')}">
-        <input type="checkbox" class="gsteer" data-g="${esc(g.chatId)}"${g.followupEnabled?' checked':''} style="width:auto;margin:0"/>
+        <input type="checkbox" class="switch gsteer" data-g="${esc(g.chatId)}"${g.followupEnabled?' checked':''}/>
         <span>后续消息加入当前处理</span>
       </label>
       <span class="faint" style="font-size:11px">默认开启 · 下轮生效</span>
@@ -2989,14 +3132,14 @@ function renderGroups(){
     <div class="kv"><span class="kk">workdir</span><span class="vv mono" title="${esc(g.workdir)}">${esc(g.workdir)}</span></div>
     <div class="kv"><span class="kk">预览</span><span class="vv inline" style="gap:8px">
       <label class="inline" style="gap:5px;cursor:pointer" title="${esc(S.runtimeCapabilities?RUNTIME_UI_TEXT.preview:'常驻 = 该群的原型预览不再按闲置(默认 30 分钟)或时长(默认 8 小时)自动停止,直到有人手动停。\n这是「让群成员随时都能打开」的正规入口 —— 由你决定,agent 不能自己开。\n代价:那个目录会一直挂在局域网上,请用完及时停。')}">
-        <input type="checkbox" class="gpv" data-g="${esc(g.chatId)}"${g.preview&&(g.preview.idleMin===0&&g.preview.maxHours===0)?' checked':''} style="width:auto;margin:0"/>
+        <input type="checkbox" class="switch gpv" data-g="${esc(g.chatId)}"${g.preview&&(g.preview.idleMin===0&&g.preview.maxHours===0)?' checked':''}/>
         <span>常驻(不自动停)</span>
       </label>
       <span class="faint" style="font-size:11px">${S.runtimeCapabilities?esc(RUNTIME_UI_TEXT.preview):'当前:'+previewPolicyText(g)}</span>
     </span></div>
     <div class="kv"><span class="kk">数据输出</span><span class="vv inline" style="gap:8px">
       <label class="inline" style="gap:5px;cursor:pointer" title="明文 = 该群回复里的手机号/邮箱原样显示,不再遮盖。&#10;适用于成员数据本来就是查询内容的内部业务群 —— 由你决定,助手不能自己开。&#10;密钥类信息(token / key / 私钥)没有开关,任何群都会自动遮盖。">
-        <input type="checkbox" class="gpii" data-g="${esc(g.chatId)}"${g.redactPii===false?' checked':''} style="width:auto;margin:0"/>
+        <input type="checkbox" class="switch gpii" data-g="${esc(g.chatId)}"${g.redactPii===false?' checked':''}/>
         <span>明文(手机号/邮箱不遮盖)</span>
       </label>
       <span class="faint" style="font-size:11px">${g.redactPii===false?'当前:明文':'当前:遮盖'}</span>
@@ -3007,13 +3150,20 @@ function renderGroups(){
       <button class="btn ghost" data-rm="${esc(g.chatId)}" title="${isWe?'仅解除本控制台里的绑定配置,群本身保留(企业微信群要解散只能在企业微信里操作)':'仅解除本控制台里的绑定配置,飞书群本身保留(解散群在「配置群项目」面板)'}">解除绑定</button>
     </div>
     </details>
+    </div>
   </div>`;
   }).join('')||'<div class="empty">还没有创建任何群项目</div>';
   $('#groups').innerHTML=`<div class="pact">
       <button class="btn primary" id="bindBtn">${IC.settings}配置群项目</button></div>
-    <div class="hint lead">${S.runtimeCapabilities?esc(RUNTIME_UI_TEXT.groups):`本页只配置(模型 / 权限 / 插件);运行控制「停止 · 新会话」在 <b>「概览」</b> · 拖 ${IC.grip} 排序 · 切模型会重置该群会话。`}</div>
+    ${S.runtimeCapabilities?`<details class="lead-more"${leadOpen?' open':''}><summary><span>每个群绑定一个项目目录，在这里选模型、执行模式和忙时跟进。</span><span class="lnk2">了解更多</span></summary><div class="hint">${esc(RUNTIME_UI_TEXT.groups)}</div></details>`
+      :`<div class="hint lead">本页只配置(模型 / 权限 / 插件);运行控制「停止 · 新会话」在 <b>「概览」</b> · 拖 ${IC.grip} 排序 · 切模型会重置该群会话。</div>`}
     <div class="grid cols2 stagger" id="ggrid">${cards}</div>`;
+  if(typeof mountPageActions==='function')mountPageActions('groups');   // 单测只取这一段函数跑,那里没有这个助手
   $('#bindBtn').onclick=openBind;
+  // 群卡展开 / 收起:只切类与记录,不重画(卡里可能正填着东西)
+  $$('#groups [data-gfold]').forEach(b=>b.onclick=()=>{const card=b.closest('.card');if(!card)return;
+    const open=card.classList.contains('gfolded');card.classList.toggle('gfolded',!open);b.setAttribute('aria-expanded',String(open));
+    setGroupCardOpen(b.dataset.gfold,open);if(open&&typeof refitAllStrips==='function')refitAllStrips();});
   makeSortable($('#ggrid'),{item:'.card[data-gid]',key:c=>c.dataset.gid,
     save:o=>api('/api/groups/order','POST',{order:o}).then(r=>{S=r;renderOverview();return r;})});  // 概览群行同步新顺序
   $$('#groups [data-rm]').forEach(b=>b.onclick=async()=>{const gg=S.groups.find(x=>x.chatId===b.dataset.rm);if(!confirm('解除本群与项目的绑定?\n(仅移除绑定配置,群本身保留'+(gg&&gg.platform==='wecom'?')':';要解散群请去「配置群项目」面板)')))return;try{S=await api('/api/groups?chatId='+encodeURIComponent(b.dataset.rm),'DELETE');toast('已解除绑定','ok');renderAll();}catch(e){toast(e.message,'err');}});
@@ -3519,8 +3669,8 @@ function openSay(chatId){
     <textarea id="sayT" rows="4" maxlength="2000" placeholder="要它做什么,像跟人说话那样写…" style="width:100%;resize:vertical;min-height:96px"></textarea>
     <div class="say-foot">
       <span class="say-lab">群里可见</span>
-      <label class="say-sw" for="sayShow" title="你插的这句话本身要不要发进群(会标着「管理员」)"><input type="checkbox" id="sayShow" checked>插话</label>
-      <label class="say-sw" for="sayReply" title="它做完之后的回复要不要发进群;取消后连报错也不会说"><input type="checkbox" id="sayReply" checked>回复</label>
+      <label class="say-sw" for="sayShow" title="你插的这句话本身要不要发进群(会标着「管理员」)"><input type="checkbox" class="switch" id="sayShow" checked>插话</label>
+      <label class="say-sw" for="sayReply" title="它做完之后的回复要不要发进群;取消后连报错也不会说"><input type="checkbox" class="switch" id="sayReply" checked>回复</label>
     </div>
     <div class="hint say-tip" id="sayPreview"></div>
     <div class="mfoot">
@@ -3594,6 +3744,7 @@ let pg={session:null,running:false,abort:null};
 function pgMsgEl(role){const m=document.createElement('div');m.className='msg '+role;m.innerHTML=`<div class="role">${role==='user'?'你':'agent'}</div><div class="bubble"></div><div class="tools"></div>`;return m;}
 function renderPlayground(){
   const el=$('#playground');
+  if(S.runtimeCapabilities&&S.runtimeCapabilities.localChat){renderLocalChat(el);return;}
   if(S.runtimeCapabilities){el.innerHTML='<div class="card"><div class="hint">'+esc(S.runtimeCapabilities.reason)+'</div></div>';return;}
   if(el.dataset.built)return; // build once — keep the conversation across state refreshes
   const provs=S.providers.filter(p=>!p.hidden&&p.configured).map(p=>`<option ${p.name===S.defaultProvider?'selected':''}>${esc(p.name)}</option>`).join('');
@@ -3639,6 +3790,202 @@ async function pgSend(){
   }
 }
 
+/* ── 本机对话(持久处理流程)──
+   一段对话 = 一条 platform:'local' 的群项目路由:这里发的话与群消息走同一个受理入口、同一种持久收据,
+   回答由服务写进本机的对话记录(src/platform/local.js),页面只读它。所以这一页不保存任何状态:
+   刷新、重启服务、换浏览器看到的都是同一份记录。 */
+const lc={chat:null,msgs:[],ids:new Set(),loading:false,sending:false,unread:new Set(),timer:null,note:''};
+const lcChats=()=>(S.groups||[]).filter(g=>g.platform==='local');
+const lcLive=id=>(S.live&&S.live.groups&&S.live.groups[id])||{};
+const lcHomePath=p=>{const m=/^(\/(?:Users|home)\/[^/]+)(\/.*)?$/.exec(p||'');return m?'~'+(m[2]||''):(p||'');};
+const lcClock=ts=>{const d=new Date(ts),z=n=>String(n).padStart(2,'0');const day=new Date().toDateString()===d.toDateString()?'':(d.getMonth()+1)+'-'+d.getDate()+' ';return day+z(d.getHours())+':'+z(d.getMinutes());};
+const lcSecs=ms=>{const t=Math.max(0,Math.round(ms/1000));return t<60?t+'s':Math.floor(t/60)+'m '+z2(t%60)+'s';};
+const z2=n=>String(n).padStart(2,'0');
+/* 回答里的轻量 Markdown:围栏代码块、行内代码、粗体、标题行、裸链接。先转义再加标签,别的一概当文字。 */
+function lcInline(seg){
+  let h=esc(seg).replace(/^\n+|\n+$/g,'');
+  h=h.replace(/`([^`\n]+)`/g,'<code>$1</code>').replace(/\*\*([^*\n]+)\*\*/g,'<b>$1</b>')
+    .replace(/^#{1,4}\s+(.+)$/gm,'<b class="lc-hd">$1</b>')
+    .replace(/(^|[\s(（])(https?:\/\/[^\s<)）]+)/g,(m,a,u)=>a+'<a href="'+u+'" target="_blank" rel="noopener">'+u+'</a>');
+  return h?'<span class="lc-text">'+h+'</span>':'';
+}
+function lcMd(src){
+  return String(src).split('```').map((seg,i)=>{
+    if(!(i%2))return lcInline(seg);
+    const nl=seg.indexOf('\n');const code=(nl>=0?seg.slice(nl+1):seg).replace(/\n$/,'');
+    return '<pre class="lc-code"><code>'+esc(code)+'</code></pre>';
+  }).join('');
+}
+function lcMsgEl(m){
+  const d=document.createElement('div');d.className='lc-msg '+m.role;d.dataset.id=m.id;
+  // 对话内容是用户与模型自己的话,不进界面翻译层;服务给的提示行(notice)照常翻译
+  if(m.role!=='notice')d.setAttribute('data-i18n-skip','');
+  d.innerHTML=m.role==='notice'
+    ?'<span class="lc-note">'+esc(m.text)+'</span>'
+    :'<div class="lc-bubble">'+(m.role==='assistant'?lcMd(m.text):esc(m.text))+'</div><div class="lc-meta">'+esc(lcClock(m.ts))+'</div>';
+  return d;
+}
+function lcAppend(list,{scroll=true}={}){
+  const box=$('#lcMsgs');if(!box)return;
+  const near=box.scrollHeight-box.scrollTop-box.clientHeight<120;
+  let added=0;
+  for(const m of list){if(!m||lc.ids.has(m.id))continue;lc.ids.add(m.id);lc.msgs.push(m);box.appendChild(lcMsgEl(m));added++;}
+  const hint=$('.lc-hello',box);if(hint&&lc.msgs.length)hint.remove();
+  if(added&&scroll&&near)box.scrollTop=box.scrollHeight;
+}
+async function lcLoad(chatId){
+  lc.chat=chatId;lc.msgs=[];lc.ids=new Set();lc.unread.delete(chatId);lc.note='';
+  const box=$('#lcMsgs');if(box)box.innerHTML='<div class="lc-hello">读取中…</div>';
+  lcPaint();
+  lc.loading=true;
+  try{
+    const r=await api('/api/local/history?chatId='+encodeURIComponent(chatId)+'&limit=300');
+    if(lc.chat!==chatId)return;
+    if(box)box.innerHTML=r.messages.length?'':'<div class="lc-hello">直接说要做什么。它会在上面的项目目录里，用这台电脑上的 Claude Code 或 Codex 处理，结果回到这里。</div>';
+    lcAppend(r.messages);lc.toBottom=true;lcStick();
+  }catch(e){if(box)box.innerHTML='<div class="lc-hello">读取失败：'+esc(e.message)+'</div>';}
+  finally{lc.loading=false;}
+}
+/* 刚读完一段对话时页签可能还没显示(高度为 0),滚到底要等它真的可见 */
+function lcStick(){const box=$('#lcMsgs');if(lc.toBottom&&box&&box.clientHeight>0){box.scrollTop=box.scrollHeight;lc.toBottom=false;}}
+async function lcSync(){
+  if(!lc.chat||lc.loading)return;
+  const chatId=lc.chat,last=lc.msgs.length?lc.msgs[lc.msgs.length-1].id:'';
+  try{const r=await api('/api/local/history?chatId='+encodeURIComponent(chatId)+(last?'&after='+encodeURIComponent(last):'')+'&limit=300');
+    if(lc.chat===chatId)lcAppend(r.messages);}catch{}
+}
+/* 服务每写进一行就推一次(SSE local-message);不在看的那段对话记一个未读点 */
+function lcReceive(ev){
+  if(!ev||!ev.message||!ev.chatId)return;
+  if(ev.chatId===lc.chat&&$('#playground').classList.contains('on'))lcAppend([ev.message]);
+  else if(ev.chatId===lc.chat)lcAppend([ev.message],{scroll:false});
+  else if(ev.message.role!=='user'){lc.unread.add(ev.chatId);lcPaintList();}
+}
+function lcPaintList(){
+  const list=$('#lcList');if(!list)return;
+  list.innerHTML=lcChats().map(g=>{const lv=lcLive(g.chatId);
+    const st=g.paused?'paused':lv.held?'held':lv.busy?'busy':'idle';
+    return `<button type="button" class="lc-item${g.chatId===lc.chat?' on':''}" data-lc="${esc(g.chatId)}"><span class="lc-dot ${st}"></span><span class="lc-nm" data-i18n-skip>${esc(g.name||'本机对话')}</span><span class="lc-sub" data-i18n-skip>${esc((g.workdir||'').split('/').filter(Boolean).pop()||'')}</span>${lc.unread.has(g.chatId)?'<span class="lc-new" title="有新回复"></span>':''}</button>`;}).join('');
+  $$('#lcList .lc-item').forEach(b=>b.onclick=()=>{if(b.dataset.lc!==lc.chat)lcLoad(b.dataset.lc);});
+}
+function lcPaint(){
+  lcPaintList();
+  const g=lcChats().find(x=>x.chatId===lc.chat),head=$('#lcHead'),busy=$('#lcBusy');
+  if(!g||!head)return;
+  const lv=lcLive(g.chatId),full=g.permissionMode==='bypassPermissions';
+  const brain=g.brain||{};
+  head.innerHTML=`<div class="lc-title"><span class="lc-name" data-i18n-skip>${esc(g.name||'本机对话')}</span>
+      <span class="chip" data-i18n-skip>${esc(brain.provider||g.effectiveProvider||g.provider||S.defaultProvider||'')}${brain.model?' · '+esc(brain.model):''}</span>
+      <span class="chip ${full?'warn':''}" title="${full?'完全访问：可读写整台电脑。在「群 · 项目」里可改回只读':'只读：需要确认的操作会被拒绝。在「群 · 项目」里可放开'}">${full?'完全访问':'只读'}</span></div>
+    <div class="lc-path mono" data-i18n-skip title="${esc(g.workdir||'')}">${esc(lcHomePath(g.workdir))}</div>
+    <div class="lc-acts"><button class="btn sm" id="lcReset" title="忘掉之前聊的，从头开始（要等手头任务结束）">${IC.rotate} 新会话</button><button class="btn sm" id="lcConf" title="模型、权限、项目目录在「群 · 项目」里改">${IC.settings} 设置</button></div>`;
+  $('#lcReset').onclick=async()=>{try{await api('/api/groups/new','POST',{chatId:g.chatId});toast('已开新会话，之前聊的不再带入','ok');}catch(e){toast(e.message,'err');}};
+  $('#lcConf').onclick=()=>{const b=$('[data-tab="groups"]');if(b)b.click();};
+  const paused=!!g.paused,held=!!lv.held;
+  const input=$('#lcInput'),send=$('#lcSend');
+  if(input){input.disabled=paused;input.placeholder=paused?'这段对话已暂停，在「群 · 项目」里恢复后再发':'交代一件事…';}
+  if(send)send.disabled=paused||lc.sending;
+  if(busy){
+    if(held){busy.hidden=false;busy.className='lc-busy warn';busy.innerHTML=IC.warn+' <span>上一个任务结果不明，这段对话已暂停处理，等待确认；重启服务后仍如此时，按使用指南封存后继续。</span>';}
+    else if(lv.busy||lv.waitingForCapacity){busy.hidden=false;busy.className='lc-busy';
+      busy.innerHTML=`<span class="lc-spin" aria-hidden="true"></span><span class="lc-st"><span>${lv.waitingForCapacity&&!lv.busy?'等待空闲名额':(lv.finalizing?'正在收尾':'正在处理')}</span><i>·</i><span id="lcSecs" data-i18n-skip>${esc(lcSecs(lv.sinceMs||0))}</span>${lv.queue?'<i>·</i><span>排队 '+lv.queue+'</span>':''}</span><button class="btn sm" id="lcStop">${IC.square} 停止</button>`;
+      $('#lcStop').onclick=async()=>{try{const r=await api('/api/groups/stop','POST',{chatId:g.chatId});toast(r.ok?'已请求停止，等待结束确认':'当前没有可停止的运行任务','ok');}catch(e){toast(e.message,'err');}};
+      lc.busyAt=Date.now()-(lv.sinceMs||0);}
+    else{busy.hidden=true;busy.innerHTML='';}
+  }
+}
+function lcWhere(w){
+  if(!w)return '';
+  if(w.state==='queued')return '已排队'+(w.ahead?'，前面还有 '+w.ahead+' 条':'');
+  if(w.state==='following'||w.state==='joined')return '已加入正在处理的任务';
+  if(w.state==='duplicate')return '这句已经提交过，不会重复处理';
+  if(w.state==='unconfirmed')return '已记下，但还没确认开始处理；稍后看这里的回复';
+  return '';
+}
+async function lcSend(){
+  const input=$('#lcInput');if(!input||lc.sending||!lc.chat)return;
+  const text=input.value;if(!text.trim())return;
+  // 同一次提交只用一个编号:发送失败后原样再点,落到同一句上,不会变成两句
+  if(lc.pendingText!==text){lc.pendingText=text;lc.pendingId=sayRequestId();}
+  lc.sending=true;$('#lcSend').disabled=true;
+  try{
+    const r=await api('/api/local/send','POST',{chatId:lc.chat,text,requestId:lc.pendingId});
+    input.value='';lc.pendingText=null;lcGrow();
+    const note=lcWhere(r.where);if(note)toast(note,'ok');
+  }catch(e){toast(e.message,'err');}
+  finally{lc.sending=false;$('#lcSend').disabled=false;await lcSync();const box=$('#lcMsgs');if(box)box.scrollTop=box.scrollHeight;input.focus();}
+}
+function lcGrow(){const t=$('#lcInput');if(!t)return;t.style.height='auto';t.style.height=Math.min(180,Math.max(36,t.scrollHeight))+'px';}
+function lcOpenNew(){
+  const provs=S.providers.filter(p=>!p.hidden&&p.configured);
+  let wd='';
+  $('#modal').className='modal';
+  $('#modal').innerHTML=`<h3>新建本机对话</h3>
+    <div class="hint" style="margin-bottom:14px">不经过任何聊天平台：这里说的话由这台电脑上的 Claude Code 或 Codex 在所选目录里处理，对话记录只保存在这台电脑上。</div>
+    <div class="field"><label class="f">名称</label><input id="lcnName" maxlength="40" value="本机对话" style="width:100%"/></div>
+    <div class="field"><label class="f">项目目录${(S.projectsRoots&&S.projectsRoots.length)?`<span class="faint" style="font-weight:400;margin-left:6px">须在 ${esc(S.projectsRoots.join(' 或 '))} 下</span>`:''}</label>
+      <div class="inline" style="gap:10px"><button class="btn" id="lcnBrowse" style="white-space:nowrap">选择目录…</button><span id="lcnWd" class="faint" data-i18n-skip style="flex:1;min-width:0;font-family:var(--mono);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span></div></div>
+    <div class="field"><label class="f">模型</label><select id="lcnProv">${provs.map(p=>`<option ${p.name===S.defaultProvider?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div>
+    <div class="mfoot"><button class="btn" id="lcnCancel">取消</button><button class="btn primary" id="lcnSave" disabled>创建</button></div>`;
+  $('#modalBg').classList.add('show');
+  const show=()=>{$('#lcnWd').textContent=wd||'未选择';$('#lcnSave').disabled=!wd||!provs.length;};show();
+  $('#lcnBrowse').onclick=()=>openFsPicker(p=>{if(p){wd=p;show();}});
+  $('#lcnCancel').onclick=closeModal;
+  $('#lcnSave').onclick=async()=>{const b=$('#lcnSave');b.disabled=true;
+    try{const r=await api('/api/groups','POST',{platform:'local',workdir:wd,provider:$('#lcnProv').value,name:$('#lcnName').value.trim()||'本机对话'});
+      const id=r.createdChatId;S=r;closeModal();renderAll();if(id)lcLoad(id);toast('已创建本机对话','ok');}
+    catch(e){toast(e.message,'err');b.disabled=false;}};
+}
+/* 只有本机对话、没接任何聊天平台的安装:打开控制台先落在「对话」(每次载入页面只做一次,之后切到哪页都随人) */
+function lcLandOnce(){
+  if(lc.landed||!S||!S.runtimeCapabilities||!S.runtimeCapabilities.localChat)return;
+  lc.landed=true;
+  const gs=S.groups||[];
+  if(gs.length&&gs.every(g=>g.platform==='local')&&$('#overview').classList.contains('on')){const b=$('[data-tab="playground"]');if(b)b.click();}
+}
+function renderLocalChat(el){
+  // 导航与页头的名字改成「对话」(静态标记里仍是旧版的「试跑」,旧的非持久路径继续用它)
+  const nav=$('[data-tab="playground"]');
+  if(nav&&!nav.dataset.lc){nav.dataset.lc='1';nav.title='对话 — 在这台电脑上直接和它说话';const sp=$('span',nav);if(sp)sp.textContent='对话';const ic=$('use',nav);if(ic)ic.setAttribute('href','#lu-say');const h=$('.ptitle>[data-for="playground"]');if(h)h.textContent='对话';}
+  if(!el.dataset.lc){
+    el.dataset.lc='1';
+    el.innerHTML=`<div class="lc">
+      <aside class="lc-side"><div class="lc-side-h"><span>本机对话</span><button type="button" class="iconbtn sm" id="lcNew" title="新建本机对话" aria-label="新建本机对话">${IC.plus}</button></div><div class="lc-list" id="lcList"></div></aside>
+      <section class="lc-main" id="lcMain">
+        <div class="lc-head" id="lcHead"></div>
+        <div class="lc-msgs" id="lcMsgs" aria-live="polite"></div>
+        <div class="lc-busy" id="lcBusy" hidden></div>
+        <div class="lc-in"><textarea id="lcInput" rows="1" placeholder="交代一件事…"></textarea><button class="btn primary" id="lcSend">发送</button></div>
+        <div class="lc-foot"><span>Enter 发送，Shift+Enter 换行</span><i>·</i><span>发 /help 看可用命令</span><i>·</i><span>对话记录只保存在这台电脑上</span></div>
+      </section>
+      <section class="lc-none" id="lcNone" hidden><div class="lc-none-in"><div class="lc-none-t">在这台电脑上直接对话</div>
+        <div class="hint">不用接入聊天平台。选一个项目目录，它用这台电脑上的 Claude Code 或 Codex 在里面处理你交代的事。</div>
+        <button class="btn primary" id="lcNew2">${IC.plus} 新建本机对话</button></div></section>
+    </div>`;
+    $('#lcNew').onclick=lcOpenNew;$('#lcNew2').onclick=lcOpenNew;
+    $('#lcSend').onclick=lcSend;
+    const input=$('#lcInput');
+    input.addEventListener('input',lcGrow);
+    // 输入法组字时的回车是确认候选词,不是发送
+    input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&e.keyCode!==229){e.preventDefault();lcSend();}});
+    // 忙时的计时每秒走一格;服务的心跳只隔几秒带一次进度
+    //   ——忙闲、排队、暂停一变就重画页头与状态条(心跳只换 S.live,不会重画这一页)
+    lc.timer=setInterval(()=>{
+      if(!lc.chat||!$('#playground').classList.contains('on'))return;
+      const lv=lcLive(lc.chat),g=lcChats().find(x=>x.chatId===lc.chat)||{};
+      const sig=[lv.busy,lv.finalizing,lv.waitingForCapacity,lv.queue,lv.held,g.paused,g.permissionMode,g.name].join('|');
+      if(sig!==lc.liveSig){lc.liveSig=sig;lcPaint();if(!lv.busy)lcSync();}
+      const n=$('#lcSecs');if(n&&lc.busyAt)n.textContent=lcSecs(Date.now()-lc.busyAt);
+    },1000);
+  }
+  const chats=lcChats();
+  $('#lcNone').hidden=!!chats.length;$('#lcMain').hidden=!chats.length;$('.lc-side',el).hidden=!chats.length;
+  if(!chats.length){lc.chat=null;return;}
+  if(!lc.chat||!chats.some(c=>c.chatId===lc.chat))lcLoad(chats[0].chatId);
+  else{lcPaint();lcStick();lcSync();}
+  lcLandOnce();
+}
+
 /* ── settings ── */
 function renderSettings(){
   const a=S.agent,fe=S.feishu,px=S.proxy,net=S.net||{};
@@ -3664,8 +4011,8 @@ function renderSettings(){
       ?`<b style="color:var(--risk)">已对局域网开放</b> · ${net.authOn?'需密码':'<b style="color:var(--fail)">未设密码(异常)</b>'} · HTTP 明文,仅可信网络用(最稳走 SSH 隧道)。`
       :'仅本机可访问 · 要对外开放:先设访问密码,再把绑定地址改为 0.0.0.0。'}</div>
     <div class="inline" style="gap:14px;margin-top:13px;flex-wrap:wrap">
-      <label class="inline" style="gap:6px;cursor:pointer"><input type="checkbox" id="netLan" ${net.lan?'checked':''} style="width:auto"/> <span class="dim">局域网访问</span></label>
-      <label class="inline" style="gap:6px;cursor:pointer"><input type="checkbox" id="netPublic" ${net.publicEnabled?'checked':''} style="width:auto"/> <span class="dim">公网飞书登录</span></label>
+      <label class="inline" style="gap:6px;cursor:pointer"><input type="checkbox" class="switch" id="netLan" ${net.lan?'checked':''}/> <span class="dim">局域网访问</span></label>
+      <label class="inline" style="gap:6px;cursor:pointer"><input type="checkbox" class="switch" id="netPublic" ${net.publicEnabled?'checked':''}/> <span class="dim">公网飞书登录</span></label>
     </div>
     ${!net.authOn?`<div class="field" style="margin:10px 0 0;max-width:320px"><label class="f">访问密码</label><input id="netPass" type="password" autocomplete="new-password" placeholder="局域网开启时设置,至少 6 位"/><div class="hint" style="margin-top:4px">只保存 scrypt 哈希;开启局域网前必填</div></div>`:''}
     <div class="hint" style="margin-top:7px">${net.publicEnabled?(net.publicReady?'公网登录已启用':'公网登录待配置'): '公网登录已关闭'}${!net.publicReady&&net.feishuLogin&&net.feishuLogin.why?` · ${esc(net.feishuLogin.why)}`:''} · 开关只控制本程序入口,不会改动反向代理或隧道。</div>
@@ -3714,7 +4061,7 @@ function renderSettings(){
     ${upd&&upd.available?`<div class="hint" style="margin:-4px 0 12px">版本差异与发布说明：<a href="https://github.com/sintlab/sintbot/releases/tag/v${encodeURIComponent(upd.latestVersion)}" target="_blank" rel="noopener" style="color:var(--ember-soft)">查看 v${esc(upd.latestVersion)} 发布说明</a></div>`:''}
     <div class="inline" style="gap:14px;flex-wrap:wrap;margin-bottom:12px">
       <span class="dim">自动检查稳定版(启动时及每天)</span>
-      ${upd&&upd.announceSupported===false?'':`<label class="inline" style="gap:6px;cursor:pointer"><input type="checkbox" id="updAnnounce" ${upd&&upd.announce!==false?'checked':''} style="width:auto"/> <span class="dim">升级后向群里播报(记住选择)</span></label>`}
+      ${upd&&upd.announceSupported===false?'':`<label class="inline" style="gap:6px;cursor:pointer"><input type="checkbox" class="switch" id="updAnnounce" ${upd&&upd.announce!==false?'checked':''}/> <span class="dim">升级后向群里播报(记住选择)</span></label>`}
     </div>
     <div class="inline" style="gap:8px;flex-wrap:wrap">
       <button class="btn" id="updCheck" ${!upd?'disabled':''}>检查新版</button>
@@ -3727,7 +4074,7 @@ function renderSettings(){
     <div class="update-history"><div class="subhead">版本历史</div>
       <div id="verhistBox"><div class="empty">加载中…</div></div></div>
   </div>`;
-  $('#settings').innerHTML=`<div class="grid cols2 stagger">
+  $('#settings').innerHTML=`<div class="stoc" id="setToc" role="navigation" aria-label="本页内容"></div><div class="grid cols2 stagger">
     ${fxFeishuCard(fe)}
     ${fxFeishuAccessCard(fe)}
     ${netCard}
@@ -3749,6 +4096,7 @@ function renderSettings(){
     ${aboutCard}
     ${updateCard}
   </div>`;
+  buildSettingsToc();
   updateTopUpdateBadge();
   loadChangelog();
   $('#bSave').onclick=async()=>{const brand=$('#bBrand').value.trim(),http=$('#pxHttp').value.trim();
@@ -3838,6 +4186,40 @@ function renderSettings(){
 // 应用身份条:飞书那侧的真实身份(名称 / 描述 / 头像 / 启用状态 / open_id)。数据是「预检」或
 // 「刷新」时落盘的缓存,渲染不打网络 —— 每次切页签都重画,现拉就成了按分钟计的飞书调用。
 // 描述缺权限时**照实说为什么没有**,留白会被读成「这个应用没写描述」。
+/* 设置页的页内目录:条目取自各张卡的标题(卡片增减、平台卡出没都跟着变,不另维护一份清单)。
+   窗口够宽时竖排在右侧空栏里并吸顶;窄一些就是标题下面一行可横向滚动的胶囊。点一项滚到那张卡,
+   滚动时高亮当前所在的卡(滚的是 .pbody;窄窗整页滚动时是 window)。 */
+function settingsCards(){return $$('#settings>.grid>.card');}
+function markSettingsToc(i){const toc=$('#setToc');if(!toc)return;
+  $$('.stoc-i',toc).forEach(b=>{const on=+b.dataset.sec===i;if(b.classList.contains('on')===on)return;b.classList.toggle('on',on);
+    if(on){b.setAttribute('aria-current','true');
+      if(toc.scrollWidth>toc.clientWidth){const l=b.offsetLeft-toc.offsetLeft;if(l<toc.scrollLeft+16||l+b.offsetWidth>toc.scrollLeft+toc.clientWidth-16)toc.scrollLeft=Math.max(0,l-24);}}
+    else b.removeAttribute('aria-current');});}
+let settingsSpyHold=0;
+function settingsSpy(){
+  const tab=$('#settings'),toc=$('#setToc'),pb=$('.pbody'); if(!tab||!toc||!pb||!tab.classList.contains('on'))return;
+  if(Date.now()<settingsSpyHold)return;                                  // 刚点过目录:平滑滚动途中不跟着跳
+  const cards=settingsCards(); if(!cards.length)return;
+  const own=getComputedStyle(pb).overflowY!=='visible';                  // 桌面:.pbody 自己滚;窄窗:整页滚
+  const line=(own?pb.getBoundingClientRect().top:toc.getBoundingClientRect().bottom)+72;
+  let cur=0; cards.forEach((c,i)=>{if(c.getBoundingClientRect().top<=line)cur=i;});
+  const end=own?pb.scrollTop+pb.clientHeight>=pb.scrollHeight-2:innerHeight+scrollY>=document.documentElement.scrollHeight-2;
+  if(end&&(own?pb.scrollTop:scrollY)>0)cur=cards.length-1;               // 滚到底:最后一张卡够不到判定线,直接算它
+  markSettingsToc(cur);
+}
+function buildSettingsToc(){
+  const toc=$('#setToc'); if(!toc)return;
+  const cards=settingsCards();
+  toc.innerHTML='<div class="stoc-h">本页内容</div>'+cards.map((c,i)=>{const l=c.querySelector('.lbl'),t=l?l.textContent.trim():'';
+    return t?`<button type="button" class="stoc-i" data-sec="${i}">${esc(t)}</button>`:'';}).join('');
+  $$('.stoc-i',toc).forEach(b=>b.onclick=()=>{const c=settingsCards()[+b.dataset.sec];if(!c)return;
+    settingsSpyHold=Date.now()+700;markSettingsToc(+b.dataset.sec);
+    c.scrollIntoView({behavior:REDUCED_MOTION?'auto':'smooth',block:'start'});});
+  markSettingsToc(0);settingsSpy();
+}
+{let spyTick=false;const onScroll=()=>{if(spyTick)return;spyTick=true;requestAnimationFrame(()=>{spyTick=false;settingsSpy();});};
+  const pb=document.querySelector('.pbody');if(pb)pb.addEventListener('scroll',onScroll,{passive:true});
+  addEventListener('scroll',onScroll,{passive:true});addEventListener('resize',onScroll,{passive:true});}
 function fxIdentity(fe){
   const id=fe&&fe.identity;
   if(!id) return `<div class="fx-ident"><div class="fx-ident-av">${IC.bot}</div><div class="fx-ident-main">
@@ -3942,7 +4324,7 @@ function fxWecomCard(we){
     <div class="field"><label class="f">点名词 <span class="faint" style="text-transform:none">— 群消息里出现这些词(或机器人名)就当是在叫它,不 @ 也答;逗号分隔;留空 = 「机器人、助手」</span></label><input id="wKeywords" placeholder="机器人, 助手" value="${esc(we&&we.keywords?we.keywords.join(', '):'')}"/></div>
     <div class="fx-sub" style="margin-top:22px">命令行工具</div>
     <div class="hint" style="margin:-4px 0 10px">成员姓名、助手发图发文件、列出可绑定的群、「不 @ 也回复」都靠服务器上装好并授权的官方命令行工具;没装只降级不报错(预检会说)。</div>
-    <div class="inline" style="margin:2px 0 14px"><input type="checkbox" id="wCliOff" ${we&&we.cliOff?'checked':''} style="width:auto"/> <span class="dim">不用命令行工具</span><span class="hint" style="margin-left:6px">— 勾上后群里只显示成员账号、助手不能发图发文件、「不 @ 也回复」不生效</span></div>
+    <div class="inline" style="margin:2px 0 14px"><input type="checkbox" class="switch" id="wCliOff" ${we&&we.cliOff?'checked':''}/> <span class="dim">不用命令行工具</span><span class="hint" style="margin-left:6px">— 勾上后群里只显示成员账号、助手不能发图发文件、「不 @ 也回复」不生效</span></div>
     <button class="btn primary" id="wSave">保存企业微信</button>
   </details></div>`;
 }
@@ -3979,7 +4361,9 @@ function fxFeishuCard(fe){
   const groupCount=(S.groups||[]).filter(g=>!g.platform||g.platform==='feishu').length;
   return `<div class="card feishu-setup" id="feishuCard" style="grid-column:1/-1">
     <div class="feishu-heading"><div class="lbl">${platLogo('feishu')}飞书</div><span class="fx-status ${online?'on':''}"><span class="dot ${online?'ok':configured?'warn':'skip'}"></span>${status}</span></div>
-    ${configured?'':'<p class="hint">用手机飞书确认一次，自动创建机器人和项目群。</p>'}
+    ${configured?'':(S.runtimeCapabilities&&S.runtimeCapabilities.localChat&&(S.groups||[]).some(g=>g.platform==='local')
+      ?'<p class="hint">现在只在这台电脑上对话。要在飞书里也能找它：先停止 SintBot，在终端运行 <code data-i18n-skip style="margin:0 4px">sintbot connect --attach</code>，用手机飞书扫码确认，再启动。本机对话、记录和现有设置都会保留。</p>'
+      :'<p class="hint">用手机飞书确认一次，自动创建机器人和项目群。</p>')}
     ${configured?`<div class="kv"><span class="kk">应用名称</span><span class="vv">${esc(app.name||'项目群已配置')}</span></div>
       <div class="kv"><span class="kk">已绑定项目群</span><span class="vv">${groupCount}</span></div>
       <div class="kv"><span class="kk">消息响应</span><span class="vv">${fe.onlyWhenMentioned?'仅回复 @ 机器人的消息':'接收群内普通消息'}</span></div>
@@ -4069,6 +4453,7 @@ function renderFxCheck(box,checks){
 const splitList=s=>s.split(/[\n,]+/).map(x=>x.trim()).filter(Boolean);
 
 /* ── shell ── */
+document.addEventListener('click',e=>{const a=e.target.closest&&e.target.closest('#ovStartHide');if(!a)return;e.preventDefault();try{localStorage.setItem('sbot-start-hide','1');}catch{}const c=$('#ovStart');if(c)c.remove();});
 // 「开始使用」卡里的「去某页」按钮:委托到 document,重绘不用重新绑
 document.addEventListener('click',(e)=>{const b=e.target.closest&&e.target.closest('[data-gotab]');if(!b)return;const t=document.querySelector('[data-tab="'+b.dataset.gotab+'"]');if(t)t.click();});
 function renderAll(){renderOverview();renderProviders();renderGroups();renderPlayground();renderSettings();updateDaemon();updateTopFxApp();applyRuntimeCapabilities();}
@@ -4327,7 +4712,8 @@ function updateConnLive(){
     if(S.health&&S.health.rows){let r=S.health.rows.find(x=>x.label===label); if(!r){r={label};S.health.rows.push(r);} r.status=st; r.detail=dt;}
   }
   if(S.health&&S.health.rows){S.health.fails=S.health.rows.filter(x=>x.status==='fail').length; S.health.warns=S.health.rows.filter(x=>x.status==='warn').length;
-    const pill=$('#ovHealthPill'); if(pill)pill.className='hpill '+healthClass(S.health); const txt=$('#ovHealthTxt'); if(txt)txt.textContent=healthText(S.health);}
+    const pill=$('#ovHealthPill'); if(pill)pill.className='hpill '+healthClass(S.health); const txt=$('#ovHealthTxt'); if(txt)txt.textContent=healthText(S.health);
+    syncHealthFold();}
 }
 function fmtUptime(ms){if(!ms)return '';const s=ms/1000,d=Math.floor(s/86400),h=Math.floor(s%86400/3600);return (d?d+'d':'')+h+'h';}
 /* 页头服务器时钟:显示的是**服务器主机**的时区和时间(hostTz/hostOffsetMin)——
@@ -4358,6 +4744,7 @@ $$('nav button').forEach(b=>b.onclick=()=>{
   // 切过去时若自动刷新期间状态变过就重画这一页(见 renderTabIfStale:变了才动 DOM,
   // 否则填了一半的 cron/设置表单会被无谓清掉)
   try{renderTabIfStale(b.dataset.tab);}catch{}
+  if(b.dataset.tab==='playground'&&lc.chat){lcStick();lcSync();}
   // ⚠ 刚切过来这一页才第一次有真实宽度 —— 之前画的样张排是按宽度 0 算的(等于没算)。
   //   不在这儿补一次,那排图就会被 overflow:hidden 切掉半个。
   try{refitAllStrips();}catch{}
@@ -4366,14 +4753,22 @@ $$('nav button').forEach(b=>b.onclick=()=>{
 async function loadUsage(){try{usage=await api('/api/usage');renderProviders();}catch(e){}}
 async function load(){try{S=await api('/api/state');seedCodexStatus();await syncActivity(false);renderAll();startClock();loadUsage();autoVerifyCodex();autoVerifyClaude();warmCodexModels();preloadStyleI18n();}catch(e){if(e.message==='需要登录')return;$('#overview').innerHTML='<div class="empty" style="padding:48px;text-align:center;color:var(--fail)">✕ 加载失败:'+esc(e.message)+'<br><br><span class="faint">确认后台服务正在运行</span></div>';toast('加载失败:'+e.message,'err');}}
 $('#refresh').onclick=()=>{load();toast('已刷新','ok');};
-/* 主题切换:dark(默认,Mocha 调暗)↔ light(Catppuccin Latte)。独立于 renderAll —— 切主题不重渲染卡片。 */
+/* 主题:跟随系统(默认)→ 亮色 → 暗色,三态轮换。独立于 renderAll —— 切主题不重渲染卡片。
+   data-theme-pref = 用户选的档(system / light / dark);data-theme = 算好的 light / dark,样式只认后者。
+   跟随系统 = 不存 localStorage(首屏那段脚本没读到值就按系统定),系统外观变了页面当场跟着变。 */
+const THEME_MQ=(()=>{try{return matchMedia('(prefers-color-scheme: dark)');}catch(e){return null;}})();
+function themePref(){const p=document.documentElement.dataset.themePref;return p==='light'||p==='dark'?p:'system';}
 function themeOf(){return document.documentElement.dataset.theme||'dark';}
-/* 图标语义 = 点了会切到的主题:亮 → 月亮(去暗),暗 → 太阳(去亮);Lucide 线性图标,与全页同一套 */
-const SVG_MOON=IC.moon;
-const SVG_SUN=IC.sun;
-function updateThemeBtn(){const b=$('#themeBtn');if(!b)return;b.innerHTML=themeOf()==='light'?SVG_MOON:SVG_SUN;}
-function setTheme(t){document.documentElement.dataset.theme=t;localStorage.setItem('sbot-theme',t);updateThemeBtn();}
-$('#themeBtn').onclick=()=>setTheme(themeOf()==='light'?'dark':'light');
+/* 图标语义 = 当前这一档:显示器(跟随系统)/ 太阳(亮色)/ 月亮(暗色);提示里写明点了会去哪 */
+const THEME_UI={system:['monitor','主题：跟随系统 · 点击切换到亮色'],light:['sun','主题：亮色 · 点击切换到暗色'],dark:['moon','主题：暗色 · 点击切换到跟随系统']};
+function updateThemeBtn(){const b=$('#themeBtn');if(!b)return;const u=THEME_UI[themePref()];b.innerHTML=IC[u[0]];b.setAttribute('title',u[1]);b.setAttribute('aria-label',u[1]);}
+function setTheme(p){p=p==='light'||p==='dark'?p:'system';const d=document.documentElement;
+  d.dataset.themePref=p;d.dataset.theme=p==='system'?(THEME_MQ&&THEME_MQ.matches?'dark':'light'):p;
+  try{if(p==='system')localStorage.removeItem('sbot-theme');else localStorage.setItem('sbot-theme',p);}catch(e){}
+  updateThemeBtn();}
+$('#themeBtn').onclick=()=>setTheme({system:'light',light:'dark',dark:'system'}[themePref()]);
+if(THEME_MQ){const follow=()=>{if(themePref()==='system')setTheme('system');};
+  if(THEME_MQ.addEventListener)THEME_MQ.addEventListener('change',follow);else if(THEME_MQ.addListener)THEME_MQ.addListener(follow);}
 updateThemeBtn();
 
 /* ══════════ 界面语言:中文 ⇄ English ══════════════════════════════════════════
@@ -4384,6 +4779,55 @@ updateThemeBtn();
 /* I18N_DICT_BEGIN —— 合并翻译片段时整块替换这两个数组,不要改此标记之外的代码
    ⚠ 正则一律 ^…$ 整串、不加 g 标志;更具体的条目必须排在泛化条之前。 */
 const I18N_EN=[
+  /* 本机对话 */
+  ["不再显示", "Don't show again"],
+  ["在「对话」里交代第一件事", "Ask for your first task in Chat"],
+  ["不用接聊天平台，在这台电脑上直接说", "No chat app needed; just say it on this Mac"],
+  ["新建一段本机对话，选一个项目目录就能开始", "Create a conversation and pick a project folder to begin"],
+  ["去「对话」", "Open Chat"],
+  ["接入飞书（可选）", "Connect Feishu (optional)"],
+  ["接入后在手机上也能派活，还能把它拉进项目群。方法见「设置」里的飞书卡", "Once connected you can send tasks from your phone and add it to project groups. See the Feishu card in Settings."],
+  ["现在只在这台电脑上对话。要在飞书里也能找它：先停止 SintBot，在终端运行", "Conversations currently stay on this Mac. To reach it from Feishu too: stop SintBot, run"],
+  ["，用手机飞书扫码确认，再启动。本机对话、记录和现有设置都会保留。", "in a terminal, confirm the scan in Feishu on your phone, then start SintBot again. Your conversations, transcripts and settings are kept."],
+  ["对话", "Chat"],
+  ["本机对话", "Conversations"],
+  ["对话 — 在这台电脑上直接和它说话", "Chat — talk to it directly on this Mac"],
+  ["新建本机对话", "New conversation"],
+  ["直接说要做什么。它会在上面的项目目录里，用这台电脑上的 Claude Code 或 Codex 处理，结果回到这里。", "Say what you need. It works in the project folder above with Claude Code or Codex on this Mac and answers here."],
+  ["交代一件事…", "Ask for something…"],
+  ["这段对话已暂停，在「群 · 项目」里恢复后再发", "This conversation is paused. Resume it under Groups · Projects first."],
+  ["Enter 发送，Shift+Enter 换行", "Enter to send, Shift+Enter for a new line"],
+  ["发 /help 看可用命令", "Send /help for commands"],
+  ["对话记录只保存在这台电脑上", "The transcript stays on this Mac"],
+  ["在这台电脑上直接对话", "Talk to it on this Mac"],
+  ["不用接入聊天平台。选一个项目目录，它用这台电脑上的 Claude Code 或 Codex 在里面处理你交代的事。", "No chat app needed. Pick a project folder; it works there with Claude Code or Codex on this Mac."],
+  ["正在处理", "Working"],
+  ["正在收尾", "Finishing"],
+  ["等待空闲名额", "Waiting for a free slot"],
+  ["上一个任务结果不明，这段对话已暂停处理，等待确认；重启服务后仍如此时，按使用指南封存后继续。", "The last task's outcome is unknown, so this conversation is on hold. If a restart does not clear it, seal the incident as described in the usage guide, then continue."],
+  ["有新回复", "New reply"],
+  ["忘掉之前聊的，从头开始（要等手头任务结束）", "Forget the earlier context and start over (after the current task ends)"],
+  ["模型、权限、项目目录在「群 · 项目」里改", "Change the model, access and project folder under Groups · Projects"],
+  ["完全访问：可读写整台电脑。在「群 · 项目」里可改回只读", "Full access: can read and write anywhere on this Mac. Switch back to read-only under Groups · Projects."],
+  ["只读：需要确认的操作会被拒绝。在「群 · 项目」里可放开", "Read-only: actions that need approval are refused. Change it under Groups · Projects."],
+  ["不经过任何聊天平台：这里说的话由这台电脑上的 Claude Code 或 Codex 在所选目录里处理，对话记录只保存在这台电脑上。", "No chat app involved: Claude Code or Codex on this Mac handles what you say in the chosen folder, and the transcript stays on this Mac."],
+  ["已开新会话，之前聊的不再带入", "New session started; the earlier context is no longer carried over"],
+  ["已创建本机对话", "Conversation created"],
+  ["已排队", "Queued"],
+  ["已加入正在处理的任务", "Added to the task in progress"],
+  ["这句已经提交过，不会重复处理", "Already submitted; it will not run twice"],
+  ["已记下，但还没确认开始处理；稍后看这里的回复", "Saved, but not yet confirmed as started. Watch for the reply here."],
+  ["上一轮没有完成（模型出错或服务中断），请重新发送原请求。", "The last turn did not finish (model error or service interruption). Send the request again."],
+  ["没有这段本机对话", "This conversation does not exist"],
+  ["后台服务未运行 — 对话需要它在跑", "The service is not running; a conversation needs it"],
+  ["这段对话已暂停,先恢复再发", "This conversation is paused; resume it first"],
+  ["服务正在启动或停止,这句没有处理,请稍后重发", "The service is starting or stopping. This message was not processed; send it again shortly."],
+  ["内容过长(上限 20000 字)", "The message is too long (20,000 characters at most)"],
+  ["这次提交的编号已被另一句话用过,请重新发送", "This submission key was already used; send the message again"],
+  ["这句没能写入本机对话记录,未处理;请检查磁盘空间后重发", "The message could not be saved, so it was not processed. Check disk space and send it again."],
+  ["这句已记下,但服务没有受理(详见服务日志);请稍后重发", "Saved, but the service did not accept it (see the service log). Send it again shortly."],
+  ["本机对话的标识不合法", "The conversation identity is invalid"],
+  ["这个标识保留给本机对话", "This identity is reserved for conversations on this Mac"],
   ["扫码，把项目带进飞书", "Scan to connect your project to Feishu"],
   ["项目群已配置", "Project groups configured"],
   ["尚未接入", "Not connected yet"],
@@ -5707,8 +6151,22 @@ const I18N_EN=[
   ["先在设置里填 appId/appSecret", "fill in appId/appSecret in Settings first"],
   ["还没有机器人被 @ 过的群", "No group has @-mentioned the bot yet"],
   ["bot 不在任何群 / 未配飞书", "The bot is in no group, or Feishu isn't configured"],
+  // ── 11-13 结构调整补齐(主题三态 / 健康条 / 群卡折叠 / 设置页目录)──
+  ["主题", "Theme"],
+  ["主题：跟随系统 · 点击切换到亮色", "Theme: follows the system · click for light"],
+  ["主题：亮色 · 点击切换到暗色", "Theme: light · click for dark"],
+  ["主题：暗色 · 点击切换到跟随系统", "Theme: dark · click to follow the system"],
+  ["展开或收起健康检查", "Show or hide the health checks"],
+  ["展开或收起本群设置", "Show or hide this group's settings"],
+  ["型号未选", "No model chosen"],
+  ["了解更多", "Learn more"],
+  ["每个群绑定一个项目目录，在这里选模型、执行模式和忙时跟进。", "Each group is bound to one project folder; choose its model, execution mode and follow-up behaviour here."],
+  ["在这里管理模型的端点、密钥与登录状态；型号与思考深度按群在「群·项目」里选。", "Manage each model's endpoint, key and sign-in status here; the model and thinking depth are chosen per group under Groups · Projects."],
+  ["本页内容", "On this page"],
 ];
 const I18N_EN_RX=[
+  [/^排队 (\d+)$/,(_,n)=>`${n} queued`],
+  [/^已排队，前面还有 (\d+) 条$/,(_,n)=>`Queued behind ${n} message${n==='1'?'':'s'}`],
   [/^上下文窗口超过当前模型目录上限 (\d+) token$/,(_,n)=>`Context window exceeds the current model catalog limit of ${n} tokens`],
   [/^Codex 当前窗口 (\d+(?:\.\d+)?)万 token$/,(_all,n)=>'Current Codex context '+(+n>=100?(+n/100).toFixed(2).replace(/\.00$/,'')+'M':(+n*10).toFixed(1).replace(/\.0$/,'')+'k')+' tokens'],
   [/^当前窗口 (\d+(?:\.\d+)?)万 token$/,(_all,n)=>'Active context '+(+n>=100?(+n/100).toFixed(2).replace(/\.00$/,'')+'M':(+n*10).toFixed(1).replace(/\.0$/,'')+'k')+' tokens'],
@@ -6252,6 +6710,7 @@ function startLive(){
     helloN=0;
     const es=new EventSource('/api/events?token='+encodeURIComponent(TOKEN));esRef=es;
     es.addEventListener('activity-update',ev=>{try{activityPanel.receive(JSON.parse(ev.data));}catch{}});
+    es.addEventListener('local-message',ev=>{try{lcReceive(JSON.parse(ev.data));}catch{}});
     // hello fires on first connect AND every native reconnect → replay the buffer to
     // recover whatever SSE dropped while we were away (SSE has no replay of its own);
     // 重连(非首连)还拉一次全量 state —— 断流期间的 live/conn 变化就地补齐,不整页重渲染。

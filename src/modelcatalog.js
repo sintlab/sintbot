@@ -28,6 +28,16 @@ const CLAUDE_ALIASES = ['opus', 'sonnet', 'haiku'] // 只在拿不到实时清�
 const CLAUDE_EFFORT = 'xhigh'
 const TTL = 600_000
 
+// DeepSeek exposes its Claude-compatible model as a per-project choice.
+function isDeepSeek(p = {}) {
+  try { return new URL(p.baseUrl || p.env?.ANTHROPIC_BASE_URL).hostname === 'api.deepseek.com' } catch { return false }
+}
+function deepSeekCatalog(p) {
+  if (!isDeepSeek(p)) return null
+  return { ok: true, models: [{ id: 'deepseek-flash[1m]', name: 'DeepSeek Flash (1M)' }],
+    aliases: [], efforts: CLAUDE_EFFORTS.slice(), recommended: { model: 'deepseek-flash[1m]', effort: 'max' }, source: 'builtin' }
+}
+
 function createModelCatalog({ codexstatus, claudemodels, claudeBin = 'claude', cacheFile = null, now = () => Date.now(), log = () => {} } = {}) {
   const live = { codex: null, claude: null } // { at, data }
   const inflight = { codex: null, claude: null }
@@ -96,6 +106,7 @@ function createModelCatalog({ codexstatus, claudemodels, claudeBin = 'claude', c
       cat.recommended.effort = recommendEffort(cat, star.model)
       return cat
     }
+    if (isDeepSeek(p)) return deepSeekCatalog(p)
     if (!p.baseUrl) {
       const d = await get('claude')
       if (d && Array.isArray(d.models) && d.models.length) {
@@ -119,4 +130,4 @@ function createModelCatalog({ codexstatus, claudemodels, claudeBin = 'claude', c
   return catalog
 }
 
-module.exports = { createModelCatalog, CLAUDE_EFFORTS, CODEX_LEGAL, CLAUDE_ALIASES }
+module.exports = { isDeepSeek, deepSeekCatalog, createModelCatalog, CLAUDE_EFFORTS, CODEX_LEGAL, CLAUDE_ALIASES }

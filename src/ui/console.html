@@ -1735,7 +1735,7 @@ const PRESETS={
   // vision:false = 预设里就把「纯文本模型」标好(glm-5.2 已真机确认拒图片)—— 此前控制台
   // 建的 provider 一律漏标,浏览器截图直达模型 400 崩整轮。
   '智谱 GLM (glm)':{name:'glm',baseUrl:'https://open.bigmodel.cn/api/anthropic',model:'glm-5.2[1m]',vision:false,env:{ANTHROPIC_DEFAULT_HAIKU_MODEL:'glm-4.5-air',CLAUDE_CODE_SUBAGENT_MODEL:'glm-4.5-air',CLAUDE_CODE_AUTO_COMPACT_WINDOW:'1000000',API_TIMEOUT_MS:'3000000'}},
-  'DeepSeek (deepseek)':{name:'deepseek',baseUrl:'https://api.deepseek.com/anthropic',model:'deepseek-v4-pro[1m]',env:{ANTHROPIC_DEFAULT_HAIKU_MODEL:'deepseek-v4-flash',CLAUDE_CODE_SUBAGENT_MODEL:'deepseek-v4-flash',CLAUDE_CODE_ATTRIBUTION_HEADER:'0'}},
+  'DeepSeek (deepseek)':{name:'deepseek',baseUrl:'https://api.deepseek.com/anthropic',model:'deepseek-flash[1m]',env:{ANTHROPIC_DEFAULT_OPUS_MODEL:'deepseek-flash[1m]',ANTHROPIC_DEFAULT_SONNET_MODEL:'deepseek-flash[1m]',ANTHROPIC_DEFAULT_HAIKU_MODEL:'deepseek-flash',CLAUDE_CODE_SUBAGENT_MODEL:'deepseek-flash',CLAUDE_CODE_EFFORT_LEVEL:'max',CLAUDE_CODE_AUTO_COMPACT_WINDOW:'786432'}},
   'MiniMax (minimax)':{name:'minimax',baseUrl:'https://api.minimaxi.com/anthropic',model:'MiniMax-M3[1m]',env:{API_TIMEOUT_MS:'3000000'}},
   // GPT 走 Codex CLI(本项目的 GPT 主路):**没有端点、没有 key** —— 认证是这台机器自己的
   // `codex login`(ChatGPT 订阅)。选中它面板会整个换形态(见 openProviderModal 的 codex 分支)。
@@ -1797,15 +1797,19 @@ function claudeChip(){
   if(!s.loggedIn) return '<span class="chip none" title="这台机器还没登录 Claude —— 跑 claude auth login">未登录</span>';
   return `<span class="chip set" title="claude auth status: ${esc(s.method||'')} · ${esc(s.email||'')}${s.org?' · '+esc(s.org):''}">订阅登录 ${IC.check}${s.plan?' · '+esc(s.plan):''}</span>`;
 }
+function isDeepSeekCard(p){try{return new URL(p?.baseUrl).hostname==='api.deepseek.com';}catch{return false;}}
 function providerGroupCount(name){return (S.groups||[]).filter(g=>!g.paused&&(g.effectiveProvider||g.provider||S.defaultProvider)===name).length;}
 function renderProviders(){
-  const cards=S.providers.filter(p=>showAll||(!p.hidden&&p.configured)).map(p=>{
+  // A visible preset does not write configuration until the user saves it.
+  const modelCards=[...S.providers];
+  if(!modelCards.some(p=>p.name==='deepseek'))modelCards.push({...PRESETS['DeepSeek (deepseek)'],preset:true,keyStatus:'none',configured:false});
+  const cards=modelCards.filter(p=>showAll||(!p.hidden&&(p.configured||p.name==='deepseek'))).map(p=>{
     const cs=p.runner==='codex'?codexStatus[p.name]:null;
     const chip=p.runner==='codex'?(cs&&cs.loggedIn&&cs.verified?`<span class="chip set" title="${esc(cs.text||'已验证')}">订阅登录 ${IC.check}</span>`:cs&&cs.dead?`<span class="chip none" title="${esc(cs.text||'')}">登录态已失效</span>`:'<span class="chip" title="点下方「验证登录」确认 codex 订阅登录态 + 拉取额度">订阅登录·未验证</span>'):p.loggedIn?claudeChip():`<span class="chip ${p.keyStatus}">${p.keyStatus==='set'?'key 已设':p.keyStatus==='env'?'env:'+esc(p.keyRef):'无 key'}</span>`;
-    return `<div class="card pcard${p.hidden?' is-hidden':(!p.configured?' is-unconfig':'')}" data-prov="${esc(p.name)}">
-      <div class="ph"><div class="pn"><span class="drag" draggable="true" title="拖动排序">${IC.grip}</span>${esc(p.name)}${p.runner==='codex'?'<span class="cli-tag codex" title="GPT 经 Codex CLI 后端 · 订阅登录">Codex CLI</span>':'<span class="cli-tag claude" title="经 Claude Code CLI · 模型大脑按 env 切换">Claude Code CLI</span>'}</div>
+    return `<div class="card pcard${p.preset?' is-preset':''}${p.hidden?' is-hidden':(!p.configured?' is-unconfig':'')}" data-prov="${esc(p.name)}">
+      <div class="ph"><div class="pn">${p.preset?'':`<span class="drag" draggable="true" title="拖动排序">${IC.grip}</span>`}${esc(p.name)}${p.runner==='codex'?'<span class="cli-tag codex" title="GPT 经 Codex CLI 后端 · 订阅登录">Codex CLI</span>':'<span class="cli-tag claude" title="经 Claude Code CLI · 模型大脑按 env 切换">Claude Code CLI</span>'}</div>
         <div class="inline" style="gap:8px">${chip}<button class="iconbtn cfg" data-act="edit" title="配置模型">${IC.settings}</button></div></div>
-      ${p.baseUrl?`<div class="kv"><span class="kk">型号</span><span class="vv mono" title="${esc(p.model||'')}">${esc(p.model?modelName(p.model):'—')}</span></div>
+      ${p.baseUrl&&!isDeepSeekCard(p)?`<div class="kv"><span class="kk">型号</span><span class="vv mono" title="${esc(p.model||'')}">${esc(p.model?(modelName(p.model)||p.model):'—')}</span></div>
       <div class="kv"><span class="kk">${p.contextWindow?.source==='official'?'模型上限':'当前窗口'}</span><span class="vv" title="${esc(providerWindowText(p,true))} · 只读，不会改变模型容量">${esc(providerWindowText(p))}</span></div>`:`<div class="kv"><span class="kk">型号与深度</span><span class="vv" title="型号与思考深度按群在「群·项目」里选">按群选 · ${providerGroupCount(p.name)} 个群在用</span></div>`}
       ${p.runner==='codex'?`<div class="kv"><span class="kk">窗口设置</span><span class="vv">${p.contextWindowTokens?esc(fmtContextTokens(p.contextWindowTokens)):'执行器默认'}</span></div>`:''}
       <div class="kv"><span class="kk">${p.runner==='codex'?'压缩阈值':'压缩窗口'}</span><span class="vv" title="${esc(providerCompactText(p))} · 逐模型设置 · ${p.runner==='codex'?'Codex 可能按当前窗口提前压缩':'Claude Code 在压缩窗口满前触发，设置值受模型窗口限制'}">${esc(providerCompactText(p))}</span></div>
@@ -1818,7 +1822,7 @@ function renderProviders(){
       <div class="reply-slot"></div>
     </div>`;
   }).join('');
-  const extra=S.providers.filter(p=>p.hidden||!p.configured).length;
+  const extra=S.providers.filter(p=>p.hidden||(!p.configured&&p.name!=='deepseek')).length;
   const provLead=runtimeAllows('POST','/api/providers/add')?RUNTIME_UI_TEXT.providers:RUNTIME_UI_TEXT.providersView;
   const provLeadOpen=!!($('#providers .lead-more')||{}).open;
   const toggle=extra?`<button class="btn ghost" id="showAll">${showAll?'只看已配置':`显示全部 (${extra})`}</button>`:'';
@@ -1864,12 +1868,12 @@ function renderProviders(){
   $('#styleNew').onclick=()=>openStyleModal(null);
   if($('#showAll'))$('#showAll').onclick=()=>{showAll=!showAll;renderProviders();};
   $('#addModel').onclick=()=>openProviderModal(null);
-  if(runtimeAllows('POST','/api/providers/order'))makeSortable($('#pgrid'),{item:'.pcard',key:c=>c.dataset.prov,save:o=>api('/api/providers/order','POST',{order:o})});
+  if(runtimeAllows('POST','/api/providers/order'))makeSortable($('#pgrid'),{item:'.pcard:not(.is-preset)',key:c=>c.dataset.prov,save:o=>api('/api/providers/order','POST',{order:o})});
   $$('#pgrid .pcard').forEach(card=>{
-    const name=card.dataset.prov, slot=$('.reply-slot',card);
+    const name=card.dataset.prov, slot=$('.reply-slot',card), preset=card.classList.contains('is-preset');
     card.addEventListener('click',async e=>{
       const b=e.target.closest('button[data-act]'); if(!b)return;
-      if(b.dataset.act==='edit'){openProviderModal(name);return;}
+      if(b.dataset.act==='edit'){openProviderModal(preset?null:name,preset?{preset:'DeepSeek (deepseek)'}:{});return;}
       if(b.dataset.act==='usage'){
         const cx=b.dataset.cx==='1', row=b.closest('.kv'), vv=row&&$('.vv',row);
         b.disabled=true;const old=b.innerHTML;b.innerHTML='<span class="spin"></span>';
@@ -1889,6 +1893,7 @@ function renderProviders(){
         return;
       }
       if(b.dataset.act==='test'){
+        if(preset){slot.innerHTML='<div class="reply err">'+esc(trText('这张模型卡还没填 API Key'))+'</div>';return;}
         b.disabled=true;const old=b.innerHTML;b.innerHTML='<span class="spin"></span>测试中';slot.innerHTML='';
         try{const r=await api('/api/test','POST',{provider:name});
           slot.innerHTML=`<div class="reply ${r.ok?'':'err'}">${r.ok?esc(r.reply)+`\n\n<span class='faint'>— ${esc(r.model)} · ${r.ms}ms</span>`:IC.x+' '+esc(r.error)}</div>`;
@@ -1959,15 +1964,16 @@ function openProviderModal(name,opts){
   const codexNote=isCodex?'<div class="hint" style="margin-bottom:12px">使用本机 ChatGPT 订阅登录，额度与本机 Codex 共享。</div>':'';
   // Durable hosts: model and thinking depth are chosen per group (group card / /model);
   // only a third-party endpoint keeps its model here as connection configuration.
-  const perGroup=!!S.runtimeCapabilities;
-  const showModelSec=!edit||!perGroup||(!isCodex&&!isClaudeLogin);
+  const isDeepSeek=(edit&&isDeepSeekCard(p))||(!edit&&opts.preset==='DeepSeek (deepseek)');
+  const perGroup=!!S.runtimeCapabilities||isDeepSeek;
+  const showModelSec=!edit||!perGroup||(!isCodex&&!isClaudeLogin&&!isDeepSeek);
   $('#modal').innerHTML=`<h3>${edit?'配置 '+esc(name):'添加模型'}</h3>
     ${preset}
     ${codexNote}
     ${showModelSec?`<h4 class="sec">${perGroup?'名称与型号':'型号与推理'}</h4>`:''}
     ${edit?'':'<div class="field"><label class="f" for="amName">名称</label><input id="amName" placeholder="如 glm / my-model"/></div>'}
-    ${perGroup?`<div class="hint" style="margin-bottom:12px">型号与思考深度按群在「群·项目」里选${(isCodex||isClaudeLogin)?'':'；这个端点的型号在下面填，各群共用'}。</div>`:''}
-    ${isCodex&&perGroup?'':isCodex?`<div class="field"><label class="f">模型 model</label>
+    ${perGroup?`<div class="hint" style="margin-bottom:12px">型号与思考深度按群在「群·项目」里选${(isCodex||isClaudeLogin||isDeepSeek)?'':'；这个端点的型号在下面填，各群共用'}。</div>`:''}
+    ${isDeepSeek?'':isCodex&&perGroup?'':isCodex?`<div class="field"><label class="f">模型 model</label>
       <select id="amModelSel"><option value="${edit?esc(p.model):''}" selected>${edit&&p.model?esc(p.model):'(未设 — 用 codex 默认)'}</option></select>
       <input id="amModel" value="${edit?esc(p.model):''}" placeholder="如 gpt-5.6-sol" style="display:none;margin-top:8px"/>
       <div class="hint" id="amModelSrc" style="margin-top:4px">加载模型列表…</div></div>`
@@ -2019,7 +2025,7 @@ function openProviderModal(name,opts){
   if(!edit){const apply=()=>{const key=$('#amPreset').value,pr=PRESETS[key]||{};
     // ⚠ codex 形态是**结构性**的(没有端点/key/思考深度,多出模型下拉与订阅额度),
     //   靠显隐凑不出来 ⇒ 切换时原地重开一次面板,把选中的预设带过去。
-    if(!!pr.runner!==!!isCodex){openProviderModal(null,{codex:pr.runner==='codex',preset:key});return;}
+    if(!!pr.runner!==!!isCodex||(key==='DeepSeek (deepseek)')!==!!isDeepSeek){openProviderModal(null,{codex:pr.runner==='codex',preset:key});return;}
     const $b=$('#amBase'),$m=$('#amModel');
     if(pr.name)$('#amName').value=pr.name;if(pr.baseUrl&&$b){$b.value=pr.baseUrl;if($m)$m.value=pr.model||'';}
     // 订阅登录预设:端点/key 清空并隐藏 —— 留着只会让人以为"还得填点什么"。
@@ -2027,6 +2033,7 @@ function openProviderModal(name,opts){
     if(pr.login){if($b)$b.value='';if($m)$m.value='';const kf=$('#amKey');if(kf)kf.value='';}
     for(const [el,hide] of [[$('#amBase'),!!pr.login],[$('#amKey'),!!pr.login]]){const f=el&&el.closest('.field');if(f)f.style.display=hide?'none':'';}
     const vb=$('#amVision');if(vb){vb.checked=pr.vision===false;const w=vb.closest('.inline');if(w)w.style.display=pr.login?'none':'';const h=w&&w.nextElementSibling;if(h&&h.classList.contains('hint'))h.style.display=pr.login?'none':'';}
+    if($('#amEff'))$('#amEff').value=pr.env?.CLAUDE_CODE_EFFORT_LEVEL||'';
     $('#amPreset').dataset.env=JSON.stringify(pr.env||{});};$('#amPreset').onchange=apply;apply();}
   // Claude 订阅登录:先探登录态,登录了才画模型下拉 —— 没登录时**一个型号都不列**
   // (列了也没意义:没登录任何型号都跑不起来,还会让人以为只差选个模型)。
@@ -2098,7 +2105,7 @@ function openProviderModal(name,opts){
     const hasModelCtl=!!($('#amModelSel')||$('#amModel'));
     const selModel=(isCodex||isClaudeLogin)
       ?(hasModelCtl?(()=>{const sv=($('#amModelSel')||{}).value;return (sv==null||sv==='__custom__')?(($('#amModel')||{}).value||'').trim():sv;})():null)
-      :$('#amModel').value.trim();
+      :($('#amModel')?$('#amModel').value.trim():null);
     if($('#amCompMode').value==='custom'&&!$('#amComp').value.trim()){toast('请填写压缩值','err');return;}
     const b={name:nm,autocompactTokens:$('#amCompMode').value==='default'?0:Number($('#amComp').value)};
     if(!Number.isInteger(b.autocompactTokens)||b.autocompactTokens<0||($('#amCompMode').value==='custom'&&(b.autocompactTokens<100000||b.autocompactTokens>1000000))){toast('压缩阈值须为 0 或 10万–100万 token','err');return;}
@@ -2113,7 +2120,7 @@ function openProviderModal(name,opts){
       // 订阅登录:端点/key/识图三项面板里就没有 ⇒ 不回传(回传空串会把已有值清掉)。
       // 型号可以被清空成「跟随 Claude Code 默认」,那要显式 modelClear —— 但只在控件真在时才发。
       if(!perGroup){b.effort=$('#amEff').value; if(hasModelCtl&&!selModel)b.modelClear=true;}
-    } else {b.model=selModel;b.baseUrl=$('#amBase').value.trim();b.apiKey=$('#amKey').value.trim();if($('#amEff'))b.effort=$('#amEff').value;b.vision=!$('#amVision').checked;}
+    } else {if(selModel!==null)b.model=selModel;if(isDeepSeek&&!edit)b.model='deepseek-flash[1m]';b.baseUrl=$('#amBase').value.trim();b.apiKey=$('#amKey').value.trim();if($('#amEff'))b.effort=$('#amEff').value;b.vision=!$('#amVision').checked;}
     if(!edit)b.env=JSON.parse($('#amPreset').dataset.env||'{}');
     if(edit)b.hidden=$('#amHide').checked;
     try{const r=await api('/api/providers/add','POST',b);S=r;
@@ -2855,16 +2862,17 @@ function groupBrainRows(g){
   if(!cat)loadModelOpts(name);
   const sel='style="width:auto;min-width:110px;max-width:100%"';
   const unset='<span style="color:var(--fail)">未选</span>';
-  const provs=S.providers.filter(pp=>!pp.hidden&&pp.configured);
+  // Selection is configuration, not execution: missing keys are blocked by the runner.
+  const provs=S.providers.filter(pp=>!pp.hidden);
   if(!provs.some(pp=>pp.name===name))provs.unshift({name});
   const backend=`<select class="gprov" data-g="${esc(g.chatId)}" ${sel}>${provs.map(pp=>`<option value="${esc(pp.name)}" ${pp.name===name?'selected':''}>${esc(pp.name)}</option>`).join('')}</select>`;
   let model;
-  if(!cat)model=`<span class="vv">${b.model?esc(modelName(b.model)):unset} <span class="faint">· 加载清单…</span></span>`;
-  else if(cat.models===null)model=`<span class="vv" title="这个端点的型号在「模型」页设置,各群共用">${b.model?esc(modelName(b.model)):'—'} <span class="faint">· 在「模型」页改</span></span>`;
+  if(!cat)model=`<span class="vv">${b.model?esc(modelName(b.model)||b.model):unset} <span class="faint">· 加载清单…</span></span>`;
+  else if(cat.models===null)model=`<span class="vv" title="这个端点的型号在「模型」页设置,各群共用">${b.model?esc(modelName(b.model)||b.model):'—'} <span class="faint">· 在「模型」页改</span></span>`;
   else{
     const list=cat.models||[];
     const opts=list.map(m=>`<option value="${esc(m.id)}" ${m.id===b.model?'selected':''}>${esc(m.name||modelName(m.id))}${cat.recommended&&cat.recommended.model===m.id?' ★':''}</option>`);
-    if(b.model&&!list.some(m=>m.id===b.model))opts.unshift(`<option value="${esc(b.model)}" selected>${esc(modelName(b.model))}</option>`);
+    if(b.model&&!list.some(m=>m.id===b.model))opts.unshift(`<option value="${esc(b.model)}" selected>${esc(modelName(b.model)||b.model)}</option>`);
     if(!b.model)opts.unshift('<option value="" selected disabled>未选</option>');
     opts.push('<option value="__custom__">自定义…</option>');
     model=`<span class="vv inline" style="gap:6px;flex-wrap:wrap;min-width:0"><select class="gmodel" data-g="${esc(g.chatId)}" ${sel}>${opts.join('')}</select>
@@ -5286,6 +5294,7 @@ const I18N_EN=[
   ["删除","Delete"],
   ["风格库是空的","The style library is empty"],
   ["内置预设","Built-in presets"],
+  ["这张模型卡还没填 API Key","This model card has no API Key yet"],
   ["「","\""],
   ["新建风格」配一套自己的(比如把公司品牌色配成一款)· 已经在某个项目里打磨好的那份,可在「群·项目」页那个群的「设计风格」行收录进来","New style\" creates one of your own (e.g. your company brand color as a style) · a style already polished in a project can be collected from the \"Design style\" row of that group on the Groups · Projects page"],
   ["已移除 · 同名的内置风格重新可用","Removed · the built-in style with the same identifier is available again"],

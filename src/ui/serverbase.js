@@ -21,6 +21,8 @@ const { normalizeTz, isValidTz, tzOffsetMin, tzParts } = require('../core/time')
 const { runTurn, probeVersion, isClosedRunnerResult, isClosedRunnerError } = require('../agent/runner')
 const codexstatus = require('../agent/codexstatus') // codex 订阅登录态 + 用量(卡片「验证登录」)
 const { codexCatalogWindows, windowForProvider } = require('../agent/modelwindows')
+const { isDeepSeek, deepSeekCatalog } = require('../modelcatalog')
+const { assertCardCredentials } = require('../agent/claudecode')
 const claudestatus = require('../agent/claudestatus') // Claude 订阅登录态(卡片「检测登录」· doctor 同源)
 const claudemodels = require('../agent/claudemodels') // Claude 模型候选(仅登录后给)
 const claudeusage = require('../agent/claudeusage') // Claude 订阅额度(oauth/usage,cc-hud 同源;v0.11.3)
@@ -328,7 +330,8 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
   // (src/groupbrain.js). Only a backend change resets the session.
   const catalogFor = async (name, prov) => {
     const c = runtimePolicy && runtimePolicy.modelCatalog
-    if (!c || !prov) return null
+    if (!prov) return null
+    if (!c) return deepSeekCatalog(prov)
     try { return await c(name, prov) } catch { return null }
   }
   // The target backend of a change as the file says now ({} when unknown).
@@ -357,12 +360,12 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
     const switching = target !== home
     const tBrain = brainMod.groupBrain(g, target, tProv, { defaultProvider: defName })
     let model = change.model, effort = change.effort
-    if (model !== undefined && model !== '' && tProv.baseUrl) return { status: 400, body: { error: '这个模型的型号是连接设置,请在「模型」页修改' } }
+    if (model !== undefined && model !== '' && tProv.baseUrl && !isDeepSeek(tProv)) return { status: 400, body: { error: '这个模型的型号是连接设置,请在「模型」页修改' } }
     if (model !== undefined && model !== '' && !brainMod.isModel(model)) return { status: 400, body: { error: '型号格式不对' } }
     if (effort !== undefined && effort !== '' && !brainMod.isEffort(effort)) return { status: 400, body: { error: '思考深度格式不对' } }
     if (model === tBrain.model) model = undefined
     if (effort === tBrain.effort && model === undefined) effort = undefined
-    const f = fillPicks({ switching, model, effort, currentModel: tBrain.model, currentEffort: tBrain.effort, third: !!tProv.baseUrl, cat })
+    const f = fillPicks({ switching, model, effort, currentModel: tBrain.model, currentEffort: tBrain.effort, third: !!tProv.baseUrl && !isDeepSeek(tProv), cat })
     model = f.model; effort = f.effort
     const nextModel = model === undefined ? tBrain.model : model
     if (effort) {
@@ -790,7 +793,9 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
     const provider = cfg.providers[name]
     if (!provider) return { ok: false, error: `unknown provider '${name}'` }
     if (provider.hidden) return { ok: false, error: '模型已隐藏，不能试运行' }
-    if (provider.baseUrl && !provider.apiKey) return { ok: false, error: 'no apiKey' }
+    if (provider.runner !== 'codex') {
+      try { assertCardCredentials(provider) } catch (error) { return { ok: false, error: error.message } }
+    }
     const ac = new AbortController()
     let lease, closed = false
     try { lease = runtimePolicy ? await runtimePolicy.beginTrial(ac) : null }
@@ -1937,7 +1942,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
             brainMod.migrateLegacyModel(next, defName)
             const b = brainMod.groupBrain(next, tName, tProv, { defaultProvider: defName })
             const f = fillPicks({ switching: true, currentModel: b.model, currentEffort: b.effort,
-              third: !!tProv.baseUrl, cat: tName === preName ? preCat : null })
+              third: !!tProv.baseUrl && !isDeepSeek(tProv), cat: tName === preName ? preCat : null })
             if (f.model !== undefined || f.effort !== undefined) applyBrainChange(raw, chatId, { model: f.model, effort: f.effort })
           }
         }

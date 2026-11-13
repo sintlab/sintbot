@@ -69,7 +69,11 @@ function buildEnv(provider = {}, baseUrlOverride, extraEnv, effort = '') {
   delete env.ANTHROPIC_MODEL
 
   const base = baseUrlOverride || provider.baseUrl
-  if (base) env.ANTHROPIC_BASE_URL = base
+  if (base) {
+    env.ANTHROPIC_BASE_URL = base
+    // Third-party cards must never borrow the host's official API credential.
+    delete env.ANTHROPIC_API_KEY
+  }
   if (provider.apiKey) {
     // Use the auth token (Bearer) against the custom base; blank the api key so
     // the CLI doesn't try to validate it against api.anthropic.com.
@@ -82,6 +86,7 @@ function buildEnv(provider = {}, baseUrlOverride, extraEnv, effort = '') {
   // the child from thinking it's a nested session.
   delete env.CLAUDECODE
 
+  if (provider.env?.ANTHROPIC_BASE_URL) delete env.ANTHROPIC_API_KEY
   if (provider.env) Object.assign(env, provider.env)
   // The group's own thinking depth wins over a card-level value.
   if (effort) env.CLAUDE_CODE_EFFORT_LEVEL = effort
@@ -89,6 +94,21 @@ function buildEnv(provider = {}, baseUrlOverride, extraEnv, effort = '') {
   // Applied last but namespaced (SBOT_*), so it never collides with provider ANTHROPIC_* env.
   if (extraEnv) Object.assign(env, extraEnv)
   return env
+}
+
+// Card-local authentication preflight; do not start even capability probes.
+function assertCardCredentials(provider = {}) {
+  if (provider.baseUrl || provider.env?.ANTHROPIC_BASE_URL) {
+    const env = buildEnv(provider)
+    const usable = value => typeof value === 'string' && !!value.trim()
+      && !/^(env:|<|\$\{|your[-_ ]|sk[-_]?(?:x{3,}|your)|(?:api[-_ ]?)?key[-_ ]?here)/i.test(value.trim())
+      && !/^(?:placeholder|changeme|undefined|null)$/i.test(value.trim())
+    if (!usable(env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY)) {
+      const error = new Error('这张模型卡还没填 API Key')
+      error.code = 'MODEL_API_KEY_MISSING'
+      throw closedError(error)
+    }
+  }
 }
 
 // Map a raw `claude` stream-json line to a normalized AgentEvent (interfaces.js).
@@ -175,6 +195,8 @@ function runTurn({
   return new Promise((resolve, reject) => {
     if (!prompt) return reject(new Error('runTurn: prompt required'))
     if (onDurableEvent !== undefined && typeof onDurableEvent !== 'function') return reject(new TypeError('onDurableEvent must be a function'))
+
+    try { assertCardCredentials(provider) } catch (error) { return reject(error) }
 
     // CLI 能力探测必须先于 spawn(见 supportsFlag)。结果按 bin 缓存 ⇒ 只有进程内第一轮真探一次
     // (`--help` 毫秒级);不需要压缩的群连探都不探。
@@ -610,4 +632,4 @@ function compactSession(opts = {}) {
   return runTurn({ ...rest, requireCloseProof: true, prompt: '/compact ' + keep })
 }
 
-module.exports = { runTurn, compactSession, isSubscription, isClosedRunnerResult, isClosedRunnerError, buildEnv, normalizeEvent, probeVersion, supportsFlag, BASE_SKILL_ALLOWS }
+module.exports = { assertCardCredentials, runTurn, compactSession, isSubscription, isClosedRunnerResult, isClosedRunnerError, buildEnv, normalizeEvent, probeVersion, supportsFlag, BASE_SKILL_ALLOWS }

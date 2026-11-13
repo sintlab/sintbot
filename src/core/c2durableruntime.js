@@ -1596,9 +1596,9 @@ class C2DurableRuntime {
       }
       if (descriptor.domain === 'outbound') {
         if (id === cleanupEffectId && descriptor.type === 'message.delete') continue
-        if (descriptor.type === 'message.delete') {
-          throw new Error('C2 card cleanup has unexpected delete effect')
-        }
+        // Relocation has already deleted older cards under this same receipt.
+        // Those ACKed operations remain part of the prior card history; only
+        // the exact current cleanup effect is excluded from the count above.
         prior.push(id)
       }
     }
@@ -1610,9 +1610,15 @@ class C2DurableRuntime {
         !Number.isSafeInteger(turnToken) || turnToken <= 0 ||
         target?.chatId !== chatId) throw new TypeError('C2 card cleanup identity invalid')
     const cardTargetDigestValue = cardTargetDigest(target)
+    const deleteKey = target.deleteOperationId ?? `${receiptId}:message.delete`
+    if (deleteKey !== `${receiptId}:message.delete` &&
+        !(typeof deleteKey === 'string' &&
+          new RegExp(`^${receiptId}:followup:[0-9a-f]{32}:message\\.delete$`).test(deleteKey))) {
+      throw new TypeError('C2 card cleanup delete identity invalid')
+    }
     const { operationId: deleteOperationId, eventId } = cardOperationIdentity({
       receiptId, turnToken, generation,
-      operation: { kind: 'message.delete', operationId: `${receiptId}:message.delete`,
+      operation: { kind: 'message.delete', operationId: deleteKey,
         chatId, cardId: target.cardId, msgId: target.msgId, invoke: () => {} } })
     const cleanupEffectId = `sbot-c2-effect-v1:${Buffer.byteLength(eventId)}:${eventId}:0`
     return { receiptId, turnToken, runnerGeneration: generation,
@@ -1647,6 +1653,7 @@ class C2DurableRuntime {
           !this.#journal.hasEvent(`sbot-c2-session-close-v1:${receiptId}:${generation}`) ||
           !this.#journal.lookupRunnerClosed(`sbot-c2-runner-closed-v1:${receiptId}:${generation}`) ||
           cardOperations <= 0 ||
+          before.effects.has(identity.cleanupEffectId) ||
           before.state.lanes.cardCleanup?.[chatId] !== undefined ||
           !isDeepStrictEqual(this.#coordinator.snapshot(), before.state)) {
         throw new Error('C2 card cleanup intent lacks closed turn and ACKed card')

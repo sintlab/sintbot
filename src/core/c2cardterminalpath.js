@@ -52,6 +52,7 @@ function prepareCardTerminalPath({ runtime, payloadHandles, platform, replyCtx,
     return Object.freeze({ ...anchor.replyCtx })
   }
   let activeAnchorCtx = cardAnchor ? landedAnchor(cardAnchor) : targetCtx
+  let activeOperationKey = receiptId
   // Registration is durable before open() can expose any runner callback.
   const terminal = prepareTerminalEffectBridge({ runtime, payloadHandles,
     receiptId, chatId, turnToken, generation, verifyGeneration,
@@ -148,6 +149,7 @@ function prepareCardTerminalPath({ runtime, payloadHandles, platform, replyCtx,
         if (await fresh.flush() !== true) throw new Error('C2 moved card text unconfirmed')
         if (await card.recall() !== true) throw new Error('C2 old card delete unconfirmed')
         card = fresh
+        activeOperationKey = `${receiptId}:followup:${anchor.receiptId}`
         activeAnchorCtx = nextCtx
         phase = 'open'
         return true
@@ -168,7 +170,7 @@ function prepareCardTerminalPath({ runtime, payloadHandles, platform, replyCtx,
       if (target?.chatId !== chatId || !target.cardId || !target.msgId) {
         throw new Error('C2 cancellation card target differs from turn')
       }
-      return target
+      return Object.freeze({ ...target, deleteOperationId: `${activeOperationKey}:message.delete` })
     },
     async recallForCancellation() {
       if (phase === 'plain' && !card) {

@@ -237,6 +237,21 @@ function describeLogin(s, file = null) {
 
 // model/list 响应 → 精简模型清单(过滤 hidden;efforts 兼容字符串/对象两形)。
 // 空/坏返回 → null(上游回退内置预设)。协议 v2,codex 0.144.3 真机验证(2026-07)。
+// Fast tier for one model: model/list reports serviceTiers with id 'priority'
+// (display name "Fast"; both `/model fast` and config service_tier="fast" are
+// normalised to it by the CLI, verified on 0.162 / 0.166) ⇒ [{ id:'fast', desc }],
+// desc being the official text ("2x speed, increased usage"). Older servers only
+// give the deprecated additionalSpeedTiers ⇒ accepted without a description.
+// Other tiers (flex / ultrafast) are not collected: the account cannot use them
+// and the CLI silently drops them.
+function mapSpeeds(x) {
+  const tiers = Array.isArray(x && x.serviceTiers) ? x.serviceTiers : []
+  const fast = tiers.find((t) => t && (t.id === 'priority' || t.id === 'fast'))
+  if (fast) return [{ id: 'fast', ...(fast.description ? { desc: String(fast.description) } : {}) }]
+  if (!tiers.length && Array.isArray(x && x.additionalSpeedTiers) && x.additionalSpeedTiers.includes('fast')) return [{ id: 'fast' }]
+  return []
+}
+
 function mapModels(result) {
   const data = (result && result.data) || []
   const out = []
@@ -251,6 +266,7 @@ function mapModels(result) {
         ? x.supportedReasoningEfforts.map((e) => (e && e.reasoningEffort) || e).filter((e) => typeof e === 'string')
         : [],
       defEffort: x.defaultReasoningEffort || '',
+      ...(mapSpeeds(x).length ? { speeds: mapSpeeds(x) } : {}), // no Fast tier ⇒ no key (list shape unchanged)
     })
   }
   return out.length ? out : null

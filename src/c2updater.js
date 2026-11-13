@@ -70,6 +70,25 @@ function detectRunMode({ privateBuild, entry, env = process.env, pid = process.p
   }
 }
 
+// launchd refuses to load a disabled job ("Bootstrap failed: 5"). The switch
+// unloads and reloads the job, and its rollback reloads it the same way, so on
+// a disabled job an upgrade would leave the service stopped. A job that is
+// running while disabled is still found here; an unreadable list is not
+// treated as disabled, which keeps the earlier behaviour.
+function parseDisabled(printed, label) {
+  if (typeof printed !== 'string' || typeof label !== 'string' || !LABEL.test(label)) return false
+  const quoted = label.replace(/[.\-]/g, '\\$&')
+  const match = new RegExp(`^\\s*"${quoted}"\\s*=>\\s*(\\S+)\\s*$`, 'm').exec(printed)
+  return !!match && (match[1] === 'disabled' || match[1] === 'true')
+}
+function jobDisabled({ label, uid = process.getuid?.(), exec = execFileSync } = {}) {
+  try {
+    return parseDisabled(exec('/bin/launchctl', ['print-disabled', `gui/${uid}`],
+      { encoding: 'utf8', timeout: 10_000 }), label)
+  } catch { return false }
+}
+const JOB_DISABLED = '后台服务已在系统里被停用；升级要重新载入它，现在升级会让服务停下。请先在系统设置的登录项里重新允许它，再升级'
+
 function registriesFromEnv(env = process.env) {
   const custom = env.SINTBOT_UPDATE_REGISTRY
   if (custom === undefined || custom === '') return REGISTRIES
@@ -161,6 +180,7 @@ function createC2Updater({ currentVersion, runMode, stateFile, dataDir, configPa
   registries = REGISTRIES, fetchImpl = globalThis.fetch, releasesRoot = defaultReleasesRoot(),
   installVersion = defaultInstallVersion, verifyInstall = defaultVerifyInstall,
   spawnSwitch = defaultSpawnSwitch, hashJournals = journalHashes, isAlive = alive,
+  isJobDisabled = label => jobDisabled({ label }),
   now = Date.now, waitMs = 5_000, queueTimeoutMs = QUEUE_TIMEOUT_MS,
   checkIntervalMs = CHECK_INTERVAL_MS, autoCheck = true, setAnnouncementBaseline = null,
   log = () => {} } = {}) {
@@ -267,6 +287,7 @@ function createC2Updater({ currentVersion, runMode, stateFile, dataDir, configPa
     }
     if (data.job && ACTIVE.includes(data.job.state)) throw new Error('已有升级正在进行')
     if (gate().includes('held')) throw new Error('有暂停的群，先处理后再升级')
+    if (isJobDisabled(runMode.label)) throw new Error(JOB_DISABLED)
     data.job = { id: `${now()}-${Math.random().toString(36).slice(2, 8)}`, state: 'queued',
       from: current, to: v, registry: data.registry || registries[0].registry,
       announce: announce !== false,
@@ -317,6 +338,8 @@ function createC2Updater({ currentVersion, runMode, stateFile, dataDir, configPa
     // Close admission first, then prove idleness once more: nothing can start
     // between this check and the switch process stopping the service.
     if (gate().length) { schedule(); return status() }
+    // The job can be disabled while the upgrade waited or installed.
+    if (isJobDisabled(runMode.label)) return fail(JOB_DISABLED)
     beginMaintenance()
     const settled = gate()
     if (settled.length) { endMaintenance(); schedule(); return status() }
@@ -382,5 +405,5 @@ function createC2UpgradeGate({ isRunning, service, capacity, assertJournalScope 
   }
 }
 
-module.exports = { createC2Updater, createC2UpgradeGate, detectRunMode, registriesFromEnv, defaultReleasesRoot,
+module.exports = { createC2Updater, createC2UpgradeGate, detectRunMode, parseDisabled, jobDisabled, registriesFromEnv, defaultReleasesRoot,
   entryOf, journalHashes, readPlist, defaultVerifyInstall, REGISTRIES, PACKAGE }

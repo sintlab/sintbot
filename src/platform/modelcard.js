@@ -27,14 +27,15 @@ function buttonRow(buttons) {
  * 「先选、再确认」(点一下就生效容易点错):
  *   点后端 / 选型号 / 点深度只改**卡上的草稿**(卡片重画选中状态,什么都没生效);草稿与当前不同时出一行「将改为 … —— 会不会开新对话」,
  *   「确认更新」一次生效(只写一次、最多开一次新对话、审计一条),卡片收成一行回执;「关闭」什么都不改,卡片原地变成灰色「已关闭」。
- *   草稿随每个回调值带回去(无状态,守护进程重启也不丢):{ a:'mc', f:'p'|'m'|'e'|'ok'|'x', v?, d:{p,m,e}, t }
- *   —— p 后端 · m 型号 · e 深度('' = 跟随默认);下拉的选中值在回调的 action.option 里。
+ *   草稿随每个回调值带回去(无状态,守护进程重启也不丢):{ a:'mc', f:'p'|'m'|'e'|'s'|'ok'|'x', v?, d:{p,m,e,s?}, t }
+ *   —— p 后端 · m 型号 · e 深度('' = 跟随默认)· s 速度('fast' | 'std',只在有速度这一行时带);下拉的选中值在回调的 action.option 里。
  * @param s {
  *   mode: 'edit' | 'receipt' | 'closed' | 'expired',  current: 'claude · claude-opus-5 · xhigh'(当前生效的)
  *   failover: '', quota: '',                          —— 额度临时切换那一句 / 缓存额度(有才给)
  *   draft: { p, m, e },                               —— edit:卡上正在选的
  *   backends: [{ name, selected }], model: { options: [{ value, label }], selected } | null(null = 这家型号到后台改),
  *   efforts: [{ value, label, selected }],            —— label 里由调用方标「(默认)」
+ *   speeds: [{ value:'std'|'fast', label, selected }] | null, speedNote: ''  —— 这个型号有 Fast 档才有;null / 没给 ⇒ 不出这一行,卡与此前逐字节相同
  *   preview: { to, note } | null,                     —— 草稿与当前不同才有;null ⇒「确认更新」灰着
  *   receipt: { line, before },                        —— receipt:谁改成了什么 · 之前是什么
  *   issuedAt: 发卡 / 上次操作的时刻(写进回调值,10 分钟过期)
@@ -86,6 +87,12 @@ function buildModelCard(s, { redact } = {}) {
     const effortBtns = buttonRow((s.efforts || []).map((e) => button(e.label || e.value, { selected: e.selected, value: e.selected ? null : cb('e', e.value || DEFAULT_VALUE) })))
     // 标签在上、控件在下(手机上五个深度按钮一排放得下)
     for (const [label, ctl] of [['后端', backendBtns], ['型号', modelCtl], ['思考深度', effortBtns]]) els.push(grey(label), ctl)
+    // 速度:这个型号有 Fast 档才出;代价写在按钮下面的灰字里(点之前就看得到)
+    const hasSpeed = Array.isArray(s.speeds) && s.speeds.length > 0
+    if (hasSpeed) {
+      els.push(grey('速度'), buttonRow(s.speeds.map((x) => button(x.label || x.value, { selected: x.selected, value: x.selected ? null : cb('s', x.value) }))))
+      if (s.speedNote) els.push(grey(r(s.speedNote)))
+    }
     els.push({ tag: 'hr' })
     if (s.preview) {
       els.push({ tag: 'markdown', text_size: 'normal', content: `**将改为** ${esc(s.preview.to)}` })
@@ -95,7 +102,7 @@ function buildModelCard(s, { redact } = {}) {
       button('确认更新', { selected: !!s.preview, value: s.preview ? cb('ok') : null, disabled: !s.preview }),
       button('关闭', { value: { a: 'mc', f: 'x', t } }),
     ]))
-    els.push(grey('选好后点「确认更新」才生效 · 换后端会开新对话，换型号或调深度接着当前对话 · 要等手头任务结束 · 10 分钟内有效 · 点不动时可直接发 /model high 这类文字'))
+    els.push(grey(`选好后点「确认更新」才生效 · 换后端会开新对话，换型号或调深度${hasSpeed ? '或速度' : ''}接着当前对话 · 要等手头任务结束 · 10 分钟内有效 · 点不动时可直接发 /model high 这类文字`))
   }
   return { schema: '2.0', config: { width_mode: 'fill', update_multi: true }, header, body: { padding: '12px 12px 12px 12px', vertical_spacing: '8px', elements: els } }
 }

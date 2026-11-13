@@ -99,6 +99,7 @@ function createModelCatalog({ codexstatus, claudemodels, claudeBin = 'claude', c
         ...(m.name ? { name: m.name } : {}),
         efforts: (m.efforts || []).filter((e) => CODEX_LEGAL.includes(e)),
         ...(m.defEffort && CODEX_LEGAL.includes(m.defEffort) ? { defEffort: m.defEffort } : {}),
+        ...(Array.isArray(m.speeds) && m.speeds.length ? { speeds: m.speeds.slice() } : {}), // 这型号能开 Fast(core/modelcmd.js speedsFor)
       }))
       const star = list.find((m) => m.isDefault) || list[0]
       const cat = { ok: true, models, aliases: [], efforts: CODEX_LEGAL.slice(1), source: sourceOf('codex') }

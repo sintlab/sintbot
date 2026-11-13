@@ -1,5 +1,36 @@
 [
   {
+    "version": "1.4.21",
+    "date": "2026-11-13",
+    "name": "Fast for GPT groups; held groups handled in the console",
+    "items": [
+      {
+        "t": "Fast per GPT group",
+        "d": "Codex models gain a Speed option: Standard or Fast. Turn it on from the console group card, with /model fast in the group (/model standard to go back) or on the /model card. Changing only the speed keeps the session, works while a task is running and applies from the next message. Off by default; remembered per group and per model card; scheduled tasks always run at standard speed. It cannot be enabled for a model without a Fast tier, and switching to such a model returns to Standard with a note. The receipt states the cost: about 1.5–2x speed, quota charged at 2.5x."
+      },
+      {
+        "t": "Standard speed is now stated explicitly",
+        "d": "Every turn explicitly requests Standard unless the group enables Fast. When App Server reports a fallback, the card footer omits Fast. Older executors and the exec route do not report the effective tier, so their requested tier is not proof of acceleration."
+      },
+      {
+        "t": "Seal a held group from the console",
+        "d": "When the service is killed during a task (power loss, forced restart) and every group is held, the service still starts and the console stays available. The overview's Needs attention card and the local conversation page offer Seal and continue: the record is archived unchanged, that message is not processed again, and the service restarts by itself with a new record. Offered only when running as a managed background service; foreground runs keep the terminal steps in the guide."
+      },
+      {
+        "t": "No upgrade while the background service is disabled",
+        "d": "If the launchd job is disabled in the system (for example under Login Items), a console upgrade is refused with a message instead of leaving the service stopped."
+      },
+      {
+        "t": "DeepSeek preset",
+        "d": "Configure an API Key for DeepSeek Flash and select model and effort per project."
+      },
+      {
+        "t": "Missing-key preflight",
+        "d": "Missing API Keys are rejected before executor startup; keyless cards remain selectable in project settings."
+      }
+    ]
+  },
+  {
     "version": "1.4.20",
     "date": "2026-11-13",
     "name": "Local conversations and a refined desktop interface",

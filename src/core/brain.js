@@ -14,12 +14,20 @@
 // Only shapes are validated, never an allow list: model ids and depth names
 // evolve upstream, and values travel as argv/env entries without a shell.
 // A bad shape is treated as unset instead of failing the turn.
+// Speed: `speed: 'fast'` means the group turned Fast on for this backend;
+// unset means standard (Fast is never on by default). Unlike model and depth
+// this IS an allow list: the CLI silently drops an unknown tier name and runs
+// at standard speed, so a typo would read as "on" while nothing changed.
+// Whether a model offers the tier is checked against the live catalog
+// (core/modelcmd.js speedsFor); the runner translates it and verifies it took.
 
 const MODEL_RE = /^[\w.\-[\]:/]{1,80}$/
 const EFFORT_RE = /^[a-z]{2,16}$/
+const SPEEDS = ['fast']
 
 const isModel = (s) => typeof s === 'string' && MODEL_RE.test(s)
 const isEffort = (s) => typeof s === 'string' && EFFORT_RE.test(s)
+const isSpeed = (s) => typeof s === 'string' && SPEEDS.includes(s)
 
 // Legacy card-level values. Subscription cards no longer carry them after the
 // one-time migration; a third-party endpoint keeps its model as connection
@@ -40,6 +48,7 @@ function cleanPref(x) {
   const o = {}
   if (isModel(x.model)) o.model = x.model
   if (isEffort(x.effort)) o.effort = x.effort
+  if (isSpeed(x.speed)) o.speed = x.speed
   return Object.keys(o).length ? o : null
 }
 
@@ -63,9 +72,11 @@ function normalizePrefs(prefs, known) {
  * @param provider  cfg.providers[name]
  * @param opts.defaultProvider top-level defaultProvider, only used to decide
  *   which backend a legacy group.model belongs to
- * @returns {{ model, effort, groupModel, groupEffort, defaultModel, defaultEffort }}
+ * @returns {{ model, effort, speed, groupModel, groupEffort, defaultModel, defaultEffort }}
  *   model / effort are effective values ('' = executor default);
- *   groupX are the group's own choices ('' = not chosen).
+ *   groupX are the group's own choices ('' = not chosen);
+ *   speed = 'fast' | '' (standard): only the group's own choice counts, a
+ *   card carries no speed default.
  */
 function groupBrain(group, name, provider, { defaultProvider = '' } = {}) {
   const g = group || {}
@@ -76,7 +87,7 @@ function groupBrain(group, name, provider, { defaultProvider = '' } = {}) {
   const groupEffort = pref.effort || ''
   const dm = defaultModel(provider)
   const de = defaultEffort(provider)
-  return { model: groupModel || dm, effort: groupEffort || de, groupModel, groupEffort, defaultModel: dm, defaultEffort: de }
+  return { model: groupModel || dm, effort: groupEffort || de, speed: pref.speed || '', groupModel, groupEffort, defaultModel: dm, defaultEffort: de }
 }
 
 // Move legacy group.model under the backend it belonged to (mutates the raw
@@ -114,4 +125,4 @@ function missingPicks(cfg) {
   return out
 }
 
-module.exports = { groupBrain, normalizePrefs, cleanPref, migrateLegacyModel, missingPicks, defaultModel, defaultEffort, isModel, isEffort, MODEL_RE, EFFORT_RE }
+module.exports = { groupBrain, normalizePrefs, cleanPref, migrateLegacyModel, missingPicks, defaultModel, defaultEffort, isModel, isEffort, isSpeed, SPEEDS, MODEL_RE, EFFORT_RE }

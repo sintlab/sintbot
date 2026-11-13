@@ -1,4 +1,4 @@
-# Install SintBot 1.4.20
+# Install SintBot 1.4.21
 
 English · [简体中文](./zh-CN/install.md)
 
@@ -14,7 +14,7 @@ On an Apple silicon Mac, [download SintBot for macOS](https://github.com/sintlab
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-The installer checks the environment, installs `sintbot@1.4.20` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.20`. No sudo is needed.
+The installer checks the environment, installs `sintbot@1.4.21` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.21`. No sudo is needed.
 
 To preview, append `-s -- --dry-run`. To choose another location, set `SINTBOT_INSTALL_DIR` and adjust the executable paths below.
 
@@ -205,6 +205,6 @@ If a group stays paused, first restart: a group whose records can recover reopen
 "$HOME/.local/share/sintbot/bin/sintbot" incident seal --config "$HOME/.sbot/config.json" --group oc_PAUSED_GROUP_ID
 ```
 
-Sealing keeps the old journal unchanged under `incidents/` in the data directory and gives the group a new journal; messages left unfinished before the seal are never processed again. Start the service again to reopen the group. A preflight fails while any group would stay paused. Never delete journals or resend to get around a paused group. Run only one connected process per Feishu app. This release does not register a background service.
+Sealing keeps the old journal unchanged under `incidents/` in the data directory and gives the group a new journal; messages left unfinished before the seal are never processed again. Start the service again to reopen the group. When the service runs in the background (for example under the desktop app), **Seal and continue** on the console overview's "Needs attention" card performs the same seal and the service restarts by itself; it waits until other groups have no task. The service still starts when every group is paused, so the console stays available. A preflight fails while any group would stay paused. Never delete journals or resend to get around a paused group. Run only one connected process per Feishu app. This release does not register a background service.
 
 [Illustrated website guide](https://sintbot.com/guide/install/) · [AI-assisted installation](./AI-ASSISTED-INSTALL.md)

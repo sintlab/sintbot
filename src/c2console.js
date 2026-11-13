@@ -45,6 +45,9 @@ const WRITE_PATHS = ['/api/login', '/api/logout', '/api/logout/all',
   // A line typed into a local conversation enters the same service ingress as
   // a group message and takes the same durable receipt.
   '/api/local/send',
+  // Seal a held group: only offered where launchd starts the service again
+  // after the stop (see src/c2consoleseal.js).
+  '/api/groups/seal',
   // Software updates: check and ignore anywhere; install only when launchd
   // manages this exact entry (the updater refuses every other run mode).
   '/api/update/check', '/api/update/start', '/api/update/ignore']
@@ -57,7 +60,7 @@ const { GROUP_COMMANDS } = require('./runtimefacts')
 // what the executor finally selected is reported by the run itself.
 function brainFields(group, name, provider, cfg) {
   const b = groupBrain(group, name, provider, { defaultProvider: cfg.defaultProvider })
-  return { model: b.model, reasoningEffort: b.effort, groupModel: b.groupModel, groupEffort: b.groupEffort,
+  return { model: b.model, reasoningEffort: b.effort, speed: b.speed || '', groupModel: b.groupModel, groupEffort: b.groupEffort,
     source: b.groupModel ? 'group' : b.defaultModel ? 'provider' : 'default', actualModel: null }
 }
 
@@ -70,6 +73,9 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
   acquireCapacity = null,
   // The local conversation adapter of the live transport (null until it starts).
   getLocal = () => null, localConfirmMs = 5_000, localPollMs = 10,
+  // Console seal of a held group (null where this run cannot restart itself)
+  // and the last one that did not complete.
+  sealHeld = null, lastSealFailure = () => null,
   log = () => {} } = {}) {
   for (const callback of [getBindings, getCapacity, getConfig, getHeld, assertWriterLock,
     validateConfig, applyConfig, beforeWrite, appliedResets, now, isServing, isFrozen, log]) {
@@ -88,6 +94,7 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
   const capabilities = Object.freeze({ mode: 'durable-v2',
     // Conversations held in the console itself; the page shows them when set.
     localChat: typeof getLocal === 'function',
+    sealHeld: typeof sealHeld === 'function',
     groupCommands: GROUP_COMMANDS,
     reason: '此操作尚未接入当前版本的持久处理流程，未执行。',
     summary: '实时状态、认证管理、停止任务、空闲群开新会话、支持忙时跟进的控制台插话、绑定新群、空闲群的模型切换（Codex / Claude Code）和项目目录修改、模型的添加与设置，以及后台运行时的软件升级已接入；该群有任务或未结记录时不能修改，也不能开新会话；改模型的型号、后端或端点时，用它的群须空闲，并会开始新的一段对话。插话会把这句话（标着「管理员」）和回复都发进群，群忙时按该群的忙时跟进设置尝试加入当前任务，关闭或暂不支持时排队；确认模型读取后才显示已加入；静默插话和不回复的插话暂不支持。解除绑定、移除模型、定时任务和画布暂不可用。',
@@ -234,6 +241,8 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
     const cfg = getConfig()
     const capacity = getCapacity()
     const heldGroups = getHeld()
+    let sealFailure = null
+    try { sealFailure = heldGroups.size ? lastSealFailure() : null } catch {}
     const groups = {}
     let queue = 0
     for (const [chatId, group] of Object.entries(cfg.groups || {})) {
@@ -258,7 +267,8 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
         // Why a console injection would be refused right now (null = accepted).
         sayBlocked: say ? sayGate(chatId) : 'not-serving',
         // A held group needs the operator: its last result is unknown.
-        ...(hold ? { held: true, heldReason: hold.reason, heldSinceMs: Math.max(0, now() - hold.since) } : {}),
+        ...(hold ? { held: true, heldReason: hold.reason, heldSinceMs: Math.max(0, now() - hold.since),
+          ...(sealFailure?.chatId === chatId ? { sealError: sealFailure.error } : {}) } : {}),
       }
     }
     const activeBindingsReady = Object.entries(cfg.groups || {})
@@ -334,7 +344,7 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
         const name = group.effectiveProvider || source.provider || cfg.defaultProvider
         const fields = brainFields(source, name, provider, cfg)
         Object.assign(group, { configuredModel: fields.model, modelSource: fields.source,
-          actualModel: null, brain: { provider: name, model: fields.model, effort: fields.reasoningEffort,
+          actualModel: null, brain: { provider: name, model: fields.model, effort: fields.reasoningEffort, speed: fields.speed,
             groupModel: fields.groupModel, groupEffort: fields.groupEffort },
           providerPrefs: source.providerPrefs || null,
           contextWindow: provider ? windowForProvider({ ...provider, model: fields.model }, null, codexCatalogWindows()) : null })
@@ -368,6 +378,11 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
         return { wasBusy: false }
       },
       localSend, localHistory,
+      sealHeld(chatId) {
+        held()
+        if (typeof sealHeld !== 'function') throw new Error('只有后台托管运行时才能在这里封存；请停止服务后按使用指南在终端处理')
+        return sealHeld(chatId)
+      },
     },
   }
 }

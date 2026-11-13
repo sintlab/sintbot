@@ -51,6 +51,20 @@ function createC2ConfigControl({ installation, getBindings, getHeld = () => new 
   function held() {
     if (assertWriterLock() !== true) throw new Error('Service writer authority is unavailable')
   }
+  // The group as the settled gate sees it: everything but the per-backend speed.
+  function taskView(group) {
+    if (!group || typeof group !== 'object' || !group.providerPrefs || typeof group.providerPrefs !== 'object') return group
+    const prefs = {}
+    for (const [name, pref] of Object.entries(group.providerPrefs)) {
+      if (!pref || typeof pref !== 'object') { prefs[name] = pref; continue }
+      const { speed, ...rest } = pref
+      if (Object.keys(rest).length) prefs[name] = rest
+    }
+    const view = { ...group }
+    delete view.providerPrefs
+    if (Object.keys(prefs).length) view.providerPrefs = prefs
+    return view
+  }
   function assertSettled(chatId, binding,
     message = 'Wait until the group task is settled before changing its task settings') {
     if (!binding) return
@@ -150,7 +164,9 @@ function createC2ConfigControl({ installation, getBindings, getHeld = () => new 
         }
         continue
       }
-      if (!isDeepStrictEqual(route.group, target.group)) changed.push(route.chatId)
+      // Speed is read at the start of each turn and never touches the
+      // session, so a speed-only edit does not wait for a running turn.
+      if (!isDeepStrictEqual(taskView(route.group), taskView(target.group))) changed.push(route.chatId)
       const groupReset = RESET_KEYS.some(key => !isDeepStrictEqual(route.group[key], target.group[key]))
       if (groupReset || providerMoved) {
         if (!store) throw new Error('Changing model or project requires session reset authority')

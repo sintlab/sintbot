@@ -21,7 +21,7 @@ const { rejectC2Input } = require('./c2inputrejection')
 const progress = require('./turnprogress')
 const { groupBrain } = require('./brain')
 const { modelName } = require('./modelname')
-const { parseModelWords, resolveModel, effortsFor, modelChoices, fillPicks, recommendEffort } = require('./modelcmd')
+const { parseModelWords, resolveModel, effortsFor, speedsFor, fastNote, modelChoices, fillPicks, recommendEffort } = require('./modelcmd')
 const { DEFAULT_VALUE: MODEL_CARD_DEFAULT } = require('../platform/modelcard')
 // A /model card answers taps for ten minutes; older cards turn read-only.
 const MODEL_CARD_TTL_MS = 10 * 60 * 1000
@@ -61,20 +61,32 @@ function cardDuration(ms) {
   return minutes % 60 ? `${hours} 小时 ${minutes % 60} 分` : `${hours} 小时`
 }
 function cardModelInfo(brain) {
-  if (!brain) return { model: '', effort: '' }
+  if (!brain) return { model: '', effort: '', speed: '' }
   const clean = value => String(value || '').replace(/\s+/g, ' ').trim()
-  return { model: clean(brain.model ? modelName(brain.model) : ''), effort: clean(brain.effort) }
+  return { model: clean(brain.model ? modelName(brain.model) : ''), effort: clean(brain.effort),
+    speed: brain.speed === 'fast' ? 'fast' : '' }
 }
 // An example depth for /model replies: high when available, else another one.
 const exEffortOf = (efforts, cur) => ((efforts || []).includes('high') && cur !== 'high' ? 'high' : ((efforts || []).find(e => e !== cur) || ''))
 // "codex · GPT-6-Astra · high": what this group runs on its current backend.
+// Speed is written only when Fast is on; standard adds nothing, so a group
+// that never turned Fast on reads exactly as before.
 function brainLabel(name, brain) {
-  return [name, brain?.model ? modelName(brain.model) : '', brain?.effort || ''].filter(Boolean).join(' · ')
+  return [name, brain?.model ? modelName(brain.model) : '', brain?.effort || '', brain?.speed === 'fast' ? 'Fast' : '']
+    .filter(Boolean).join(' · ')
+}
+// The brain a turn actually runs with: a scheduled (cron) turn never runs
+// Fast, nobody is waiting for it and Fast costs more quota.
+function turnBrain(brain, msg) {
+  return msg?.cron && brain?.speed ? { ...brain, speed: '' } : brain
 }
 function cardModelDetail(info, result) {
   // A rejected configured effort may have been retried at the model default.
   const fellBack = result?.effortFellBack || result?.result?.effortFellBack
-  return [info?.model, fellBack ? '' : info?.effort]
+  // Fast is written only when this turn really ran Fast: the runner reports
+  // speedFellBack when the tier was asked for but did not take.
+  const speedFellBack = result?.speedFellBack || result?.result?.speedFellBack
+  return [info?.model, fellBack ? '' : info?.effort, info?.speed === 'fast' && !speedFellBack ? 'Fast' : '']
     .filter(Boolean).join(' ')
 }
 // Group texts name the project by its folder only, never by a machine path.
@@ -140,7 +152,11 @@ const T = {
     if (o.choices === null) L.push(`【${o.name} 型号】到控制台改`)
     else if (o.choices && o.choices.length) L.push(`【${o.name} 型号】${o.choices.map((x) => modelName(x)).join(' · ')}`)
     if (o.efforts && o.efforts.length) L.push(`【思考深度】${o.efforts.join(' · ')}`)
+    // Speed: listed only when the current model has a Fast tier; its cost is
+    // written next to it so it is known before turning it on.
+    if (o.speeds && o.speeds.length) L.push(`【速度】标准 · Fast（${o.fastNote}）`)
     if (o.exEffort) L.push(`· 调深度：/model ${o.exEffort}（接着当前对话）`)
+    if (o.speeds && o.speeds.length) L.push(o.speed === 'fast' ? '· 回到标准：/model 标准（接着当前对话）' : '· 开 Fast：/model fast（接着当前对话）')
     if (o.exModel) L.push(`· 换型号：/model ${modelName(o.exModel)}（接着当前对话）`)
     if (o.exProvider) L.push(`· 换后端：/model ${o.exProvider}（开新对话）`)
     L.push('⚠ 要等手头任务结束才能改')
@@ -150,19 +166,31 @@ const T = {
     ? `⚠ 「${word}」不是可选的后端或深度（${o.name} 的型号要到控制台改）—— 一项都没改`
     : `⚠ 「${word}」不是可选的后端、型号或深度 —— 一项都没改`)
     + `\n【后端】${o.names.join(' · ')}` + (o.choices && o.choices.length ? `\n【${o.name} 型号】${o.choices.map((x) => modelName(x)).join(' · ')}` : '')
-    + (o.efforts && o.efforts.length ? `\n【思考深度】${o.efforts.join(' · ')}` : ''),
+    + (o.efforts && o.efforts.length ? `\n【思考深度】${o.efforts.join(' · ')}` : '')
+    + (o.speeds && o.speeds.length ? '\n【速度】标准 · Fast' : ''),
   modelDup: (what, a, b) => `⚠ 一次只能选一个${what}（写了 ${a} 和 ${b}）—— 一项都没改`,
   modelNoCatalog: name => `⚠ 暂时取不到 ${name} 的可选型号 —— 一项都没改；稍后再试，或请管理员到控制台改`,
   modelEffortUnsupported: (model, e, list) => list.length
     ? `⚠ ${modelName(model) || model} 没有「${e}」这档深度 —— 一项都没改\n【可选】${list.join(' · ')}`
     : `⚠ ${modelName(model) || model} 不支持调思考深度 —— 一项都没改`,
+  modelSpeedUnsupported: model => `⚠ ${modelName(model) || model} 没有 Fast 档 —— 一项都没改`,
   modelSame: current => `本群已经在用 ${current}，没有变化`,
   modelBusy: '⚠ 手头还有任务在跑 —— 等它跑完再改，或先发 /stop',
-  modelSwitched: (current, note, filled) => `✅ 已切到 ${current}\n⚠ 换了后端，新的一段对话从这里开始，之前聊的内容不再带着` + (note ? ` —— ${note}` : '')
-    + (filled ? `\n· 本群在这个后端还没选过${filled}，先用推荐的；要换就 /model 加名字` : ''),
-  modelChanged: (current, filled) => `✅ 已改为 ${current} —— 接着当前对话，下条消息生效\n· 对话很长时新型号可能装不下，可发 /new 重开`
-    + (filled ? `\n· ${filled}先用推荐的` : ''),
+  // dropped: Fast was on and the new model has no Fast tier, so the group is
+  // back at standard speed; said out loud, or it reads as still on.
+  speedDropped: dropped => (dropped ? `\n· ${modelName(dropped) || dropped} 没有 Fast 档，已回到标准速度` : ''),
+  modelSwitched: (current, note, filled, dropped) => `✅ 已切到 ${current}\n⚠ 换了后端，新的一段对话从这里开始，之前聊的内容不再带着` + (note ? ` —— ${note}` : '')
+    + (filled ? `\n· 本群在这个后端还没选过${filled}，先用推荐的；要换就 /model 加名字` : '') + T.speedDropped(dropped),
+  modelChanged: (current, filled, dropped) => `✅ 已改为 ${current} —— 接着当前对话，下条消息生效\n· 对话很长时新型号可能装不下，可发 /new 重开`
+    + (filled ? `\n· ${filled}先用推荐的` : '') + T.speedDropped(dropped),
   effortSwitched: (effort, label) => `✅ 思考深度已调为 ${effort}（${label}）—— 接着当前对话，下条消息生效`,
+  // Speed changed (possibly together with depth): turning Fast on states its
+  // cost first, then that scheduled tasks stay at standard speed.
+  tuneSwitched: ({ effort, effortChanged, speed, label, note }) => {
+    const did = [effortChanged ? `思考深度已调为 ${effort || '未选'}` : '', speed === 'fast' ? '已开 Fast' : '已回到标准速度'].filter(Boolean).join('、')
+    return `✅ ${did}（${label}）—— ` + (speed === 'fast' ? `${note}；` : '') + '接着当前对话，下条消息生效'
+      + (speed === 'fast' ? '；定时任务仍按标准速度' : '')
+  },
   modelSwitchFailed: '⚠ 没换成 —— 请管理员到控制台看一下',
   stopPending: '正在停止当前任务，这条消息没有处理，请稍后重发。',
   stopUnavailable: '当前任务正在收尾，暂时无法停止。',
@@ -644,6 +672,9 @@ async _durableV2ModelCommand(msg, want, group) {
 // as the group's choice on that backend; unchosen items are filled with the
 // catalog's recommendation, so the card always shows a concrete pick. A draft
 // that differs from the current one gets a preview, which enables confirm.
+// s (speed): 'fast' | 'std'; absent (new card, older card) means the
+// backend's current speed. The row and the draft field exist only when the
+// draft model has a Fast tier, so other cards keep their previous shape.
 async _modelPanel(chatId, group, extra = {}) {
     const { name, provider } = this._resolveProvider(chatId, group)
     const b = this._brain(group, name, provider)
@@ -657,7 +688,7 @@ async _modelPanel(chatId, group, extra = {}) {
     const dProv = this.cfg.providers[dp]
     const base = this._brain(group, dp, dProv)
     const third = !!(dProv && dProv.baseUrl)
-    const draft = known ? { p: dp, m: String(d0.m || ''), e: String(d0.e || '') } : { p: dp, m: '', e: '' }
+    const draft = known ? { p: dp, m: String(d0.m || ''), e: String(d0.e || ''), s: String(d0.s || '') } : { p: dp, m: '', e: '', s: '' }
     const cat = await this._modelCatalog(dp, dProv)
     const rec = cat && cat.ok !== false && cat.recommended ? cat.recommended : null
     let model = null // null: a third-party endpoint, whose model is set in the console
@@ -678,19 +709,32 @@ async _modelPanel(chatId, group, extra = {}) {
     else if (!draft.e || (effList.length && !effList.includes(draft.e))) draft.e = cat ? recommendEffort(cat, dModel) : draft.e
     const dEffort = draft.e
     const efforts = effList.map(e => ({ value: e, label: e, selected: e === dEffort }))
+    // Speed: the row appears only when the draft model has a Fast tier. A
+    // draft model without it while that backend runs Fast counts as standard
+    // (confirm goes back to standard; the preview says so).
+    const speedList = cat ? speedsFor(cat, dModel) : []
+    const wantSpeed = draft.s === 'fast' ? 'fast' : draft.s === 'std' ? '' : (base.speed || '')
+    const dSpeed = wantSpeed === 'fast' && !speedList.includes('fast') ? '' : wantSpeed
+    const speedDropped = wantSpeed === 'fast' && !dSpeed
+    if (speedList.includes('fast')) draft.s = dSpeed === 'fast' ? 'fast' : 'std'
+    else delete draft.s
+    const speeds = speedList.includes('fast') ? [{ value: 'std', label: '标准', selected: dSpeed !== 'fast' }, { value: 'fast', label: 'Fast', selected: dSpeed === 'fast' }] : null
+    const speedNote = speeds ? `Fast：${fastNote(cat, dModel)} · 定时任务始终按标准` : ''
     let preview = null
-    if (dp !== name || dModel !== b.model || (dEffort || '') !== (b.effort || '')) {
-      preview = { to: brainLabel(dp, { model: dModel, effort: dEffort }),
-        note: dp !== name ? '换了后端 —— 会开新对话' : dModel !== b.model ? '换了型号 —— 接着当前对话' : '只调深度 —— 接着当前对话' }
+    if (dp !== name || dModel !== b.model || (dEffort || '') !== (b.effort || '') || dSpeed !== (b.speed || '')) {
+      const tuned = [(dEffort || '') !== (b.effort || '') ? '深度' : '', dSpeed !== (b.speed || '') ? '速度' : ''].filter(Boolean).join('和')
+      const note = dp !== name ? '换了后端 —— 会开新对话' : dModel !== b.model ? '换了型号 —— 接着当前对话' : `只调${tuned} —— 接着当前对话`
+      preview = { to: brainLabel(dp, { model: dModel, effort: dEffort, speed: dSpeed }),
+        note: note + (speedDropped ? ' · 这个型号没有 Fast，回到标准速度' : '') }
     }
     return { mode, current, draft, preview, failover: '', quota: '',
       backends: names.map(n => ({ name: n, selected: n === dp })),
-      model, efforts, issuedAt: extra.issuedAt || 0 }
+      model, efforts, speeds, speedNote, issuedAt: extra.issuedAt || 0 }
   }
 
 // A tap on the /model card. value = the callback value { f, v?, d, t },
 // option = the dropdown choice, who = the operator's name.
-//   f = p | m | e: change only the card's draft (nothing is written)
+//   f = p | m | e | s: change only the card's draft (nothing is written; s = speed)
 //   f = ok: apply the draft once through _durableV2ApplyModel → receipt card
 //   f = x: close; nothing changes, the card turns grey in place
 // Returns { toast?, state? }; state is drawn into a card that replaces this one.
@@ -704,12 +748,13 @@ async handleModelCard({ chatId, who = '', value = {}, option } = {}) {
     if (!issued || now - issued > MODEL_CARD_TTL_MS) {
       return { toast: { type: 'info', content: '这张卡已过期 —— 发 /model 重新打开' }, state: await this._modelPanel(chatId, group, { mode: 'expired' }) }
     }
-    const d = value.d && typeof value.d === 'object' ? { p: String(value.d.p || ''), m: String(value.d.m || ''), e: String(value.d.e || '') } : null
+    const d = value.d && typeof value.d === 'object' ? { p: String(value.d.p || ''), m: String(value.d.m || ''), e: String(value.d.e || ''), s: String(value.d.s || '') } : null
     const norm = x => (x == null || x === MODEL_CARD_DEFAULT ? '' : String(x))
-    if (value.f === 'p' || value.f === 'm' || value.f === 'e') {
+    if (value.f === 'p' || value.f === 'm' || value.f === 'e' || value.f === 's') {
       let draft = d
-      if (value.f === 'p') draft = { p: norm(value.v), m: '', e: '' }
+      if (value.f === 'p') draft = { p: norm(value.v), m: '', e: '', s: '' }
       else if (value.f === 'm') draft = { ...(d || {}), m: norm(option) }
+      else if (value.f === 's') draft = { ...(d || {}), s: norm(value.v) === 'fast' ? 'fast' : 'std' }
       else draft = { ...(d || {}), e: norm(value.v) }
       return { state: await this._modelPanel(chatId, group, { draft, issuedAt: now }) }
     }
@@ -719,11 +764,15 @@ async handleModelCard({ chatId, who = '', value = {}, option } = {}) {
     const { name: curName } = this._resolveProvider(chatId, group)
     const target = d.p || curName
     const tb = this._brain(group, target, this.cfg.providers[target])
+    // An older card's draft has no speed field: leave speed alone.
+    const ds = d.s === 'fast' ? 'fast' : d.s === 'std' ? '' : undefined
+    const speed = ds !== undefined && ds !== (tb.speed || '') ? ds : undefined
     const out = await this._durableV2ApplyModel(chatId, group, {
       provider: d.p && d.p !== curName ? d.p : undefined,
       model: d.m && d.m !== tb.model ? d.m : undefined,
-      effort: d.e && d.e !== tb.effort ? d.e : undefined },
-    { sender: by, said: `[模型卡] ${d.p}·${d.m || '-'}·${d.e || '-'}`, source: 'card' })
+      effort: d.e && d.e !== tb.effort ? d.e : undefined,
+      ...(speed !== undefined ? { speed } : {}) },
+    { sender: by, said: `[模型卡] ${d.p}·${d.m || '-'}·${d.e || '-'}${d.s === 'fast' ? '·fast' : ''}`, source: 'card' })
     if (out.kind === 'reject' && out.reason === 'busy') return { toast: { type: 'warning', content: '手头还有任务在跑 —— 等它做完再确认，或先发 /stop' } }
     if (out.kind === 'reject' || out.kind === 'failed') return { toast: { type: 'error', content: String(out.text || '').split('\n')[0].replace(/^⚠\s*/, '') } }
     const g2 = (this.cfg.groups && this.cfg.groups[chatId]) || group
@@ -750,17 +799,24 @@ async _modelCatalog(name, provider) {
 _modelOpts(names, name, cat, brain) {
     return { names, name,
       choices: !cat ? undefined : cat.models === null ? null : cat.ok === false ? [] : modelChoices(cat),
-      efforts: cat ? effortsFor(cat, brain && brain.model) : [] }
+      efforts: cat ? effortsFor(cat, brain && brain.model) : [],
+      // Speed: only the live catalog says whether this model has a Fast tier.
+      speeds: cat ? speedsFor(cat, brain && brain.model) : [], speed: (brain && brain.speed) || '',
+      fastNote: fastNote(cat, brain && brain.model) }
   }
 _logModelReject(chatId, said, reason, sender) {
     this.log(`/model rejected: ${chatId} ${JSON.stringify(String(said || '')).slice(0, 80)} ${reason} (by ${sender})`)
   }
 
-// pw = { provider?, model?, models?, effort? } from parseModelWords, or the
-// model card's confirmed draft. Returns { kind, reason?, text, label?, after? }
-// with kind ∈ reject | failed | same | switched | model | effort.
+// pw = { provider?, model?, models?, effort?, speed? } from parseModelWords,
+// or the model card's confirmed draft. Returns { kind, reason?, text, label?, after? }
+// with kind ∈ reject | failed | same | switched | model | effort | tune.
 // Missing picks on the target backend are filled with the catalog's
 // recommendation (fillPicks); a depth-only change never fills a model.
+// speed: 'fast' turns Fast on, '' goes back to standard (meaningful, not
+// "unset"), undefined leaves it alone. Like depth it keeps the session; Fast
+// on a model without the tier (live catalog) refuses the whole command, and a
+// model or backend change onto such a model drops Fast and says so (fillPicks).
 async _durableV2ApplyModel(chatId, group, pw, { sender = 'unknown', said = '', source = 'command' } = {}) {
     const reject = (reason, text) => { this._logModelReject(chatId, said, reason, sender); return { kind: 'reject', reason, text } }
     const { name, provider } = this._resolveProvider(chatId, group)
@@ -782,7 +838,7 @@ async _durableV2ApplyModel(chatId, group, pw, { sender = 'unknown', said = '', s
       delete pw.models
     }
     const switching = target !== name
-    const wantsBrain = pw.model !== undefined || pw.effort !== undefined
+    const wantsBrain = pw.model !== undefined || pw.effort !== undefined || pw.speed !== undefined
     const cat = wantsBrain || switching ? await this._modelCatalog(target, tProv) : null
     let model
     if (pw.model !== undefined) {
@@ -792,8 +848,8 @@ async _durableV2ApplyModel(chatId, group, pw, { sender = 'unknown', said = '', s
       if (!model) return reject('unknown', T.modelUnknownWord(pw.model, this._modelOpts(names, target, cat, tBrain)))
       if (model === tBrain.model) model = undefined
     }
-    const f = fillPicks({ switching, model, effort: pw.effort, currentModel: tBrain.model,
-      currentEffort: tBrain.effort, third: !!(tProv && tProv.baseUrl), cat })
+    const f = fillPicks({ switching, model, effort: pw.effort, speed: pw.speed, currentModel: tBrain.model,
+      currentEffort: tBrain.effort, currentSpeed: tBrain.speed || '', third: !!(tProv && tProv.baseUrl), cat })
     model = f.model
     const nextModel = model === undefined ? tBrain.model : model
     let effort
@@ -806,18 +862,31 @@ async _durableV2ApplyModel(chatId, group, pw, { sender = 'unknown', said = '', s
       }
       effort = pw.effort === tBrain.effort && model === undefined && !switching ? undefined : pw.effort
     } else effort = f.effort
+    let speed // undefined = keep; '' = standard; 'fast'
+    if (pw.speed === 'fast') {
+      if (!cat || cat.ok === false) return reject('no-catalog', T.modelNoCatalog(target))
+      if (!speedsFor(cat, nextModel).includes('fast')) return reject('speed', T.modelSpeedUnsupported(nextModel || target))
+      speed = tBrain.speed === 'fast' && model === undefined && !switching ? undefined : 'fast'
+    } else if (pw.speed !== undefined) speed = pw.speed === (tBrain.speed || '') && model === undefined && !switching ? undefined : pw.speed
+    else speed = f.speed
     const current = brainLabel(name, this._brain(group, name, provider))
-    if (!switching && model === undefined && effort === undefined) return { kind: 'same', text: T.modelSame(current), label: current }
-    if (this._durableV2GroupBusy(chatId)) return reject('busy', T.modelBusy)
-    const stopping = this._stopIdleCompact(this.rts.get(chatId), '会话已重置')
-    if (stopping && await stopping !== true) return reject('busy', T.modelBusy)
-    if (this.durableV2AssertWriterLock() !== true || this._durableV2GroupBusy(chatId)) return reject('busy', T.modelBusy)
+    if (!switching && model === undefined && effort === undefined && speed === undefined) return { kind: 'same', text: T.modelSame(current), label: current }
+    // Speed alone is read at the next turn's start and keeps the session, so
+    // it may change while a task runs; anything else waits for the group.
+    const speedOnly = !switching && model === undefined && effort === undefined && speed !== undefined
+    if (!speedOnly) {
+      if (this._durableV2GroupBusy(chatId)) return reject('busy', T.modelBusy)
+      const stopping = this._stopIdleCompact(this.rts.get(chatId), '会话已重置')
+      if (stopping && await stopping !== true) return reject('busy', T.modelBusy)
+      if (this._durableV2GroupBusy(chatId)) return reject('busy', T.modelBusy)
+    }
+    if (this.durableV2AssertWriterLock() !== true) return reject('busy', T.modelBusy)
     let r
     try {
       if (this.durableV2SetBrain) {
-        r = this.durableV2SetBrain(chatId, { provider: switching ? target : undefined, model, effort },
-          { by: sender, source })
-      } else if (switching && model === undefined && effort === undefined) {
+        r = this.durableV2SetBrain(chatId, { provider: switching ? target : undefined, model, effort,
+          ...(speed !== undefined ? { speed } : {}) }, { by: sender, source })
+      } else if (switching && model === undefined && effort === undefined && speed === undefined) {
         this.durableV2SwitchProvider(chatId, target)
       } else throw new Error('Model and depth writer unavailable')
     } catch (error) {
@@ -828,8 +897,11 @@ async _durableV2ApplyModel(chatId, group, pw, { sender = 'unknown', said = '', s
     const g2 = (this.cfg.groups && this.cfg.groups[chatId]) || group
     const after = r?.after || this._brain(g2, target, this.cfg.providers[target])
     const label = brainLabel(target, after)
-    this.log(`/model: ${chatId} ${name}·${tBrain.model || '-'}·${tBrain.effort || '-'} → ${target}·${after.model || '-'}·${after.effort || '-'} (by ${sender}, ${source})`)
+    const sp = b => (b && b.speed ? '·' + b.speed : '')
+    this.log(`/model: ${chatId} ${name}·${tBrain.model || '-'}·${tBrain.effort || '-'}${sp(tBrain)} → ${target}·${after.model || '-'}·${after.effort || '-'}${sp(after)} (by ${sender}, ${source})`)
     const filled = f.filled.length ? f.filled.join('和') : ''
+    // Fast was on and the model now in effect has no tier: say it went back to standard.
+    const dropped = f.speedDropped && tBrain.speed === 'fast' && after.speed !== 'fast' ? (after.model || target) : ''
     if (switching) {
       let note = ''
       try {
@@ -837,9 +909,16 @@ async _durableV2ApplyModel(chatId, group, pw, { sender = 'unknown', said = '', s
         const h = this.projectMemory ? this.projectMemory(group.workdir, opts) : null
         if (h?.note) note = h.note
       } catch {}
-      return { kind: 'switched', text: T.modelSwitched(label, note, filled), label, after }
+      return { kind: 'switched', text: T.modelSwitched(label, note, filled, dropped), label, after }
     }
-    if (r?.modelChanged) return { kind: 'model', text: T.modelChanged(label, filled), label, after }
+    if (r?.modelChanged) return { kind: 'model', text: T.modelChanged(label, filled, dropped), label, after }
+    // Speed changed (maybe with depth): kind 'tune'; a depth-only change keeps its own receipt.
+    const speedChanged = r ? !!r.speedChanged : speed !== undefined && (tBrain.speed || '') !== (after.speed || '')
+    if (speedChanged) {
+      const effortChanged = r ? !!r.effortChanged : effort !== undefined && tBrain.effort !== after.effort
+      return { kind: 'tune', text: T.tuneSwitched({ effort: after.effort, effortChanged, speed: after.speed || '', note: fastNote(cat, after.model),
+        label: brainLabel(target, { model: after.model, effort: effortChanged ? '' : after.effort }) }), label, after }
+    }
     return { kind: 'effort', text: T.effortSwitched(after.effort, brainLabel(target, { model: after.model })), label, after }
   }
 
@@ -1852,10 +1931,13 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
       if (!provider || (provider.baseUrl && !provider.apiKey)) {
         throw new Error('C2 v2 runner provider unavailable')
       }
-      rt.v2Brain = this._brain(job.group, name, provider)
+      // Runner input, card footer and activity all use this one brain; a
+      // scheduled turn runs at standard speed.
+      rt.v2Brain = turnBrain(this._brain(job.group, name, provider), job.msg)
       rt.v2CardModelInfo = cardModelInfo(rt.v2Brain)
       this._observeActivity('start', { chatId, receiptId, receiptIds: cohort.receiptIds, generation,
         sessionId: this.store.getSession(chatId), model: rt.v2Brain.model, effort: rt.v2Brain.effort,
+        ...(rt.v2Brain.speed === 'fast' ? { speed: 'fast' } : {}),
         runner: provider.runner, project: projectName(job.group) })
       rt.v2FollowupEnabled = followupEnabled(job.group, provider.runner)
       rt.v2SteerControl = null
@@ -2099,7 +2181,8 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
       capTimer = timeoutDeadlineAt !== null ? setTimeout(onHardDeadline, timeoutMs) : null
       const input = prepareC2RunnerInput({ prompt,
         appendSystemPrompt: SYSTEM_APPENDIX, msg: job.msg, group: job.group,
-        provider, config: this.cfg, brain: { model: rt.v2Brain.model, effort: rt.v2Brain.effort },
+        provider, config: this.cfg, brain: { model: rt.v2Brain.model, effort: rt.v2Brain.effort,
+          ...(rt.v2Brain.speed === 'fast' ? { speed: 'fast' } : {}) },
         sessionId: this.store.getSession(chatId) || null,
         signal: controller.signal, extraEnv: this.baseSkillEnv(chatId),
         onDurableEvent: event => {
@@ -2799,4 +2882,4 @@ requestDurableV2Stop(chatId) {
 
 }
 
-module.exports = { releaseBinDir, Engine }
+module.exports = { releaseBinDir, Engine, brainLabel, turnBrain, cardModelInfo, cardModelDetail }

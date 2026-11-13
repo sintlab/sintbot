@@ -53,6 +53,11 @@ function prepareC2RunnerInput({ prompt, appendSystemPrompt, msg, group, provider
     // leaves the choice to the executor.
     model: brain ? brain.model || undefined : group.model,
     effort: brain ? brain.effort : '',
+    // Speed: 'fast' only when the group turned Fast on for this turn (the
+    // engine clears it for scheduled turns); absent otherwise, so the input
+    // shape is unchanged for every group that never used Fast. Idle
+    // compaction below never asks for Fast.
+    ...(brain && brain.speed === 'fast' ? { speed: 'fast' } : {}),
     workdir: group.workdir,
     sessionId,
     permissionMode: group.permissionMode || 'dontAsk',

@@ -17,6 +17,14 @@ const { modelKey } = require('./modelname')
 
 // 识别为「深度」这一类的词(能不能用再按目标后端 / 型号查)。Claude Code 的五档 + Codex 服务端认的两档低档。
 const EFFORT_WORDS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+// 「速度」这一类:fast = 开 Fast;标准 / standard = 回到标准('' = 不带速度字段)。能不能开再按目标型号的清单查(speedsFor)。
+const SPEED_WORDS = { fast: 'fast', standard: '', 标准: '' }
+const speedOf = (w) => (Object.prototype.hasOwnProperty.call(SPEED_WORDS, w) ? SPEED_WORDS[w] : undefined)
+// 群里看到的速度名:Fast 用官方叫法;标准就叫标准
+const speedName = (s) => (s === 'fast' ? 'Fast' : '标准')
+// Fast 的额度代价:清单里只有「2x speed, increased usage」这类说明、没有倍数,倍数取官方文档(learn.chatgpt.com Speed / Pricing:
+// 订阅自带额度按标准的 2.5 倍扣,买的点数 2 倍)。官方改了倍数只改这一处。
+const FAST_COST = '额度按 2.5 倍扣'
 const VERSION_RE = /^\d+(?:[.-]\d+)*$/
 const VARIANT_RE = /^[[(][a-z0-9]+[\])]$/i
 
@@ -42,13 +50,14 @@ function joinVersionWords(words, isOther) {
 /**
  * @param words          命令后面的词
  * @param providerNames  群里可选的模型卡名(没隐藏的)
- * @returns {{ provider?, model?, models?, effort? } | { error: { kind: 'dup', what, a, b } }}
+ * @returns {{ provider?, model?, models?, effort?, speed? } | { error: { kind: 'dup', what, a, b } }}
+ *   speed:'fast' = 开 Fast,'' = 回到标准;没写这一类 ⇒ 没有这个字段
  *   model 原样保留大小写(查清单时再归一成清单里的写法);型号类写了不止一个 ⇒ models(调用方先逐个认,再判重)
  */
 function parseModelWords(words, providerNames = []) {
   const names = new Map(providerNames.map((n) => [String(n).toLowerCase(), n]))
   const out = {}
-  const isOther = (w) => { const lw = w.toLowerCase(); return names.has(lw) || EFFORT_WORDS.includes(lw) }
+  const isOther = (w) => { const lw = w.toLowerCase(); return names.has(lw) || EFFORT_WORDS.includes(lw) || speedOf(lw) !== undefined }
   for (const w of joinVersionWords(words, isOther)) {
     const lw = w.toLowerCase()
     if (names.has(lw)) {
@@ -58,6 +67,10 @@ function parseModelWords(words, providerNames = []) {
     } else if (EFFORT_WORDS.includes(lw)) {
       if (out.effort && out.effort !== lw) return { error: { kind: 'dup', what: '深度', a: out.effort, b: lw } }
       out.effort = lw
+    } else if (speedOf(lw) !== undefined) {
+      const sp = speedOf(lw)
+      if (out.speed !== undefined && out.speed !== sp) return { error: { kind: 'dup', what: '速度', a: speedName(out.speed), b: speedName(sp) } }
+      out.speed = sp
     } else {
       // 型号这一类先都收下,由调用方按清单逐个认:两个词里有认不出的 ⇒ 报「认不出」(多半是打错 / 隐藏的后端名),
       // 都认得出才报「一次只能选一个型号」—— 否则 `/model claude sonnet`(claude 被隐藏)会得到一句莫名其妙的「写了两个型号」
@@ -94,6 +107,22 @@ function effortsFor(cat, modelId) {
   return (m && Array.isArray(m.efforts) && m.efforts.length) ? m.efforts : ((cat && cat.efforts) || [])
 }
 
+// 这家某型号能开的速度档:清单里该型号带 speeds([{ id:'fast', desc? }])才有;没有清单 / 没这型号 ⇒ []。
+// 不按「这家整体」兜底:Fast 是逐型号给的(实时清单),兜底等于替没有这一档的型号开了个必被静默丢掉的档。
+function speedsFor(cat, modelId) {
+  const m = cat && modelId && Array.isArray(cat.models) ? cat.models.find((x) => x.id === modelId) : null
+  return m && Array.isArray(m.speeds) ? m.speeds.map((x) => x && x.id).filter((x) => x === 'fast') : []
+}
+
+// Fast 这一档给人看的一句(群里回执、模型卡、控制台同一口径):清单说明里的「2x speed」翻成「约 2 倍速」+ 额度代价。
+//   清单没写倍数就只说代价。cat / modelId 缺 ⇒ 只说代价。
+function fastNote(cat, modelId) {
+  const m = cat && modelId && Array.isArray(cat.models) ? cat.models.find((x) => x.id === modelId) : null
+  const t = m && Array.isArray(m.speeds) ? m.speeds.find((x) => x && x.id === 'fast') : null
+  const k = t && /(\d+(?:\.\d+)?)\s*x\s*speed/i.exec(String(t.desc || ''))
+  return (k ? `约 ${k[1]} 倍速，` : '') + FAST_COST
+}
+
 // 群里列给人看的型号:别名在前(短、好打),再列完整 id
 function modelChoices(cat) {
   if (!cat || !Array.isArray(cat.models)) return []
@@ -114,7 +143,9 @@ function recommendEffort(cat, modelId) {
 //   换后端且那一家**实际生效的**型号是空的(没选过、也没有迁移前遗留的卡上默认;第三方除外)⇒ 推荐型号;
 //   换后端 / 换型号时实际生效的深度是空的、或新型号没有这一档 ⇒ 这型号的推荐档。
 //   只调深度不补型号(补了就换脑、开新对话,与「只调深度接着聊」冲突)。返回 { model, effort, filled: ['型号','深度'] }。
-function fillPicks({ switching = false, model, effort, currentModel = '', currentEffort = '', third = false, cat = null } = {}) {
+//   速度**从不补**(默认不开 Fast);反过来,换到 / 换成没有 Fast 的型号而那一家开着 Fast ⇒ speed = ''
+//   (回到标准)并 speedDropped —— 否则存着一个必被静默丢掉的档,群卡和页脚还写着 Fast。只在清单取得到时判(取不到不猜)。
+function fillPicks({ switching = false, model, effort, speed, currentModel = '', currentEffort = '', currentSpeed = '', third = false, cat = null } = {}) {
   const filled = []
   const rec = cat && cat.ok !== false && cat.recommended ? cat.recommended : null
   if (switching && model === undefined && !currentModel && !third && rec && rec.model) { model = rec.model; filled.push('型号') }
@@ -126,7 +157,10 @@ function fillPicks({ switching = false, model, effort, currentModel = '', curren
       if (e && e !== currentEffort) { effort = e; if (!currentEffort) filled.push('深度') }
     }
   }
-  return { model, effort, filled }
+  let speedDropped = false
+  if (speed === undefined && currentSpeed && cat && cat.ok !== false && Array.isArray(cat.models) && (switching || model !== undefined)
+    && !speedsFor(cat, next).includes(currentSpeed)) { speed = ''; speedDropped = true }
+  return { model, effort, filled, ...(speed !== undefined ? { speed } : {}), ...(speedDropped ? { speedDropped } : {}) }
 }
 
-module.exports = { parseModelWords, resolveModel, effortsFor, modelChoices, recommendEffort, fillPicks, EFFORT_WORDS }
+module.exports = { parseModelWords, resolveModel, effortsFor, speedsFor, fastNote, speedName, modelChoices, recommendEffort, fillPicks, EFFORT_WORDS, SPEED_WORDS, FAST_COST }

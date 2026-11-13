@@ -83,9 +83,20 @@ function buildPrompt(prompt, appendSystemPrompt, isResume) {
 // 2026-07-07): resume takes `resume <id>`, REJECTS `--sandbox` (use `-c sandbox_mode=`)
 // and `--cd` (relies on process cwd); fresh accepts `--sandbox` + `--cd`. Prompt rides
 // on stdin (trailing `-`), dodging Windows argv mangling of arbitrary chat text.
-function buildArgs({ sessionId, model, workdir, permissionMode, reasoningEffort, autocompactTokens, contextWindowTokens }) {
+// Speed is stated on every turn: Fast ⇒ `service_tier=fast` (the CLI normalises it
+// to priority), otherwise `service_tier=default` (= standard). Leaving it out
+// would follow the CLI instead: its bundled model catalog defaults gpt-6-sol /
+// gpt-6-luna to priority, and a service_tier in the machine's ~/.codex/config.toml
+// would leak into group turns (same reasoning in codexapp.js). The exec event
+// stream does not reveal the effective tier, so verification only happens on the
+// App Server route. Added host-side like model_context_window; the core-built argv
+// ends with the stdin marker `-`, which must stay last, so the pair goes before it.
+function buildArgs({ sessionId, model, workdir, permissionMode, reasoningEffort, autocompactTokens, contextWindowTokens, speed }) {
   const args = codexBuildArgs({ sessionId, model, workdir, permissionMode, reasoningEffort, autocompactTokens })
   if (Number.isSafeInteger(contextWindowTokens) && contextWindowTokens > 0) args.unshift('-c', `model_context_window=${contextWindowTokens}`)
+  const tier = ['-c', `service_tier=${speed === 'fast' ? 'fast' : 'default'}`]
+  if (args[args.length - 1] === '-') args.splice(args.length - 1, 0, ...tier)
+  else args.push(...tier)
   return args
 }
 
@@ -159,6 +170,7 @@ function runOnce(opts, effort) {
     prompt,
     provider = {},
     model,
+    speed, // 'fast' = the group turned Fast on (the engine passes '' for cron turns); anything else is stated as standard
     workdir,
     sessionId,
     permissionMode,
@@ -193,7 +205,7 @@ function runOnce(opts, effort) {
     // so no collision with codex's own env. read-only sandbox can't run the command anyway.
     if (extraEnv) Object.assign(env, extraEnv)
 
-    const args = buildArgs({ sessionId, model: model || provider.model, workdir, permissionMode, reasoningEffort: effort, autocompactTokens, contextWindowTokens: provider.contextWindowTokens })
+    const args = buildArgs({ sessionId, model: model || provider.model, workdir, permissionMode, reasoningEffort: effort, autocompactTokens, contextWindowTokens: provider.contextWindowTokens, speed })
     const { file, spawnArgs, fallback } = resolveSpawn(bin, args)
     if (fallback) log(`配置的 agent 路径 '${bin}' 不存在,本轮改用 ${fallback} —— 请把配置改回正确路径`) // 与 claude runner 同一条兜底
     const child = spawnFn(file, spawnArgs, {

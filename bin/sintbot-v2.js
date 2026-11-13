@@ -222,6 +222,7 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
   let ui
   let configControl
   let updater
+  let consoleSeal = null
   let liveTransport
   let activity
   let onSigint, onSigterm
@@ -267,15 +268,28 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
     const limits = { maxEventCount: 100_000, maxJournalBytes: 64 * 1024 * 1024,
       maxCompletionEvents: 1_000, maxCompletionBytes: 8 * 1024 * 1024 }
     let finishing = false
-    const finish = async result => {
+    const finish = async (result, { seal = null } = {}) => {
       if (finishing) return
       finishing = true
       ui?.close()
       updater?.close()
       await activity?.close()
       lock.release()
+      let code = result.code
+      if (seal) {
+        // A seal asked from the console: the operator tool runs now that the
+        // lock is free, and a clean exit lets launchd start the service again.
+        require('../src/c2consoleseal').sealAfterStop({ chatId: seal, result, stateDir,
+          seal: chatId => require('../src/c2incident').sealC2GroupIncident({
+            installation: require('../src/c2install').loadInstallation(cfg._path,
+              { dataDir: stateDir, allowAddedGroups: true }),
+            chatId, reason: 'sealed from the console after an unresolved fault',
+            version: require('../package.json').version }),
+          log: message => process.stderr.write(`C2 multi-group · ${message}\n`) })
+        code = 0
+      }
       process.stderr.write(`C2 multi-group · ${result.reason}; platform stopped=${result.platformStopped}; runner drained=${result.drained}\n`,
-        () => process.exit(result.code))
+        () => process.exit(code))
     }
     service = createC2MultiGroupService({ routes, assertWriterLock, quarantine: combinedQuarantine,
       holds, closeCapacity: () => capacity.close(),
@@ -439,8 +453,8 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
       const pkg = require('../package.json')
       const upgradeGate = c2updates.createC2UpgradeGate({ isRunning: () => running,
         service: () => service, capacity, assertJournalScope })
-      updater = c2updates.createC2Updater({ currentVersion: pkg.version,
-        runMode: c2updates.detectRunMode({ privateBuild: pkg.private === true, entry: __filename }),
+      const runMode = c2updates.detectRunMode({ privateBuild: pkg.private === true, entry: __filename })
+      updater = c2updates.createC2Updater({ currentVersion: pkg.version, runMode,
         stateFile: path.join(stateDir, 'update.json'), dataDir: stateDir, configPath: cfg._path,
         gate: upgradeGate, beginMaintenance: () => service.beginMaintenance(),
         endMaintenance: () => service.endMaintenance(), expectedGroups: () => service.bindings.size,
@@ -449,6 +463,15 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
         // The same store as the startup announcement below.
         setAnnouncementBaseline: version => store.setLastVersion(version),
         autoCheck: uiEnabled, log: message => process.stderr.write(`C2 update · ${message}\n`) })
+      // Sealing a held group from the console, with the same idle gate as an
+      // upgrade; only where launchd starts the service again afterwards.
+      const sealing = require('../src/c2consoleseal')
+      if (sealing.consoleSealAvailable({ runMode, readPlist: c2updates.readPlist })) {
+        consoleSeal = sealing.createConsoleSeal({ getHeld: () => service.held, gate: upgradeGate,
+          upgradeActive: () => ['queued', 'installing', 'switching'].includes(updater.status().job?.state),
+          beginMaintenance: () => service.beginMaintenance(), endMaintenance: () => service.endMaintenance(),
+          requestStop: chatId => { void service.stop('console seal', 0).then(result => finish(result, { seal: chatId })) } })
+      }
     }
     const stop = reason => { void service.stop(reason, 0).then(finish) }
     onSigint = () => stop('SIGINT')
@@ -469,6 +492,8 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
         routeMessage: (msg, adapter) => service.routeMessage(msg, adapter),
         isServing: () => service.serving, isFrozen: () => service.inMaintenance,
         assertWriterLock, ...configControl, setGroupBrain, modelCatalog, updater,
+        sealHeld: consoleSeal ? chatId => consoleSeal.request(chatId) : null,
+        lastSealFailure: () => require('../src/c2consoleseal').lastSealFailure(stateDir),
         log: message => process.stderr.write(`Console · ${message}\n`) })
       await new Promise((resolve, reject) => {
         ui.server.once('error', reject)

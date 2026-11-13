@@ -323,6 +323,8 @@ p.hint{margin:0 0 8px}
 /* 概览「群·项目」卡:按卡片宽度自适应(容器查询)。宽卡=单行;窄卡(2 列半宽,尤其 busy
    带 ■↺)单行挤不下 → 群名独占第一行,provider·状态·路径·操作落第二行、路径吃余量把按钮推右。 */
 .ovgroups{container-type:inline-size}
+.heldcard{border-color:rgba(var(--fail-rgb),.35)}.heldcard .hint{margin:4px 0 8px}
+.heldrow .meta{flex:1 1 auto;max-width:none;font-family:inherit}.heldrow .btn{flex:none}
 .ovgroups .row{flex-wrap:wrap;row-gap:2px}
 @container (max-width:540px){
   .ovgroups .row .name{flex:1 1 100%}
@@ -1252,6 +1254,37 @@ function syncHealthFold(){
 // Full structure — rendered once on load / after an action (with the entrance
 // animation). Live bits carry ids/data-attrs so ticks patch them in place.
 // 开始使用(1.0.12):安装向导不再问聊天平台和绑群,装完第一次打开控制台时在这里说接下来做什么;平台接上、群绑好就不显示
+// Groups held after an unresolved fault, with the way out: where the
+// background service can start itself again the console seals them;
+// anywhere else the usage guide's terminal steps apply.
+function heldGroupsList(){const lg=(S&&S.live&&S.live.groups)||{};return ((S&&S.groups)||[]).filter(g=>lg[g.chatId]&&lg[g.chatId].held).map(g=>({g,lv:lg[g.chatId]}));}
+function heldCardHtml(){
+  if(!S||!S.runtimeCapabilities)return '';
+  const rows=heldGroupsList();if(!rows.length)return '';
+  const can=!!S.runtimeCapabilities.sealHeld;
+  return `<div class="card heldcard"><div class="lbl">需要处理</div>
+    <div class="hint">${can?'上一个任务的结果无法确认，下面的群已暂停处理，其他群照常。封存后原记录原样存档，那条消息不再处理；服务自动重启，群用新的记录继续。':'上一个任务的结果无法确认，下面的群已暂停处理，其他群照常。先重启服务，能自动收尾的会恢复；仍需处理时，按使用指南在终端封存。'}</div>
+    ${rows.map(({g,lv})=>`<div class="row heldrow"><span class="name" data-i18n-skip title="${esc(lv.heldReason||'')}">${esc(g.name||g.chatId.slice(-8))}</span>
+      <span class="meta" data-i18n-skip title="${esc(g.workdir||'')}">${esc(shortPath(g.workdir||''))}</span>
+      ${lv.sealError?`<span class="tag bad" title="${esc(lv.sealError)}">上次封存没有完成</span>`:''}
+      ${can?`<button class="btn sm" data-seal="${esc(g.chatId)}">封存并继续</button>`:''}</div>`).join('')}
+  </div>`;
+}
+let heldSig='';
+function heldSigNow(){return heldGroupsList().map(r=>r.g.chatId+':'+(r.lv.sealError||'')).join('|')+'|'+!!(S&&S.runtimeCapabilities&&S.runtimeCapabilities.sealHeld);}
+function bindHeld(){$$('#ovHeldWrap [data-seal]').forEach(b=>b.onclick=()=>{const g=(S.groups||[]).find(x=>x.chatId===b.dataset.seal);sealHeldGroup(b.dataset.seal,(g&&g.name)||b.dataset.seal.slice(-8));});}
+function syncHeldCard(){const w=$('#ovHeldWrap');if(!w)return;const sig=heldSigNow();if(sig===heldSig)return;heldSig=sig;w.innerHTML=heldCardHtml();bindHeld();}
+async function sealHeldGroup(chatId,name){
+  if(!confirm('封存「'+name+'」？\n\n上一个任务的结果无法确认。封存会把现在的记录原样存档，那条消息不会再处理，需要的话请重发；随后服务自动重启，用新的记录继续。'))return;
+  try{await api('/api/groups/seal','POST',{chatId});}catch(e){toast(e.message,'err');return;}
+  toast('正在封存，服务重启后页面会自动刷新','ok');
+  // The service stops, seals and is started again by launchd: wait for it to
+  // go away and come back, then load the page afresh.
+  let down=false;const until=Date.now()+120000;
+  const poll=async()=>{let up=false;try{const r=await fetch('/api/state',{cache:'no-store',credentials:'same-origin'});up=r.ok;}catch(e){up=false;}
+    if(!up)down=true;if((down&&up)||Date.now()>until){location.reload();return;}setTimeout(poll,2000);};
+  setTimeout(poll,1500);
+}
 function startCardHtml(){
   const pl=S.platforms||{},anyPlat=!!(pl.feishu||pl.slack||pl.wecom);
   const anyGroup=(S.groups||[]).length>0;
@@ -1298,7 +1331,7 @@ function renderOverview(){
       ${liveOn?`<button class="iconbtn sm" data-ostop="${esc(g.chatId)}" title="停止当前任务(保留会话)" style="flex:none">${IC.square}</button>
       <button class="iconbtn sm" data-onew="${esc(g.chatId)}" title="${S.runtimeCapabilities?'开新会话 — 仅在该群空闲、记录全部结账后可用;运行中请先停止,结束后再开(同群内 /new)':'开新会话 — 运行中会先中断当前任务并清空队列(同群内 /new)'}" style="flex:none">${IC.rotate}</button>`:''}</div>`).join('')
     :'<div class="empty">还没有群项目 · 去「群·项目」配置</div>';
-  $('#overview').innerHTML=`${startCardHtml()}<div id="ovInboxWrap">${inboxHtml()}</div><div class="grid ${S.runtimeCapabilities?'':'cols2'} stagger">
+  $('#overview').innerHTML=`${startCardHtml()}<div id="ovHeldWrap">${heldCardHtml()}</div><div id="ovInboxWrap">${inboxHtml()}</div><div class="grid ${S.runtimeCapabilities?'':'cols2'} stagger">
     <div class="card${S.runtimeCapabilities?` hcard${healthFoldOpen(h)?'':' folded'}${healthAbnormal(h)?' locked':''}`:''}" id="ovHealth">${S.runtimeCapabilities
       ?`<button type="button" class="hfold" id="ovHealthFold" aria-controls="ovHrows" aria-expanded="${healthFoldOpen(h)}" title="展开或收起健康检查"><span class="lbl">健康</span><span class="hsum" id="ovHealthSum">${healthSumHtml(h)}</span>
       <span class="hpill ${healthClass(h)}" id="ovHealthPill"><span class="led"></span><span id="ovHealthTxt">${healthText(h)}</span></span><span class="hcaret">${IC.chevronDown}</span></button>`
@@ -1326,6 +1359,7 @@ function renderOverview(){
   {const hf=$('#ovHealthFold'); if(hf)hf.onclick=()=>{if(healthAbnormal(S.health))return;   // 有异常时不收
     healthUserOpen=!healthUserOpen; try{localStorage.setItem('sbot-health-open',healthUserOpen?'1':'0');}catch(e){} syncHealthFold();};}
   bindActivityClicks();
+  heldSig=heldSigNow();bindHeld();
   if(S.runtimeCapabilities&&typeof activityPanel!=='undefined')activityPanel.mount();
   bindInbox();
   // 插话:入口挂在「群·项目」每一行的 ✎ 上 —— 动作长在对象身上,目标群由那一行决定,不必再选。
@@ -1516,6 +1550,7 @@ function updateOverviewLive(){
   if(!S) return;
   if(S.runtimeCapabilities&&typeof activityPanel!=='undefined')activityPanel.live(S.live);
   if(sayRefresh&&$('#sayT')) sayRefresh();
+  syncHeldCard();
   const live=S.live||{};
   const active=(live.concurrency&&live.concurrency.active)||0;
   const g=$('#ovGauge'); if(g)$$('.seg',g).forEach((s,i)=>s.classList.toggle('on',i<active));
@@ -2888,10 +2923,17 @@ function groupBrainRows(g){
     effort=`<select class="geffort" data-g="${esc(g.chatId)}" ${sel}>${b.effort?'':'<option value="" selected disabled>未选</option>'}${list.map(e=>`<option value="${esc(e)}" ${e===b.effort?'selected':''}>${esc(e)}</option>`).join('')}</select>`;
   }
   const pr=S.providers.find(pp=>pp.name===name)||{};
+  // 速度：Codex 型号在实时清单里有 Fast 档才出这一行；默认标准（不开）。已开着而这个型号没有了 ⇒ 照实标出来
+  const cm=cat&&Array.isArray(cat.models)?cat.models.find(m=>m&&m.id===b.model):null;
+  const fastOk=!!(cm&&Array.isArray(cm.speeds)&&cm.speeds.some(x=>x&&x.id==='fast'));
+  const speedRow=(pr.runner==='codex'&&(fastOk||b.speed==='fast'))?`<div class="kv"><span class="kk">速度</span><span class="vv" style="min-width:0">
+      <span class="inline" style="gap:8px;flex-wrap:wrap"><select class="gspeed" data-g="${esc(g.chatId)}" ${sel}><option value="" ${b.speed!=='fast'?'selected':''}>标准</option><option value="fast" ${b.speed==='fast'?'selected':''}>Fast</option></select>${fastOk?'':'<span style="color:var(--warn);font-size:11px">这个型号没有 Fast 档 —— 实际按标准跑</span>'}</span>
+      ${fastOk?`<div class="faint" style="font-size:11px;margin-top:4px;white-space:normal;line-height:1.5">Fast：${esc(cm.fastNote||'')} · 定时任务始终按标准 · 只改速度不重置会话</div>`:''}
+    </span></div>`:'';
   const win=g.contextWindow&&g.contextWindow.tokens?providerWindowText({contextWindow:g.contextWindow,runner:pr.runner},true):'';
   // One "模型" row: backend and model side by side (they wrap on a narrow screen).
   return `<div class="kv"><span class="kk">模型</span><span class="vv inline" style="gap:6px;flex-wrap:wrap;min-width:0">${backend}${model}</span></div>
-    <div class="kv"><span class="kk">思考深度</span>${effort}</div>
+    <div class="kv"><span class="kk">思考深度</span>${effort}</div>${speedRow}
     ${win?`<div class="kv"><span class="kk">上下文</span><span class="vv" title="${esc(win)}">${esc(win)}</span></div>`:''}
     <div class="kv"><span class="kk"></span><span class="faint" style="font-size:11px">换后端会开新对话；换型号或调深度接着当前对话 · 群空闲时才能改</span></div>`;
 }
@@ -2910,8 +2952,10 @@ async function saveGroupBrain(chatId,change){
     const r=await api('/api/groups/brain','POST',{chatId,...change});S=r;renderOverview();renderGroups();
     const c=r.brainChange||{};
     const filled=c.filled&&c.filled.length?'（未选的'+c.filled.join('和')+'先用推荐）':'';
-    const what=[c.model?modelName(c.model):'',c.effort||''].filter(Boolean).join(' · ');
-    toast(!c.changed?'没有变化':c.switching?`已切到 ${c.provider}${what?' · '+what:''} · 会话已重置，下条消息生效${filled}`:c.modelChanged?`已改为 ${what} · 接着当前对话，下条消息生效${filled}`:`思考深度已调为 ${c.effort} · 下条消息生效`,'ok');
+    const what=[c.model?modelName(c.model):'',c.effort||'',c.speed==='fast'?'Fast':''].filter(Boolean).join(' · ');
+    toast(!c.changed?'没有变化':c.switching?`已切到 ${c.provider}${what?' · '+what:''} · 会话已重置，下条消息生效${filled}`:c.modelChanged?`已改为 ${what} · 接着当前对话，下条消息生效${filled}`
+      :c.speedChanged?(c.speed==='fast'?'已开 Fast':'已回到标准速度')+(c.effortChanged?' · 思考深度 '+(c.effort||'未选'):'')+' · 会话保留'
+      :`思考深度已调为 ${c.effort} · 下条消息生效`,'ok');
   }catch(e){toast(e.message,'err');renderGroups();}
 }
 function renderGroups(){
@@ -3105,7 +3149,7 @@ function renderGroups(){
             :`<span class="dim">${S.runtimeCapabilities?esc(RUNTIME_UI_TEXT.board):'未创建 · 群里让 agent 需要放图时会自动建'}</span>`}</div></div>`}`
     // 收起时的一行摘要:后端 · 型号 · 思考深度 + 执行模式;「完全访问」在这里也必须看得见(警示色)
     const gopen=groupCardOpen(g.chatId,S.groups.length), gb=g.brain||{provider:g.effectiveProvider||g.provider||S.defaultProvider,model:'',effort:''};
-    const gsum=`<span class="tag">${esc(gb.provider||'')}</span><span class="gsum-t">${gb.model?esc(modelName(gb.model)):'型号未选'}${gb.effort?' · '+esc(gb.effort):''}</span>${isBypass?`<span class="tag risk" title="${fullTech}:跳过所有权限校验与目录围栏,可读写整机">${IC.warn} 完全访问</span>`:`<span class="tag">${safeLabel}</span>`}`;
+    const gsum=`<span class="tag">${esc(gb.provider||'')}</span><span class="gsum-t">${gb.model?esc(modelName(gb.model)):'型号未选'}${gb.effort?' · '+esc(gb.effort):''}${gb.speed==='fast'?' · Fast':''}</span>${isBypass?`<span class="tag risk" title="${fullTech}:跳过所有权限校验与目录围栏,可读写整机">${IC.warn} 完全访问</span>`:`<span class="tag">${safeLabel}</span>`}`;
     return `<div class="card${g.paused?' gpaused':''}${gopen?'':' gfolded'}" data-gid="${esc(g.chatId)}">
     <div class="ph">
       <div class="pn"><span class="drag" draggable="true" title="拖动排序">${IC.grip}</span><button type="button" class="gfold" data-gfold="${esc(g.chatId)}" aria-expanded="${gopen}" title="展开或收起本群设置"><span class="caret">${IC.chevronRight}</span><span class="gname">${esc(g.name||g.chatId)}</span></button></div>
@@ -3201,6 +3245,7 @@ function renderGroups(){
   $$('#groups [data-gcustom]').forEach(b=>b.onclick=()=>{const box=$('.gcustom[data-g="'+b.dataset.gcustom+'"]'),v=box&&box.querySelector('input').value.trim();
     if(!v){toast('填写型号 id','err');return;}saveGroupBrain(b.dataset.gcustom,{model:v});});
   $$('#groups .geffort').forEach(sel=>sel.onchange=()=>saveGroupBrain(sel.dataset.g,{effort:sel.value}));
+  $$('#groups .gspeed').forEach(sel=>sel.onchange=()=>saveGroupBrain(sel.dataset.g,{speed:sel.value}));
 
   $$('#groups .gsteer').forEach(c=>c.onchange=async()=>{const on=c.checked;
     try{S=await api('/api/groups/steer','POST',{chatId:c.dataset.g,enabled:on});renderGroups();toast(on?'已开启 · 下轮生效':'已关闭 · 下轮恢复排队','ok');}
@@ -3894,7 +3939,10 @@ function lcPaint(){
   if(input){input.disabled=paused;input.placeholder=paused?'这段对话已暂停，在「群 · 项目」里恢复后再发':'交代一件事…';}
   if(send)send.disabled=paused||lc.sending;
   if(busy){
-    if(held){busy.hidden=false;busy.className='lc-busy warn';busy.innerHTML=IC.warn+' <span>上一个任务结果不明，这段对话已暂停处理，等待确认；重启服务后仍如此时，按使用指南封存后继续。</span>';}
+    if(held&&S.runtimeCapabilities&&S.runtimeCapabilities.sealHeld){busy.hidden=false;busy.className='lc-busy warn';
+      busy.innerHTML=IC.warn+' <span>上一个任务结果不明，这段对话已暂停处理。封存后用新的记录继续，那条消息不再处理。</span>'+(lv.sealError?'<span class="tag bad" title="'+esc(lv.sealError)+'">上次封存没有完成</span>':'')+'<button class="btn sm" id="lcSeal">封存并继续</button>';
+      $('#lcSeal').onclick=()=>sealHeldGroup(g.chatId,g.name||g.chatId.slice(-8));}
+    else if(held){busy.hidden=false;busy.className='lc-busy warn';busy.innerHTML=IC.warn+' <span>上一个任务结果不明，这段对话已暂停处理，等待确认；重启服务后仍如此时，按使用指南封存后继续。</span>';}
     else if(lv.busy||lv.waitingForCapacity){busy.hidden=false;busy.className='lc-busy';
       busy.innerHTML=`<span class="lc-spin" aria-hidden="true"></span><span class="lc-st"><span>${lv.waitingForCapacity&&!lv.busy?'等待空闲名额':(lv.finalizing?'正在收尾':'正在处理')}</span><i>·</i><span id="lcSecs" data-i18n-skip>${esc(lcSecs(lv.sinceMs||0))}</span>${lv.queue?'<i>·</i><span>排队 '+lv.queue+'</span>':''}</span><button class="btn sm" id="lcStop">${IC.square} 停止</button>`;
       $('#lcStop').onclick=async()=>{try{const r=await api('/api/groups/stop','POST',{chatId:g.chatId});toast(r.ok?'已请求停止，等待结束确认':'当前没有可停止的运行任务','ok');}catch(e){toast(e.message,'err');}};
@@ -4898,6 +4946,17 @@ const I18N_EN=[
   ["等待模型读取，尚未确认加入", "Waiting for the model to read it; not yet confirmed joined"],
   ["处理状态请查看实时活动", "Check live activity for processing status"],
   ["需要处理", "Needs attention"],
+  ["封存并继续", "Seal and continue"],
+  ["上次封存没有完成", "The last seal did not complete"],
+  ["上一个任务的结果无法确认，下面的群已暂停处理，其他群照常。封存后原记录原样存档，那条消息不再处理；服务自动重启，群用新的记录继续。", "The outcome of the last task cannot be confirmed, so these groups are on hold; the others carry on. Sealing archives the record unchanged and that message is not processed again; the service restarts by itself and the group continues with a new record."],
+  ["上一个任务的结果无法确认，下面的群已暂停处理，其他群照常。先重启服务，能自动收尾的会恢复；仍需处理时，按使用指南在终端封存。", "The outcome of the last task cannot be confirmed, so these groups are on hold; the others carry on. Restart the service first: groups that can finish on their own recover. If one still needs attention, seal it from a terminal as described in the usage guide."],
+  ["上一个任务结果不明，这段对话已暂停处理。封存后用新的记录继续，那条消息不再处理。", "The last task's outcome is unknown, so this conversation is on hold. Sealing continues it with a new record; that message is not processed again."],
+  ["正在封存，服务重启后页面会自动刷新", "Sealing; the page reloads once the service has restarted"],
+  ["这个群没有处于暂停状态，无需封存", "This group is not on hold; there is nothing to seal"],
+  ["其他群还有任务或未结记录，等它们结束后再封存", "Other groups still have tasks or unsettled records; seal once they finish"],
+  ["正在升级，稍后再封存", "An upgrade is in progress; seal later"],
+  ["已在封存，服务正在重启", "Already sealing; the service is restarting"],
+  ["只有后台托管运行时才能在这里封存；请停止服务后按使用指南在终端处理", "Sealing here needs the background service; stop the service and follow the usage guide in a terminal"],
   ["可绑定新群，修改后端、型号、思考深度、项目目录、权限、数据输出和忙时跟进；该群须没有进行中的任务和未结记录。换后端或项目会开始新的一段对话，换型号或调深度接着当前对话。停止任务和开新会话在「概览」，开新会话须等该群空闲。群里发 /model 也能改。", "Bind new groups and change the backend, model, thinking depth, project folder, permissions, data display and busy-turn followups of a group with no running task or unsettled record. Changing the backend or project starts a new conversation; changing the model or depth continues it. Stop tasks and start new sessions in Overview; a new session needs the group to be idle. Members can also change these with /model in the group."],
   ["当前支持飞书文字消息、忙时跟进、任务回复和停止。定时任务、生图、群消息管理、画布与预览暂未接入。", "Feishu text messages, busy-turn followups, task replies and stopping are supported. Schedules, image generation, group message management, canvas and previews are unavailable."],
   ["当前不执行定时任务；已有定义仅供查看。", "Schedules are not executed. Existing definitions are shown for reference only."],
@@ -5122,6 +5181,16 @@ const I18N_EN=[
   ["Codex CLI (订阅登录)","Codex CLI (subscription sign-in)"],
   ["Claude 订阅登录","Claude subscription sign-in"],
   ["思考深度","Thinking depth"],
+  /* 群卡「速度」(Codex Fast 档) */
+  ["速度","Speed"],
+  ["标准","Standard"],
+  ["定时任务始终按标准","scheduled tasks always run at standard speed"],
+  ["只改速度不重置会话","changing only the speed keeps the session"],
+  ["这个型号没有 Fast 档 —— 实际按标准跑","This model has no Fast tier; it actually runs at standard speed"],
+  ["已开 Fast","Fast turned on"],
+  ["已回到标准速度","Back to standard speed"],
+  ["会话保留","session kept"],
+  ["额度按 2.5 倍扣","quota billed at 2.5x"],
   ["识图","Vision"],
   ["纯文本模型:送给它的图片(群里发的图/网页截图/读取的图片文件)自动降级成占位文本,不会 400 崩掉整轮","Text-only model: images sent to it (group photos / web screenshots / image files read) are downgraded to placeholder text instead of failing the whole turn with a 400"],
   ["不支持 · 图片自动降级","Not supported · images auto-downgraded"],
@@ -6175,6 +6244,11 @@ const I18N_EN=[
 ];
 const I18N_EN_RX=[
   [/^排队 (\d+)$/,(_,n)=>`${n} queued`],
+  /* 群卡「速度」:Fast 代价那句(服务端 fastNote)与开 Fast 后 toast 里的深度段 */
+  [/^Fast：((?:(?! · ).)+)$/,(_,n)=>'Fast: '+(trSeg(n)||n)],   // 只吃到「 · 」之前,整句交给拆段
+  [/^约 (\d+(?:\.\d+)?) 倍速[，,]额度按 (\d+(?:\.\d+)?) 倍扣$/,"about $1x speed, quota billed at $2x"],
+  [/^额度按 (\d+(?:\.\d+)?) 倍扣$/,"quota billed at $1x"],
+  [/^思考深度 (.+)$/,"thinking depth $1"],
   [/^已排队，前面还有 (\d+) 条$/,(_,n)=>`Queued behind ${n} message${n==='1'?'':'s'}`],
   [/^上下文窗口超过当前模型目录上限 (\d+) token$/,(_,n)=>`Context window exceeds the current model catalog limit of ${n} tokens`],
   [/^Codex 当前窗口 (\d+(?:\.\d+)?)万 token$/,(_all,n)=>'Current Codex context '+(+n>=100?(+n/100).toFixed(2).replace(/\.00$/,'')+'M':(+n*10).toFixed(1).replace(/\.0$/,'')+'k')+' tokens'],
@@ -6446,7 +6520,9 @@ const I18N_EN_RX=[
   [/^页面将在 (\d+) 秒后刷新，载入新版控制台$/,"Reloading in $1 s to load the new console"],
   [/^没有切换到 v([\d.]+)：([\s\S]*)；已换回 v([\d.]+)$/,"Did not switch to v$1 ($2); v$3 was restored"],
   [/^等待群空闲超时；可在空闲后重新发起$/,"Timed out waiting for idle groups; retry when they are idle"],
+  [/^封存「([\s\S]+)」？\n\n上一个任务的结果无法确认。封存会把现在的记录原样存档，那条消息不会再处理，需要的话请重发；随后服务自动重启，用新的记录继续。$/,"Seal \u201c$1\u201d?\n\nThe outcome of the last task cannot be confirmed. Sealing archives the current record unchanged and that message is not processed again; resend it if needed. The service then restarts by itself and continues with a new record."],
   [/^有暂停的群，升级已取消；先处理暂停的群$/,"A group is paused, so the upgrade was cancelled; handle the paused group first"],
+  [/^后台服务已在系统里被停用；升级要重新载入它，现在升级会让服务停下。请先在系统设置的登录项里重新允许它，再升级$/,"The background service is disabled in the system. An upgrade has to reload it, so upgrading now would leave the service stopped. Allow it again under Login Items in System Settings, then upgrade"],
   [/^更新后未能自动重启，请手动重启服务$/,"The update could not restart automatically; restart the service manually"],
   [/^等待群任务结束超时；可在任务空闲后重新发起$/,"Timed out waiting for group tasks; retry when they are idle"],
   [/^当前运行的是开发目录或非全局副本；请在终端手动更新$/,"This is a development or non-global install; update it from a terminal"],

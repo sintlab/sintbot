@@ -514,9 +514,10 @@ function createC2MultiGroupService({ routes, assertWriterLock,
       if (preflightOnly && heldList.length) {
         throw new Error(`Startup preflight would hold ${heldList.length} group(s): ${heldList.join('; ')}`)
       }
-      if (heldList.length && !bindings.size) {
-        throw new Error(`Every active group is held: ${heldList.join('; ')}`)
-      }
+      // Every group may be held: the service still starts, so the console stays
+      // up to show the hold and seal it, and a held group's new messages get
+      // their one notice. Exiting instead left a launchd job restarting
+      // without end and a one-group installation without any console.
       if (preflightOnly) {
         finishStartup()
         await stop('preflight', 0)

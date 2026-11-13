@@ -64,7 +64,7 @@ function itemEvent(method, item) {
 // App Server 的请求和通知共用一条 stdout 流；单轮独立进程使关闭成为续接边界。
 function runTurn(opts = {}) {
   const {
-    bin = 'codex', prompt, provider = {}, model, effort: wantEffort, workdir, sessionId,
+    bin = 'codex', prompt, provider = {}, model, effort: wantEffort, speed, workdir, sessionId,
     permissionMode, autocompactTokens, appendSystemPrompt, codexApp, codexProjectDocFallback, extraEnv,
     onEvent, onDurableEvent, onSteerReady, onSteerLanded, onTurnAccepted, onSpawnFailed, signal, log = () => {},
     softStopGraceMs = 10000, spawnFn = spawn,
@@ -105,6 +105,7 @@ function runTurn(opts = {}) {
     const configuredEffort = wantEffort || provider.reasoningEffort || ''
     let effort = configuredEffort
     let retriedEffort = false
+    let speedFellBack = false
     let pendingTurnStart = false
     let acceptedTurnId = null
     // Pre-turn rejection witness: the server answered initialize or the
@@ -276,9 +277,24 @@ function runTurn(opts = {}) {
       const threadRequest = appBuildRequest({ phase: 'thread', workdir: workdir || process.cwd(),
         model, providerModel: provider.model, permissionMode, autocompactTokens,
         codexProjectDocFallback, codexApp, appendSystemPrompt, sessionId })
+      // Speed is stated on every turn: 'default' (= standard, verified on CLI 0.162 / 0.166)
+      // even when Fast is off. Otherwise the CLI decides: its bundled catalog defaults
+      // gpt-6-sol / gpt-6-luna to priority (hidden by the server catalog today, but a
+      // fallback to the bundled one would silently turn Fast on at 2.5x quota), and a
+      // service_tier in the machine's ~/.codex/config.toml would leak into group turns.
+      // An older CLI that does not know the field ignores it.
+      threadRequest.params.serviceTier = speed === 'fast' ? 'fast' : 'default'
       const thread = await request(threadRequest.method, threadRequest.params)
       capturedSessionId = thread && thread.thread && thread.thread.id || capturedSessionId
       if (!capturedSessionId) throw new Error('codex app-server returned no thread id')
+      // Fast was requested but the thread reports a different tier (name silently
+      // dropped / model lacks the tier / account cannot use it) ⇒ this turn runs at
+      // standard: the result carries speedFellBack so footer and ledger do not claim
+      // Fast (same shape as effortFellBack). No field in the reply (older CLI) ⇒ no verdict.
+      if (speed === 'fast' && thread && Object.prototype.hasOwnProperty.call(thread, 'serviceTier') && thread.serviceTier !== 'priority' && thread.serviceTier !== 'fast') {
+        speedFellBack = true
+        log(`codex Fast 没生效(线程回报 serviceTier=${JSON.stringify(thread.serviceTier)})—— 这一轮按标准速度跑`)
+      }
       if (Array.isArray(thread.instructionSources)) {
         const sources = thread.instructionSources
         if (sources.length) log(`codex project instructions (${capturedSessionId}): ${sources.join(', ')}`)
@@ -352,6 +368,7 @@ function runTurn(opts = {}) {
       else lastResult = { type: 'result', subtype: 'success', text: lastAgentText, usage: totalUsage, usageCumulative: !!totalUsage,
         contextTokens, contextWindowTokens, contextCompacted }
       if (lastResult && retriedEffort) lastResult.effortFellBack = configuredEffort
+      if (lastResult && speedFellBack) lastResult.speedFellBack = 'fast'
       if (lastResult) emit(lastResult)
       // 让服务端自行落盘退出；收到完成通知就强杀会破坏下一轮 resume。
       try { child.stdin.end() } catch {}

@@ -51,7 +51,7 @@ const { slackPrecheck, fetchSlackChannels, sendSlackText } = require('../platfor
 const { getUsage, refreshUsage } = require('../usage')
 const brainMod = require('../core/brain') // a group's model and depth on one backend: the single resolver
 const { applyBrainChange, auditRow } = require('../groupbrain')
-const { effortsFor, fillPicks } = require('../core/modelcmd')
+const { effortsFor, fillPicks, speedsFor, fastNote } = require('../core/modelcmd')
 
 // 反馈本默认落点(与 CLI / 群命令同一个文件 —— 三个入口一本账,不许各记各的)
 const DEFAULT_ISSUES_FILE = () => path.join(os.homedir(), '.sbot', 'issues.jsonl')
@@ -343,6 +343,12 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
     const target = change.provider || home
     return { g, defName, home, target, tProv: { ...DEFAULTS.providers, ...(raw.providers || {}) }[target] }
   }
+  const BAD_SPEED_TEXT = '速度只能是 fast（开 Fast）或空（标准）'
+  // Models with a Fast tier carry the one-line cost note the chat command
+  // shows (core/modelcmd.js fastNote); the page does not keep its own copy.
+  const withFastNote = (cat) => (cat && Array.isArray(cat.models))
+    ? { ...cat, models: cat.models.map((m) => (m && speedsFor(cat, m.id).includes('fast')) ? { ...m, fastNote: fastNote(cat, m.id) } : m) }
+    : cat
   async function changeGroupBrain(chatId, change, by = 'console') {
     // The model list may need a CLI handshake: fetch it first, then read,
     // decide and write with no await in between, so a /model change made
@@ -359,15 +365,26 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
     }
     const switching = target !== home
     const tBrain = brainMod.groupBrain(g, target, tProv, { defaultProvider: defName })
-    let model = change.model, effort = change.effort
+    let model = change.model, effort = change.effort, speed = change.speed
     if (model !== undefined && model !== '' && tProv.baseUrl && !isDeepSeek(tProv)) return { status: 400, body: { error: '这个模型的型号是连接设置,请在「模型」页修改' } }
     if (model !== undefined && model !== '' && !brainMod.isModel(model)) return { status: 400, body: { error: '型号格式不对' } }
     if (effort !== undefined && effort !== '' && !brainMod.isEffort(effort)) return { status: 400, body: { error: '思考深度格式不对' } }
+    // Speed: 'fast' = turn Fast on, '' = back to standard, omitted = keep. The
+    // same allow list as the writer (src/groupbrain.js 'bad-speed').
+    if (speed !== undefined && speed !== '' && speed !== 'fast') return { status: 400, body: { error: BAD_SPEED_TEXT } }
     if (model === tBrain.model) model = undefined
     if (effort === tBrain.effort && model === undefined) effort = undefined
-    const f = fillPicks({ switching, model, effort, currentModel: tBrain.model, currentEffort: tBrain.effort, third: !!tProv.baseUrl && !isDeepSeek(tProv), cat })
+    if (speed !== undefined && speed === (tBrain.speed || '') && model === undefined) speed = undefined
+    const f = fillPicks({ switching, model, effort, speed, currentModel: tBrain.model, currentEffort: tBrain.effort, currentSpeed: tBrain.speed || '', third: !!tProv.baseUrl && !isDeepSeek(tProv), cat })
     model = f.model; effort = f.effort
+    if (speed === undefined && f.speed !== undefined) speed = f.speed // a model without a Fast tier drops Fast
     const nextModel = model === undefined ? tBrain.model : model
+    // Turning Fast on needs the target model (the one chosen in this request,
+    // else the group's current one on the target backend) to offer that tier
+    // in the live list; the chat /model fast command uses the same test.
+    if (speed === 'fast' && (!cat || cat.ok === false || !speedsFor(cat, nextModel).includes('fast'))) {
+      return { status: 400, body: { error: '这个型号没有 Fast 档（或暂时取不到可选清单）' } }
+    }
     if (effort) {
       const known = cat && Array.isArray(cat.models) ? cat.models.find((m) => m.id === nextModel) : null
       if (known && Array.isArray(known.efforts) && !known.efforts.length) return { status: 400, body: { error: '这个型号不支持调思考深度' } }
@@ -378,7 +395,8 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       const maximum = codexCatalogWindows().get(nextModel)?.maxTokens
       if (maximum && tProv.contextWindowTokens > maximum) return { status: 400, body: { error: `「${target}」的自定义上下文窗口超过这个型号的上限 ${maximum} token,先在「模型」页调小` } }
     }
-    const r = applyBrainChange(raw, chatId, { provider: switching ? target : undefined, model, effort })
+    const r = applyBrainChange(raw, chatId, { provider: switching ? target : undefined, model, effort, ...(speed !== undefined ? { speed } : {}) })
+    if (r.error === 'bad-speed') return { status: 400, body: { error: BAD_SPEED_TEXT } }
     if (r.error) return { status: 400, body: { error: r.error } }
     if (!r.changed) return { status: 200, body: { ...(await buildState()), brainChange: { changed: false } } }
     try { writeRaw(raw) } catch (e) {
@@ -388,8 +406,8 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
     audit.append(auditRow(chatId, r, { source: 'console', by }))
     const resets = runtimePolicy && runtimePolicy.appliedResets ? runtimePolicy.appliedResets() : []
     return { status: 200, body: { ...(await buildState()), brainChange: { changed: true, switching: r.switching,
-      modelChanged: r.modelChanged, effortChanged: r.effortChanged, filled: f.filled, provider: target,
-      model: r.after.model, effort: r.after.effort, reset: resets.includes(chatId) } } }
+      modelChanged: r.modelChanged, effortChanged: r.effortChanged, speedChanged: !!r.speedChanged, filled: f.filled, provider: target,
+      model: r.after.model, effort: r.after.effort, speed: r.after.speed || '', reset: resets.includes(chatId) } } }
   }
   const settleDefault = (raw) => {
     if (!runtimePolicy) { fixDefault(raw); return null }
@@ -2453,9 +2471,9 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       // real-time per-group model switch: persist to config (+ hot-reload) AND set
       // the live runtime override so it takes effect on the very next turn.
       if (p === '/api/groups/brain' && req.method === 'POST') {
-        const { chatId, provider, model, effort } = await body(req)
+        const { chatId, provider, model, effort, speed } = await body(req)
         const pick = (v) => (v === undefined || v === null ? undefined : String(v))
-        const out = await changeGroupBrain(chatId, { provider: pick(provider) || undefined, model: pick(model), effort: pick(effort) })
+        const out = await changeGroupBrain(chatId, { provider: pick(provider) || undefined, model: pick(model), effort: pick(effort), speed: pick(speed) })
         return sendJSON(res, out.status, out.body)
       }
       if (p === '/api/groups/provider' && req.method === 'POST' && runtimePolicy) {
@@ -2509,6 +2527,14 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         if (!control || !control.stop) return sendJSON(res, 400, { error: '后台服务未运行 — 这个动作需要它在跑' })
         return sendJSON(res, 200, { ok: control.stop(chatId) })
       }
+      // Seal a held group and restart: the reply leaves first, then the service
+      // stops and launchd starts it again (src/c2consoleseal.js).
+      if (p === '/api/groups/seal' && req.method === 'POST') {
+        const { chatId } = await body(req)
+        if (!control || !control.sealHeld) return sendJSON(res, 400, { error: '后台服务未运行 — 这个动作需要它在跑' })
+        try { return sendJSON(res, 202, control.sealHeld(chatId)) }
+        catch (e) { return sendJSON(res, 409, { error: e.message }) }
+      }
       // 中断并开新:abort 当前 turn + 清队列 + 清 session,等价 busy 时的 /new
       if (p === '/api/groups/interrupt' && req.method === 'POST') {
         const { chatId } = await body(req)
@@ -2551,7 +2577,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         const raw = readRaw()
         const prov = { ...DEFAULTS.providers, ...(raw.providers || {}) }[name]
         if (!prov) return sendJSON(res, 404, { error: `未知模型 '${name}'` })
-        const cat = await catalogFor(name, prov)
+        const cat = withFastNote(await catalogFor(name, prov))
         return sendJSON(res, 200, cat || { ok: false, models: prov.baseUrl ? null : [], efforts: [], recommended: { model: '', effort: '' } })
       }
       if (p === '/api/claude/models' && req.method === 'GET') {

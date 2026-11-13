@@ -14,19 +14,23 @@ const { DEFAULTS } = require('./config')
 /**
  * @param raw     configuration object (mutated)
  * @param chatId
- * @param change  { provider?, model?, effort? }
+ * @param change  { provider?, model?, effort?, speed? }
  *   provider: switch backend (omitted = keep); model / effort: string choice
  *   ('' = clear), omitted = keep. Choices go to the target backend's entry.
- * @returns { error } | { before, after, switching, target, home, modelChanged, effortChanged, changed }
- *   error ∈ 'no-group' | 'unknown-provider' | 'bad-model' | 'bad-effort'
+ *   speed: 'fast' = turn Fast on, '' = back to standard (entry deleted),
+ *   omitted = keep. Same rule as depth: no backend switch, no session reset.
+ * @returns { error } | { before, after, switching, target, home, modelChanged, effortChanged, speedChanged, changed }
+ *   error ∈ 'no-group' | 'unknown-provider' | 'bad-model' | 'bad-effort' | 'bad-speed'
+ *   speedChanged, like effortChanged, is only reported when the backend did not switch.
  */
 function applyBrainChange(raw, chatId, change = {}) {
-  const { provider, model, effort } = change
+  const { provider, model, effort, speed } = change
   const g = raw && raw.groups && raw.groups[chatId]
   if (!g) return { error: 'no-group' }
   if (provider !== undefined && !(raw.providers || {})[provider]) return { error: 'unknown-provider' }
   if (model !== undefined && model !== '' && !brainMod.isModel(model)) return { error: 'bad-model' }
   if (effort !== undefined && effort !== '' && !brainMod.isEffort(effort)) return { error: 'bad-effort' }
+  if (speed !== undefined && speed !== '' && !brainMod.isSpeed(speed)) return { error: 'bad-speed' }
   const defName = raw.defaultProvider || DEFAULTS.defaultProvider
   const provAll = { ...DEFAULTS.providers, ...(raw.providers || {}) }
   const home = g.provider || defName
@@ -35,11 +39,12 @@ function applyBrainChange(raw, chatId, change = {}) {
   brainMod.migrateLegacyModel(g, defName)
   const switching = provider !== undefined && provider !== home
   const target = provider || home
-  if (model !== undefined || effort !== undefined) {
+  if (model !== undefined || effort !== undefined || speed !== undefined) {
     const prefs = (g.providerPrefs && typeof g.providerPrefs === 'object' && !Array.isArray(g.providerPrefs)) ? g.providerPrefs : {}
     const cur = { ...(brainMod.cleanPref(prefs[target]) || {}) }
     if (model !== undefined) { if (model) cur.model = model; else delete cur.model }
     if (effort !== undefined) { if (effort) cur.effort = effort; else delete cur.effort }
+    if (speed !== undefined) { if (speed) cur.speed = speed; else delete cur.speed }
     if (Object.keys(cur).length) prefs[target] = cur; else delete prefs[target]
     g.providerPrefs = prefs
   }
@@ -49,16 +54,19 @@ function applyBrainChange(raw, chatId, change = {}) {
   const after = brainMod.groupBrain(g, target, provAll[target], { defaultProvider: defName })
   const modelChanged = !switching && before.model !== after.model
   const effortChanged = !switching && before.effort !== after.effort
-  return { before, after, switching, target, home, modelChanged, effortChanged,
-    changed: switching || modelChanged || effortChanged }
+  const speedChanged = !switching && before.speed !== after.speed
+  return { before, after, switching, target, home, modelChanged, effortChanged, speedChanged,
+    changed: switching || modelChanged || effortChanged || speedChanged }
 }
 
 // One audit row (console, chat command and card share the shape; source tells which).
+// Speed is written into from / to only while Fast is on (standard = no key) and
+// speedChanged only when it changed, so rows that never touched speed are byte-identical.
 function auditRow(chatId, r, { source, by }) {
-  const pick = (b) => ({ model: b.model || '', effort: b.effort || '' })
+  const pick = (b) => ({ model: b.model || '', effort: b.effort || '', ...(b.speed ? { speed: b.speed } : {}) })
   return { kind: 'group-model', chatId, source, by: by || '', from: { provider: r.home, ...pick(r.before) },
     to: { provider: r.target, ...pick(r.after) }, switching: r.switching, modelChanged: r.modelChanged,
-    effortChanged: r.effortChanged, ts: Date.now() }
+    effortChanged: r.effortChanged, ...(r.speedChanged ? { speedChanged: true } : {}), ts: Date.now() }
 }
 
 // Card-level values that move into groups: subscription cards give up model

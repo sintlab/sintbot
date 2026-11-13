@@ -1,6 +1,6 @@
 {
   "name": "sintbot",
-  "version": "1.4.20",
+  "version": "1.4.21",
   "private": false,
   "description": "A personal AI agent on your Mac: local conversations and Feishu project groups with Codex or Claude Code.",
   "bin": {
@@ -61,6 +61,7 @@
     "src/agent/winexec.js",
     "src/c2configcontrol.js",
     "src/c2console.js",
+    "src/c2consoleseal.js",
     "src/c2incident.js",
     "src/c2install.js",
     "src/c2migration.js",

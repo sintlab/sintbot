@@ -1,8 +1,12 @@
-# Install SintBot 1.4.18
+# Install SintBot 1.4.19
 
 English · [简体中文](./zh-CN/install.md)
 
 You need a Mac, Node.js 22 or newer, and projects stored on that Mac. Install and sign in to at least one runner: Codex or Claude Code. This release connects 1–32 Feishu China groups, binds each group to one local project, and runs in the foreground.
+
+## Desktop app
+
+On an Apple silicon Mac, [download SintBot for macOS](https://github.com/sintlab/sintbot-desktop/releases/latest), drag it to Applications and open it. Node.js is included. Choose a project and executor, then start locally or scan with Feishu. Closing the window or quitting the app keeps the service running; Stop holds across logins until you choose Start. Remove Background Service preserves configuration and history.
 
 ## 1. Install with one command
 
@@ -10,7 +14,7 @@ You need a Mac, Node.js 22 or newer, and projects stored on that Mac. Install an
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-The installer checks the environment, installs `sintbot@1.4.18` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.18`. No sudo is needed.
+The installer checks the environment, installs `sintbot@1.4.19` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.19`. No sudo is needed.
 
 To preview, append `-s -- --dry-run`. To choose another location, set `SINTBOT_INSTALL_DIR` and adjust the executable paths below.
 
@@ -27,6 +31,18 @@ Without a configuration file this command does not fail; it opens the local setu
 Before showing the QR code, setup reads the selected executor's live model catalog and displays its recommended model and thinking depth. These choices are saved explicitly for the new group. If the live list is unavailable, setup stops before creating an app; check the executor login and connection, then retry. After connecting, change the choices in the console or with `/model`. Existing group choices are preserved.
 
 When setup completes the service starts right away and the page switches to the console a few seconds later. Keep the terminal open. In the new group, send "Read the first line of the project README and reply with only that line", then compare it with the `README.md` in the project folder.
+
+### Start on this Mac without Feishu
+
+If you have no company or team account, or just want to try it first, the setup page ends with "Use on this Mac without a chat app". It does not scan or create any app: it writes the configuration from the project and executor chosen on the page, the service starts, and the console opens on its Chat page. Say what you need there; Claude Code or Codex on this Mac works in the project folder and the answer comes back to the page. The transcript is stored under `local-chats/` in the data directory, on this Mac only.
+
+A conversation here runs through the same flow as a Feishu group: messages are registered, a task whose outcome is unknown is held for confirmation instead of being run again, and the commands listed by `/help` work. Unlike a group, the answer appears once the turn ends (the page shows a timer and Stop while it works), images and files are not supported yet, and there are no group message tools.
+
+To connect Feishu later, stop SintBot, run the command below, confirm the scan in Feishu on your phone, then start as usual. Your conversations, transcripts and settings are kept, the command first backs up the configuration under `config-backups/` in the data directory, and the new group's message log is registered on the next start.
+
+```bash
+"$HOME/.local/share/sintbot/bin/sintbot" connect --attach
+```
 
 ### Terminal route
 
@@ -164,6 +180,8 @@ Model and thinking depth are chosen per group: on the group card, the Model row 
 The overview combines group projects and concurrency. Each row shows the runner, state and elapsed time, project folder, model and configured reasoning effort, and the latest reported context usage. Select a group to view its tasks, then expand a task for tools, reply and usage. Context is a session sample, not cumulative token consumption; unknown capacity and older samples are labeled. Row icons provide console messages, stop and new-session controls according to the current group state.
 
 With `--ui`, open `http://127.0.0.1:4600` on this Mac. The console shows each group, stops tasks, starts a new conversation for an idle group, binds new groups, switches the model or project folder of an idle group, and adds or configures models. For LAN access, set a console password in its settings first, then enable LAN access.
+
+The Chat page lists the conversations held on this Mac. There you can create one (project folder and model), send messages, stop the current task and start a new session; the model, access mode and project folder are still changed under Groups · Projects, where conversations appear beside groups. With only conversations and no chat platform connected, the console opens on this page.
 
 The Message action also works while a group is busy. It follows the group’s follow-up setting: the message waits for model reading or joins the queue. “Accepted” does not yet confirm that the model has read it. New sessions and model changes still require an idle group.
 

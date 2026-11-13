@@ -5,6 +5,8 @@ const { createUiServer } = require('./ui/serverbase')
 const { START_PATH, CALLBACK_PATH } = require('./ui/feishulogin')
 const { assertJournalScope } = require('./c2install')
 const { createDurableConsoleSay } = require('./consolesay')
+const { isLocalChatId, LocalChatError } = require('./platform/local')
+const { taskId } = require('./core/enginecheckpoint')
 
 // A host facade over existing v2 authorities, not a second execution engine.
 // The allowlist applies after the existing console's authentication boundary.
@@ -14,6 +16,11 @@ const READ_PATHS = ['/api/state', '/api/events', '/api/inbox', '/api/activity', 
   '/api/feishu/admin-candidates', '/api/feishu/org-users', '/api/feishu/resolve-contact',
   '/api/feishu/chats', '/api/feishu/chat-members', '/api/update', '/api/claude/models',
   '/api/groups/model-options',
+  // The console's own conversations (src/platform/local.js).
+  '/api/local/history',
+  // Counts only, for the desktop shell: also answered to a loopback request
+  // without credentials (see serverbase).
+  '/api/shell/activity',
   START_PATH, CALLBACK_PATH]
 const WRITE_PATHS = ['/api/login', '/api/logout', '/api/logout/all',
   '/api/ui/network', '/api/ui/public-url', '/api/ui/update-settings', '/api/feishu/admins',
@@ -35,6 +42,9 @@ const WRITE_PATHS = ['/api/login', '/api/logout', '/api/logout/all',
   // the group and the reply delivered there. The posted line is the platform
   // message that drives the turn (see consolesay.createDurableConsoleSay).
   '/api/groups/say',
+  // A line typed into a local conversation enters the same service ingress as
+  // a group message and takes the same durable receipt.
+  '/api/local/send',
   // Software updates: check and ignore anywhere; install only when launchd
   // manages this exact entry (the updater refuses every other run mode).
   '/api/update/check', '/api/update/start', '/api/update/ignore']
@@ -58,6 +68,8 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
   // and that group's real platform adapter. Without them it is refused.
   getPlatform = null, routeMessage = null, isServing = () => false, isFrozen = () => false,
   acquireCapacity = null,
+  // The local conversation adapter of the live transport (null until it starts).
+  getLocal = () => null, localConfirmMs = 5_000, localPollMs = 10,
   log = () => {} } = {}) {
   for (const callback of [getBindings, getCapacity, getConfig, getHeld, assertWriterLock,
     validateConfig, applyConfig, beforeWrite, appliedResets, now, isServing, isFrozen, log]) {
@@ -74,6 +86,8 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
   const trials = require('./consoletrials').createConsoleTrials({ getCapacity, acquireCapacity,
     assertWriterLock, isServing, isFrozen })
   const capabilities = Object.freeze({ mode: 'durable-v2',
+    // Conversations held in the console itself; the page shows them when set.
+    localChat: typeof getLocal === 'function',
     groupCommands: GROUP_COMMANDS,
     reason: '此操作尚未接入当前版本的持久处理流程，未执行。',
     summary: '实时状态、认证管理、停止任务、空闲群开新会话、支持忙时跟进的控制台插话、绑定新群、空闲群的模型切换（Codex / Claude Code）和项目目录修改、模型的添加与设置，以及后台运行时的软件升级已接入；该群有任务或未结记录时不能修改，也不能开新会话；改模型的型号、后端或端点时，用它的群须空闲，并会开始新的一段对话。插话会把这句话（标着「管理员」）和回复都发进群，群忙时按该群的忙时跟进设置尝试加入当前任务，关闭或暂不支持时排队；确认模型读取后才显示已加入；静默插话和不回复的插话暂不支持。解除绑定、移除模型、定时任务和画布暂不可用。',
@@ -160,6 +174,62 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
   const say = getPlatform ? createDurableConsoleSay({ getPlatform,
     getGroup: chatId => getConfig().groups?.[chatId] || null,
     gate: sayGate, route: routeMessage, receiptState, locate: locateSay, log, now }) : null
+  // A line typed into a local conversation. The adapter stores it, then hands
+  // it to the service ingress; this waits only until the message is registered
+  // (a receipt exists) or refused, never for the turn itself. Pause, hold,
+  // recovery and upgrade are decided by the ingress and answered in the
+  // conversation like in a group.
+  const REFUSALS = { 'group-held': 'held', 'group-recovering': 'recovering', upgrading: 'upgrading' }
+  async function localSend(chatId, text, { requestId } = {}) {
+    const group = isLocalChatId(chatId) ? getConfig().groups?.[chatId] : null
+    if (!group || group.platform !== 'local') return { ok: false, reason: 'unbound' }
+    if (group.paused) return { ok: false, reason: 'paused' }
+    let locked = false
+    try { locked = assertWriterLock() === true } catch {}
+    const local = getLocal()
+    if (!locked || isServing() !== true || !local) return { ok: false, reason: 'not-serving' }
+    let sent
+    try { sent = local.submit(chatId, String(text ?? ''), { requestId }) } catch (error) {
+      if (error instanceof LocalChatError) return { ok: false, reason: error.reason }
+      log('local send: ' + (error?.message || String(error)))
+      return { ok: false, reason: 'store-failed' }
+    }
+    const receiptId = taskId({ source: 'message', chatId, sourceId: sent.id })
+    const settled = sent.settled.then(value => ({ value }), error => ({ error }))
+    let stopped = false
+    settled.then(() => { stopped = true })
+    const registered = (async () => {
+      const deadline = Date.now() + localConfirmMs
+      while (!stopped && Date.now() < deadline) {
+        if (receiptState(chatId, receiptId)) return { admitted: true }
+        await new Promise(resolve => setTimeout(resolve, localPollMs))
+      }
+      return receiptState(chatId, receiptId) ? { admitted: true } : { timeout: true }
+    })()
+    const first = await Promise.race([settled, registered])
+    if (first.admitted) return { ok: true, id: sent.id, where: locateSay(chatId, receiptId) }
+    if (first.timeout) return { ok: true, id: sent.id, where: { state: 'unconfirmed' } }
+    const { value, error } = first
+    const state = receiptState(chatId, receiptId)
+    if (state) return { ok: true, id: sent.id, where: state === 'completed' ? { state: 'done' } : locateSay(chatId, receiptId) }
+    if (error) return { ok: false, id: sent.id, reason: 'inject-failed' }
+    if (value?.duplicate) return { ok: true, id: sent.id, where: { state: 'duplicate' } }
+    // A command or a refusal: the ingress has already answered in the conversation.
+    if (value?.rejected) {
+      return { ok: true, id: sent.id, where: { state: String(text).trim().startsWith('/') && !REFUSALS[value.reason]
+        ? 'command' : 'refused', reason: REFUSALS[value.reason] || value.reason, notified: value.notified === true } }
+    }
+    if (value?.held) return { ok: true, id: sent.id, where: { state: 'refused', reason: 'held' } }
+    if (value?.recovered) return { ok: true, id: sent.id, where: { state: 'refused', reason: 'recovering' } }
+    if (value?.ignored || value?.quarantined) return { ok: false, id: sent.id, reason: 'not-serving' }
+    return { ok: true, id: sent.id, where: { state: 'done' } }
+  }
+  function localHistory(chatId, options = {}) {
+    const group = isLocalChatId(chatId) ? getConfig().groups?.[chatId] : null
+    if (!group || group.platform !== 'local') return null
+    const local = getLocal()
+    return local ? local.history(chatId, options) : []
+  }
   function getLiveState() {
     const cfg = getConfig()
     const capacity = getCapacity()
@@ -297,6 +367,7 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
         clearSession(chatId)
         return { wasBusy: false }
       },
+      localSend, localHistory,
     },
   }
 }

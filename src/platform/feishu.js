@@ -529,11 +529,12 @@ function answerCardElements(text, { milestones = [], footer = '', footerDetail =
   if (ms.length) elements.push(milestonePanel(ms))
   // ⚠ 顺序钉死:正文 → 可复制版 → 过程 → 小字。小字是整卡最底、右对齐(2026-09-16 定下的位置:
   //   「小号字体、卡片右下角」);notation = 12px,是 markdown 组件最小的一档,右对齐靠 text_align。
-  if (ft) elements.push({ tag: 'markdown', text_size: 'notation', text_align: 'right', content: `<font color='grey'>${ft}</font>` })
-  // 型号来自可配置字段,不能直接插进 font 标签;把第二行独立成元素,手机宽度不足时自然换行。
-  if (ftDetail) {
-    const safe = ftDetail.replace(/[\r\n]+/g, ' ').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    elements.push({ tag: 'markdown', text_size: 'notation', text_align: 'right', content: `<font color='grey'>${safe}</font>` })
+  // 合为同一段次要信息，避免两个组件的垂直留白；手机宽度不足时自然换行。
+  // 型号来自可配置字段，继续转义，不能直接插进 font 标签。
+  const safeDetail = ftDetail.replace(/[\r\n]+/g, ' ').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const footerText = [ft, safeDetail].filter(Boolean).join(' · ')
+  if (footerText) {
+    elements.push({ tag: 'markdown', text_size: 'notation', text_align: 'right', content: `<font color='grey'>${footerText}</font>` })
   }
   return elements
 }

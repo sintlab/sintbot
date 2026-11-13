@@ -11,7 +11,7 @@
 const http = require('node:http')
 const path = require('node:path')
 const { spawnSync } = require('node:child_process')
-const { runConnect, qrPage, probeRunners: connectProbe, EXIT_INTERRUPTED } = require('./connect')
+const { runConnect, runLocalSetup, qrPage, probeRunners: connectProbe, EXIT_INTERRUPTED } = require('./connect')
 
 const QR_URL = /^https:\/\/[^\s]+/
 const APP_ID_LINE = /^应用 ID：(cli_[A-Za-z0-9]{6,64})$/m
@@ -36,10 +36,11 @@ function svgOf(url) {
 // One attempt = one `runConnect` run with captured output. The state object
 // is what the page polls; it carries no secrets (the app secret never reaches
 // stdout/stderr by design of runConnect).
-function createSetupSession({ configFile, dataDir, home, version, runners, connect = runConnect, deps = {},
+function createSetupSession({ configFile, dataDir, home, version, runners, connect = runConnect, localSetup = runLocalSetup, deps = {},
   initialize = (file, options) => require('./c2install').initializeInstallation(file, options), log = () => {} }) {
   const state = {
     phase: 'form',            // form | running | waitingChat | done | failed
+    mode: 'feishu',           // feishu (scan) | local (a conversation in the console, no chat platform)
     lines: [],                // notices in order (stderr of runConnect)
     qr: null,                 // inline SVG once the scan link is known
     appId: null,              // printed by runConnect after the scan; reused by every retry
@@ -113,6 +114,7 @@ function createSetupSession({ configFile, dataDir, home, version, runners, conne
     if (!input.appId && state.appId) input.appId = state.appId
     if (!input.chatId && state.chatId && input.appId === state.groupAppId) input.chatId = state.chatId
     state.phase = 'running'
+    state.mode = 'feishu'
     state.modelDefaults = null
     state.lines = []
     state.qr = null
@@ -178,6 +180,52 @@ function createSetupSession({ configFile, dataDir, home, version, runners, conne
     return state
   }
 
+  // Setup without a chat platform: no scan, no app; one conversation in the
+  // console. Same captured-notice session as the scan run.
+  function startLocal(rawInput) {
+    if (state.phase === 'running') throw new Error('接入正在进行')
+    if (state.phase === 'done') throw new Error('接入已完成')
+    if (state.initOnly) return retryInit()
+    if (state.appId) throw new Error('这次接入已经创建了飞书应用，请继续完成扫码接入')
+    const input = validate({ name: rawInput?.name, workdir: rawInput?.workdir, provider: rawInput?.provider })
+    state.phase = 'running'
+    state.mode = 'local'
+    state.modelDefaults = null
+    state.lines = []
+    state.qr = null
+    state.notice = ''
+    state.startedAt = Date.now()
+    state.endedAt = null
+    state.input = { name: input.name || null, workdir: input.workdir || null, provider: input.provider || null, basic: false }
+    signalHandlers = new Map()
+    const push = chunk => { for (const line of String(chunk).split('\n')) if (line.trim()) state.lines.push(line) }
+    const run = (async () => {
+      let code
+      try {
+        code = await localSetup({ config: configFile, dataDir, name: input.name, workdir: input.workdir, provider: input.provider },
+          { ...deps, stdout: { write: push }, stderr: { write: push }, isTTY: false, version, env: process.env, home,
+            onModelDefaults: value => { state.modelDefaults = { provider: value.provider, model: value.model, effort: value.effort, name: value.name, source: value.source } },
+            signals: { on: (sig, fn) => signalHandlers.set(sig, fn), off: (sig) => signalHandlers.delete(sig) } })
+      } catch (error) {
+        code = 1
+        state.lines.push(error?.message || String(error))
+      }
+      state.endedAt = Date.now()
+      state.notice = [...state.lines].reverse().find(l => l.trim()) || ''
+      if (code === 0) {
+        state.phase = 'done'
+        log('setup: local conversation configured and initialized')
+        finish(true)
+      } else {
+        state.phase = 'failed'
+        if (state.lines.some(l => /^初始化失败/.test(l))) state.initOnly = true
+      }
+      current = null
+    })()
+    current = run
+    return state
+  }
+
   function retryInit() {
     state.phase = 'running'; state.notice = ''; state.startedAt = Date.now()
     const run = (async () => {
@@ -212,13 +260,13 @@ function createSetupSession({ configFile, dataDir, home, version, runners, conne
 
   function reset() {
     if (state.phase === 'running' || state.phase === 'done') return false
-    state.phase = 'form'; state.lines = []; state.qr = null; state.notice = ''
+    state.phase = 'form'; state.lines = []; state.qr = null; state.notice = ''; state.mode = 'feishu'
     return true
   }
 
   const snapshot = () => ({ ...state, lines: state.lines.slice(-60) })
   void EXIT_INTERRUPTED
-  return { state, snapshot, start, cancel, reset, completed, wait: () => current }
+  return { state, snapshot, start, startLocal, cancel, reset, completed, wait: () => current }
 }
 
 function createSetupServer(options) {
@@ -262,6 +310,11 @@ function createSetupServer(options) {
         if (!/^application\/json/.test(req.headers['content-type'] || '')) return json(res, 415, { error: '需要 JSON' })
         const body = await readBody(req)
         return json(res, 200, { ok: true, state: session.start(body) && session.snapshot() })
+      }
+      if (req.method === 'POST' && url.pathname === '/api/setup/local') {
+        if (!/^application\/json/.test(req.headers['content-type'] || '')) return json(res, 415, { error: '需要 JSON' })
+        const body = await readBody(req)
+        return json(res, 200, { ok: true, state: session.startLocal(body) && session.snapshot() })
       }
       if (req.method === 'POST' && url.pathname === '/api/setup/cancel') return json(res, 200, { ok: session.cancel() })
       if (req.method === 'POST' && url.pathname === '/api/setup/reset') return json(res, 200, { ok: session.reset() })
@@ -327,11 +380,14 @@ function translateSetupNotice(value, lang = 'en') {
     '基础模式，跳过发布。': 'Basic setup: skipping publication.', '权限已开通。': 'Permissions enabled.',
     '已提交发布。': 'App publication submitted.', '使用你提供的群。': 'Using the group you provided.',
     '群已创建并拉入机器人。': 'Group created and the bot added.', '初始化完成。': 'Initialization complete.',
+    '本机对话已就绪，在控制台的「对话」里说第一句吧。': 'Your conversation is ready. Open Chat in the console and say what you need.',
+    '这次接入已经创建了飞书应用，请继续完成扫码接入': 'A Feishu app was already created in this setup. Finish connecting by scanning.',
     '连接完成。': 'Connected.', '连接完成，去飞书群里 @机器人 试试吧。': 'Connected. Send your first task to the bot in the Feishu group.',
   }
   if (exact[line]) return exact[line]
   let match
   if ((match = /^新群默认：(.*) · (.*?)。接入后可在控制台修改。$/.exec(line))) return `New group defaults: ${match[1]} · ${match[2]}. You can change them in the console after setup.`
+  if ((match = /^对话默认：(.*) · (.*?)。之后可在控制台修改。$/.exec(line))) return `Conversation defaults: ${match[1]} · ${match[2]}. You can change them in the console later.`
   if ((match = /^二维码 (\d+) 秒内有效。$/.exec(line))) return `The QR code expires in ${match[1]} seconds.`
   if ((match = /^应用 ID：(.*)$/.exec(line))) return `App ID: ${match[1]}`
   if ((match = /^项目目录 (.*) 就绪。$/.exec(line))) return `Project folder ready: ${match[1]}`
@@ -364,83 +420,74 @@ function setupPage({ version = '' } = {}) {
 <html lang="en" data-sintbot-setup="true"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>SintBot · Connect Feishu</title>
 <style>
-:root{--ink:#1a1714;--muted:#6b6259;--line:#e6ded1;--line-hi:#d3c8b6;--paper:#faf8f4;--inset:rgba(26,23,20,.05);--copper:#a16b33;--copper-hi:#8a5a29;--fail:#e55934;--ok:#4d7c0f}
-*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:13px/20px -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Hiragino Sans GB","Helvetica Neue",sans-serif;-webkit-font-smoothing:antialiased}
-.wrap{max-width:560px;margin:0 auto;padding:32px 24px 48px}h1{font-size:18px;line-height:26px;font-weight:600;margin:0 0 4px}.sub{color:var(--muted);font-size:12px;line-height:18px;margin:0 0 16px}
-.card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:12px}
-label.f{display:block;font-size:13px;font-weight:500;margin:14px 0 6px}input[type=text]{width:100%;height:32px;padding:0 10px;border:1px solid var(--line-hi);border-radius:6px;background:#fff;color:inherit;font:inherit;transition:border-color .15s,box-shadow .15s}
-input[type=text]:focus{outline:none;border-color:var(--copper);box-shadow:0 0 0 3px rgba(161,107,51,.2)}input[type=checkbox],input[type=radio]{accent-color:var(--copper)}
-select{height:28px;padding:0 6px;border:1px solid var(--line-hi);border-radius:6px;background:#fff;color:inherit;font:inherit}
-.hint{color:var(--muted);font-size:12px;line-height:18px;margin:6px 0 0}.row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
-.btn{display:inline-flex;align-items:center;height:32px;padding:0 14px;border-radius:6px;border:1px solid var(--line-hi);background:#fff;color:inherit;font:inherit;font-weight:500;cursor:pointer;transition:background-color .15s,border-color .15s}
-.btn:hover:not(:disabled){border-color:var(--muted)}.btn.primary{background:var(--copper);border-color:var(--copper);color:#fff;font-weight:600}.btn.primary:hover:not(:disabled){background:var(--copper-hi);border-color:var(--copper-hi)}.btn:disabled{opacity:.45;cursor:default}
-.btn:focus-visible,select:focus-visible,input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline:2px solid var(--copper);outline-offset:2px}
-.qr{display:flex;justify-content:center;padding:12px 0}.qr svg{width:min(260px,100%);height:auto;aspect-ratio:1}
-.log{font-size:12px;line-height:18px;max-height:280px;overflow:auto;background:var(--inset);border-radius:6px;padding:10px 12px;white-space:pre-wrap;word-break:break-word}
-.status{font-size:14px;font-weight:600}.status.failed{color:var(--fail)}.status.done{color:var(--ok)}
-.steps{margin:0;padding-left:18px;color:var(--muted);font-size:12px;line-height:20px}.hidden{display:none}
-@media(prefers-reduced-motion:reduce){*{transition:none!important}}
-</style></head><body><div class="wrap">
-<div class="row" style="justify-content:space-between"><h1 data-i18n="title">Connect your project to Feishu</h1><label class="hint">Language <select id="language" aria-label="Language"><option value="en">English</option><option value="zh">简体中文</option></select></label></div><p class="sub">SintBot ${String(version).replace(/[&<>"\']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c])} · <span data-i18n="intro">This page is only available on this Mac. After you confirm the scan, setup creates the app, project folder and group, then saves your configuration.</span></p>
-
-<div class="card" id="form">
-  <ol class="steps"><li data-i18n="step1">Name a new project, or choose an existing folder</li><li data-i18n="step2">Scan with Feishu on your phone and confirm (a company or team account is required)</li><li data-i18n="step3">Wait for setup to create the app and group, then send your first task in the new group</li></ol>
-  <label class="f" for="name" data-i18n="name">Project name</label><input type="text" id="name" value="sintbot" autocomplete="off">
-  <div class="hint"><span data-i18n="rootBefore">A new folder with a README will be created under</span> <span id="root"></span><span data-i18n="rootAfter">.</span></div>
-  <label class="f" for="workdir" data-i18n="workdir">Or use an existing project (absolute path; leave blank to create one)</label><input type="text" id="workdir" placeholder="/Users/you/Projects/my-app" autocomplete="off">
-  <label class="f" data-i18n="executor">Executor</label>
-  <div class="row" id="providers"></div>
-  <div class="hint"><span data-i18n="executorHint">Choose if both are installed. A single available executor is selected automatically.</span></div>
-  <div class="hint" data-i18n="modelHint">Before scanning, SintBot reads the executor’s live recommended model and thinking depth and saves them for the new group. You can change them in the console after setup.</div>
-  <label class="f"><input type="checkbox" id="basic"> <span data-i18n="basic">I am not an organization administrator (basic setup)</span></label>
-  <div class="hint"><span data-i18n="basicHint">Skip availability changes and publication. Ask an administrator to finish these steps in the Feishu developer console.</span></div>
-  <div class="row" style="margin-top:18px"><button class="btn primary" id="start" disabled data-i18n="start">Start scan</button><span class="hint" id="formErr"></span></div>
-</div>
-
-<div class="card hidden" id="run">
-  <div class="row" style="justify-content:space-between"><span class="status" id="status">Preparing…</span><button class="btn" id="cancel" data-i18n="cancel">Cancel</button></div>
-  <div class="hint hidden" id="modelDefaults" style="margin:10px 0;overflow-wrap:anywhere"></div>
-  <div class="qr" id="qr"></div>
-  <div class="log" id="log"></div>
-  <div id="chat" class="hidden">
-    <div class="hint" style="margin-top:12px"><span data-i18n="chatHint">The group could not be created automatically. Create a Feishu group, add the bot, then paste its group ID (oc_…) here:</span></div>
-    <div class="row" style="margin-top:8px"><input type="text" id="chatId" placeholder="oc_…" style="flex:1;min-width:0;width:100%"><button class="btn primary" id="resume" data-i18n="resume">Continue</button></div>
-  </div>
-  <div id="retry" class="hidden"><div class="row" style="margin-top:12px"><button class="btn" id="back" data-i18n="back">Edit details</button><button class="btn primary" id="again" data-i18n="again">Retry</button></div></div>
-  <div id="chatBack" class="hidden"><div class="row" style="margin-top:8px"><button class="btn" id="back2" data-i18n="back2">Back to project details</button></div></div>
-  <div id="doneBox" class="hidden"><div class="hint" style="margin-top:12px"><span data-i18n="doneHint">Your configuration is saved. SintBot is connecting to Feishu and this page will open the console. Try asking the bot in the new group to read the first line of README.</span></div></div>
-</div>
-</div>
+:root{color-scheme:light;--bg:#f6f5f1;--side:#eeede8;--panel:#fff;--ink:#252b32;--dim:#59616a;--muted:#68717a;--line:rgba(22,27,34,.08);--line-hi:rgba(22,27,34,.16);--ember:#a15b30;--ring:rgba(161,91,48,.18);--primary:#252b32;--primary-ink:#fff;--primary-hover:#3a424c;--inset:rgba(22,27,34,.03);--fail:#b44935;--ok:#36734e;--input:#fff}
+:root[data-theme=dark]{color-scheme:dark;--bg:#13171c;--side:#101318;--panel:#20262d;--ink:#f6f5f1;--dim:#d1d5d9;--muted:#a5adb7;--line:rgba(246,245,241,.09);--line-hi:rgba(246,245,241,.18);--ember:#e7a46b;--ring:rgba(231,164,107,.22);--primary:#f6f5f1;--primary-ink:#252b32;--primary-hover:#f0d9be;--inset:rgba(0,0,0,.13);--fail:#f0776a;--ok:#6fd5a6;--input:rgba(0,0,0,.18)}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:400 13px/20px -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Hiragino Sans GB",sans-serif;-webkit-font-smoothing:antialiased}
+button,input,select{font:inherit;color:inherit}button,select,summary{cursor:pointer}button,input,select,summary{transition:background-color .15s,border-color .15s,box-shadow .15s,color .15s}
+.topbar{height:52px;border-bottom:1px solid var(--line);padding:0 24px;display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--side)}.brand{display:flex;align-items:center;gap:10px}.word{font-size:16px;font-weight:650;letter-spacing:-.5px}.ver{font:11px ui-monospace,SFMono-Regular,Menlo,monospace;padding:1px 7px;border:1px solid var(--line);border-radius:5px;color:var(--muted)}.toolbar{display:flex;gap:8px;align-items:center}.toolbar label{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px}.toolbar select{height:28px;background:transparent;border:1px solid var(--line-hi);border-radius:6px;padding:0 6px;max-width:130px}
+.wrap{max-width:850px;margin:0 auto;padding:36px 24px 24px}.setup{display:grid;grid-template-columns:228px minmax(0,1fr);border:1px solid var(--line-hi);border-radius:10px;overflow:hidden;background:var(--panel)}.intro{padding:28px 24px;background:var(--inset);border-right:1px solid var(--line)}h1{font-size:20px;line-height:28px;letter-spacing:-.4px;font-weight:600;margin:0 0 10px}h2{font-size:15px;line-height:22px;font-weight:600;margin:0}.sub{color:var(--muted);font-size:12px;line-height:20px;margin:0}.steps{list-style:none;margin:28px 0 0;padding:0;display:grid;gap:20px}.steps li{display:grid;grid-template-columns:22px minmax(0,1fr);gap:10px;position:relative}.step-num{width:22px;height:22px;display:grid;place-items:center;border:1px solid var(--line-hi);border-radius:50%;font:11px ui-monospace,monospace;color:var(--muted)}.steps strong{display:block;font-size:12px;font-weight:550;color:var(--dim)}.steps small{display:block;font-size:11px;line-height:17px;color:var(--muted);margin-top:3px}.steps li.active .step-num{color:var(--ember);border-color:var(--ember);background:var(--ring)}.steps li.active strong{color:var(--ink)}.steps li.complete .step-num{color:var(--ok)}.local-note{margin-top:28px;padding-top:16px;border-top:1px solid var(--line);font-size:11px;line-height:18px;color:var(--muted)}.card{padding:26px 28px;min-width:0}.section-head{margin-bottom:20px}.section-head .hint{margin-top:4px}
+label.f,.field-label{display:block;font-size:12px;font-weight:550;margin:0 0 7px;color:var(--dim)}.field{margin-bottom:18px}.hint{color:var(--muted);font-size:12px;line-height:18px;margin:6px 0 0;overflow-wrap:anywhere}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}input[type=text]{width:100%;height:34px;padding:0 10px;border:1px solid var(--line-hi);border-radius:6px;background:var(--input);min-width:0}input[type=text]:focus{outline:none;border-color:var(--ember);box-shadow:0 0 0 3px var(--ring)}input[type=checkbox],input[type=radio]{accent-color:var(--ember)}
+.folder{margin-top:9px}.folder summary{font-size:12px;color:var(--muted);list-style:none;display:flex;gap:6px;align-items:center;min-height:24px}.folder summary::before{content:'›';display:inline-block;font-size:16px;transition:transform .15s}.folder[open] summary::before{transform:rotate(90deg)}.folder[open] .folder-body{padding-top:10px}.folder-body .f{font-weight:400}.folder summary::-webkit-details-marker{display:none}
+.providers{display:flex;gap:8px;flex-wrap:wrap}.providers label{display:flex;align-items:center;gap:7px;flex:1;min-width:110px;padding:8px 10px;border:1px solid var(--line-hi);border-radius:6px;cursor:pointer;white-space:nowrap}.providers label:has(input:checked){border-color:var(--ember);background:var(--ring)}.providers input{margin:0}.provider-only{display:inline-flex;align-items:center;gap:8px;padding:7px 10px;background:var(--inset);border:1px solid var(--line);border-radius:6px}.provider-only::before{content:'';height:6px;width:6px;border-radius:50%;background:var(--ok)}
+.advanced{padding-top:12px;border-top:1px solid var(--line);margin-top:4px}.check{display:flex;gap:8px;align-items:flex-start;font-size:12px;color:var(--dim);margin-top:10px}.check input{margin:3px 0 0}.advanced .hint{margin-left:21px;font-size:11px}.actions{display:grid;gap:8px;margin-top:20px}.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.btn{display:inline-flex;justify-content:center;align-items:center;gap:8px;min-height:32px;padding:6px 12px;border-radius:6px;border:1px solid var(--line-hi);background:transparent;font-weight:500;cursor:pointer;line-height:18px}.btn:hover:not(:disabled){background:var(--inset);border-color:var(--muted)}.btn:active:not(:disabled){transform:translateY(1px)}.btn.primary{background:var(--primary);border-color:var(--primary);color:var(--primary-ink)}.btn.primary:hover:not(:disabled){background:var(--primary-hover);border-color:var(--primary-hover)}.btn:disabled{opacity:.45;cursor:default}.actions>.btn{width:100%;min-height:36px}.actions .secondary{border-color:transparent;color:var(--dim)}.actions .secondary:hover:not(:disabled){border-color:var(--line-hi)}.action-note{text-align:center;font-size:11px;color:var(--muted);margin:0}.error{color:var(--fail);font-size:12px;line-height:18px;margin-top:10px;overflow-wrap:anywhere}.error:empty{display:none}
+.btn:focus-visible,select:focus-visible,summary:focus-visible,input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline:2px solid var(--ember);outline-offset:3px}.run-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.status{font-size:15px;line-height:22px;font-weight:600}.status.failed{color:var(--fail)}.status.done{color:var(--ok)}.run-summary{min-height:20px;margin:8px 0 16px;color:var(--muted);font-size:12px;overflow-wrap:anywhere}.qr{display:flex;justify-content:center;padding:4px 0 18px}.qr:empty{display:none}.qr svg{display:block;width:min(224px,100%);height:auto;aspect-ratio:1;background:#fff;border:10px solid white;border-radius:8px}.defaults{font-size:11px;color:var(--muted);background:var(--inset);border:1px solid var(--line);padding:7px 10px;border-radius:6px;margin:12px 0;overflow-wrap:anywhere}.progress-details{border-top:1px solid var(--line);padding-top:10px;margin-top:14px}.progress-details summary{font-size:12px;color:var(--muted);min-height:24px}.log{font:11px/18px ui-monospace,SFMono-Regular,Menlo,monospace;max-height:180px;overflow:auto;background:var(--inset);border-radius:6px;padding:10px 12px;white-space:pre-wrap;overflow-wrap:anywhere;margin-top:8px}.state-actions{margin-top:14px}.footer{display:flex;justify-content:space-between;gap:12px;color:var(--muted);font-size:11px;padding-top:14px}.hidden{display:none!important}
+@media(max-width:680px){.wrap{max-width:520px;padding:20px 16px}.setup{grid-template-columns:minmax(0,1fr)}.intro{padding:20px;border-right:0;border-bottom:1px solid var(--line)}h1{font-size:18px;line-height:24px;margin-bottom:5px}.steps{display:flex;gap:12px;margin-top:16px}.steps li{display:flex;align-items:center;gap:6px;flex:1}.steps small,.local-note{display:none}.steps strong{font-size:11px;line-height:16px}.step-num{flex:none}.card{padding:20px}.section-head{margin-bottom:16px}.topbar{padding:0 16px}.toolbar label>span{display:none}}
+@media(max-width:400px){.topbar{padding:0 12px}.toolbar{gap:5px}.toolbar select{font-size:11px;padding:0 3px;max-width:86px}.brand{gap:6px}.ver{display:none}.wrap{padding:14px 12px}.intro,.card{padding:16px}.steps{gap:5px}.steps li{gap:5px}.step-num{width:20px;height:20px}.footer{flex-wrap:wrap}.row .btn{flex:1}.btn{min-height:40px}.actions>.btn{min-height:40px}.providers label{min-width:100px}.section-head{margin-bottom:14px}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}.btn:active{transform:none}}
+</style></head><body>
+<header class="topbar"><div class="brand"><span class="word">SintBot</span><span class="ver">${String(version).replace(/[&<>"\']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c])}</span></div><div class="toolbar"><label><span data-i18n="appearance">外观</span><select id="theme" aria-label="Appearance"><option value="system" data-i18n="systemTheme">跟随系统</option><option value="light" data-i18n="lightTheme">亮色</option><option value="dark" data-i18n="darkTheme">暗色</option></select></label><label><span>Language</span><select id="language" aria-label="Language"><option value="en">English</option><option value="zh">简体中文</option></select></label></div></header>
+<main class="wrap"><div class="setup">
+<aside class="intro"><h1 data-i18n="title">连接你的项目</h1><p class="sub" data-i18n="intro">选好项目与执行器，接入飞书后就能在群里交代任务。</p><ol class="steps"><li class="active"><span class="step-num">1</span><div><strong data-i18n="step1">配置项目</strong><small data-i18n="step1Note">选择工作目录与执行器</small></div></li><li><span class="step-num">2</span><div><strong data-i18n="step2">飞书扫码</strong><small data-i18n="step2Note">用手机确认授权</small></div></li><li><span class="step-num">3</span><div><strong data-i18n="step3">开始使用</strong><small data-i18n="step3Note">自动建群，发送第一条任务</small></div></li></ol><p class="local-note" data-i18n="localHint">也可以先在本机对话，之后再接飞书。</p></aside>
+<section class="card" id="form"><div class="section-head"><h2 data-i18n="projectHeading">项目设置</h2><p class="hint" data-i18n="projectIntro">它将在这个目录里处理你的任务。</p></div>
+<div class="field"><label class="f" for="name" data-i18n="name">项目名称</label><input type="text" id="name" value="sintbot" autocomplete="off" aria-describedby="projectRoot"><div class="hint" id="projectRoot"><span data-i18n="rootBefore">新项目保存在</span> <span class="mono" id="root"></span><span data-i18n="rootAfter"></span></div>
+<details class="folder" id="folderDetails"><summary data-i18n="existingFolder">使用已有项目目录</summary><div class="folder-body"><label class="f" for="workdir" data-i18n="workdir">项目目录（绝对路径）</label><input type="text" id="workdir" placeholder="/Users/you/Projects/my-app" autocomplete="off"></div></details></div>
+<div class="field"><div class="field-label" id="executorLabel" data-i18n="executor">执行器</div><div class="providers" id="providers" role="group" aria-labelledby="executorLabel"></div><p class="hint" data-i18n="modelHint">自动采用推荐型号与思考深度，之后可在控制台调整。</p></div>
+<details class="folder advanced" id="advancedDetails"><summary data-i18n="advanced">组织接入选项</summary><label class="check"><input type="checkbox" id="basic"><span data-i18n="basic">我不是组织管理员</span></label><p class="hint" data-i18n="basicHint">跳过应用发布，稍后由管理员完成。</p></details>
+<div class="actions"><button class="btn primary" id="start" disabled data-i18n="start">扫码连接飞书</button><p class="action-note" data-i18n="teamHint">需要飞书企业或团队身份</p><button class="btn secondary" id="startLocal" disabled data-i18n="localStart">先在本机使用</button></div><div class="error" id="formErr" role="alert"></div></section>
+<section class="card hidden" id="run"><div class="run-head"><h2 class="status" id="status" role="status" aria-live="polite">Preparing…</h2><button class="btn" id="cancel" data-i18n="cancel">取消</button></div><p class="run-summary" id="runSummary"></p><div class="qr" id="qr"></div><div class="defaults hidden" id="modelDefaults"></div>
+<div id="chat" class="hidden state-actions"><label class="hint" for="chatId" data-i18n="chatHint">自动建群未完成，请输入已有群 ID。</label><div class="row"><input type="text" id="chatId" placeholder="oc_…"><button class="btn primary" id="resume" data-i18n="resume">继续</button></div></div>
+<div id="retry" class="hidden state-actions"><div class="row"><button class="btn" id="back" data-i18n="back">修改设置</button><button class="btn primary" id="again" data-i18n="again">重试</button></div></div>
+<div id="chatBack" class="hidden state-actions"><button class="btn" id="back2" data-i18n="back2">返回项目设置</button></div>
+<div id="doneBox" class="hidden"><p class="hint" data-i18n="doneHint">接入完成，正在打开控制台。</p></div>
+<details class="progress-details" id="progressDetails"><summary data-i18n="progressDetails">查看接入详情</summary><div class="log" id="log"></div></details></section>
+</div><footer class="footer"><span data-i18n="footerLocal">由这台 Mac 执行任务</span><span data-i18n="footerSettings">接入后可在控制台调整设置</span></footer></main>
 <script>
 (function(){
 const $=s=>document.querySelector(s);
 const translate=${translateSetupNotice.toString()};
-const words={en:{modelHint:'Before scanning, SintBot reads the executor’s live recommended model and thinking depth and saves them for the new group. You can change them in the console after setup.',modelDefaults:'New group defaults',thinking:'thinking depth',title:'Connect your project to Feishu',intro:'This page is only available on this Mac. After you confirm the scan, setup creates the app, project folder and group, then saves your configuration.',step1:'Name a new project, or choose an existing folder',step2:'Scan with Feishu on your phone and confirm (a company or team account is required)',step3:'Wait for setup to create the app and group, then send your first task in the new group',name:'Project name',rootBefore:'A new folder with a README will be created under',rootAfter:'.',workdir:'Or use an existing project (absolute path; leave blank to create one)',executor:'Executor',executorHint:'Choose if both are installed. A single available executor is selected automatically.',basic:'I am not an organization administrator (basic setup)',basicHint:'Skip availability changes and publication. Ask an administrator to finish these steps in the Feishu developer console.',start:'Start scan',cancel:'Cancel',chatHint:'The group could not be created automatically. Create a Feishu group, add the bot, then paste its group ID (oc_…) here:',resume:'Continue',back:'Edit details',again:'Retry',back2:'Back to project details',doneHint:'Your configuration is saved. SintBot is connecting to Feishu and this page will open the console. Try asking the bot in the new group to read the first line of README.',noRunner:'No available executor was detected. Install Codex or Claude Code and sign in, then reopen this page.',waiting:'Waiting for scan confirmation…',preparing:'Preparing…',chat:'Create a group to continue',done:'Connected',failed:'Setup did not complete',init:'Retry initialization',launching:'Connected. Starting the console…',switching:'Opening the console…',cannotCancel:'This step cannot be cancelled yet. Please wait.',cancelling:'Cancelling at the next step boundary…',offline:'Cannot reach setup. Check that SintBot is still running, then reload this page.',handoffFailed:'The console did not become ready. Check the terminal for a startup error, then reload this page.',retryConnection:'Reload page',requestFailed:'The request failed. Please retry.'},
-zh:{modelHint:'扫码前读取执行器实时推荐的型号和思考深度，并保存为新群的初始设置；接入后可在控制台修改。',modelDefaults:'新群默认',thinking:'思考深度',title:'把项目接进飞书',intro:'这一页只在这台 Mac 上可见。扫码确认后会自动创建机器人应用、项目目录和群，并写好配置。',step1:'填项目名，或选一个已有目录',step2:'用手机飞书扫码并确认（需要企业或团队身份）',step3:'等它自动建应用、建群、写配置，然后在新群里发第一条任务',name:'项目名',rootBefore:'会在',rootAfter:'下新建这个目录并放一份 README。',workdir:'或者接入已有项目（绝对路径，留空则按上面新建）',executor:'执行器',executorHint:'两个都装了才需要选；只装了一个会自动用它。',basic:'我不是组织管理员（精简接入）',basicHint:'跳过放开范围和发布版本，之后请管理员在开放平台补这两步。',start:'开始扫码',cancel:'取消',chatHint:'自动建群没有成功。请在飞书里手动建一个群，把机器人拉进去，复制群 ID（oc_…）粘贴到这里继续：',resume:'继续',back:'返回修改',again:'重试',back2:'返回项目设置',doneHint:'配置已写好，SintBot 正在连接飞书。这一页几秒后会切到控制台；去新群里发「读取 README 第一行」试试。',noRunner:'未检测到可用执行器，请先安装 Codex 或 Claude Code 并登录，再重新打开此页面。',waiting:'等待扫码确认…',preparing:'正在准备…',chat:'需要你手动建群',done:'接入完成',failed:'接入没有完成',init:'重试初始化',launching:'接入完成，正在启动控制台…',switching:'正在切换到控制台…',cannotCancel:'现在这一步不能取消，请稍等。',cancelling:'正在取消，等待当前步骤结束…',offline:'暂时无法连接接入页。请确认 SintBot 仍在运行，然后刷新页面。',handoffFailed:'控制台未能就绪，请查看终端中的启动错误后刷新页面。',retryConnection:'刷新页面',requestFailed:'请求失败，请重试。'}};
+const words={en:{modelHint:'Uses the live recommended model and thinking depth; adjust them later.',modelDefaults:'New group defaults',thinking:'thinking depth',title:'Connect your project',intro:'Choose a project and executor, then connect Feishu to send tasks from your group.',step1:'Project',step2:'Scan',step3:'Ready',name:'Project name',rootBefore:'New projects are saved in',rootAfter:'',workdir:'Project folder (absolute path)',executor:'Executor',executorHint:'Choose if both are installed. A single available executor is selected automatically.',basic:'I am not an organization administrator',basicHint:'Skip availability changes and app publication. An administrator can finish them later.',start:'Connect Feishu',cancel:'Cancel',chatHint:'The group could not be created automatically. Create a Feishu group, add the bot, then paste its group ID (oc_…) here:',resume:'Continue',back:'Edit details',again:'Retry',back2:'Back to project details',doneHint:'Feishu is connected. Opening the console; send your first task in the new group.',noRunner:'No available executor was detected. Install Codex or Claude Code and sign in, then reopen this page.',waiting:'Waiting for scan confirmation…',preparing:'Preparing…',chat:'Create a group to continue',done:'Connected',failed:'Setup did not complete',init:'Retry initialization',launching:'Connected. Starting the console…',switching:'Opening the console…',cannotCancel:'This step cannot be cancelled yet. Please wait.',cancelling:'Cancelling at the next step boundary…',offline:'Cannot reach setup. Check that SintBot is still running, then reload this page.',handoffFailed:'The console did not become ready. Check the terminal for a startup error, then reload this page.',retryConnection:'Reload page',requestFailed:'The request failed. Please retry.',localHint:'You can also start with a local conversation and connect Feishu later.',localStart:'Use on this Mac first',localPreparing:'Setting up your conversation…',localDone:'Ready',localLaunching:'Ready. Opening the console…',localDoneHint:'Your configuration is saved. This page will open the console; go to Chat and ask it to read the first line of README.',step1Note:'Choose a folder and executor',step2Note:'Confirm with Feishu on your phone',step3Note:'Create a group and send a task',projectHeading:'Project settings',projectIntro:'Tasks run in this project folder.',existingFolder:'Use an existing project folder',advanced:'Organization options',teamHint:'A Feishu company or team account is required',appearance:'Appearance',systemTheme:'System',lightTheme:'Light',darkTheme:'Dark',footerLocal:'Tasks run on this Mac',footerSettings:'Adjust settings later in the console',progressDetails:'Connection details',scanHint:'Scan with Feishu on your phone and confirm.',progressHint:'Keep this window open while setup finishes.',localProgressHint:'Preparing your project and local conversation.'},
+zh:{modelHint:'实时采用推荐型号与思考深度，之后可在控制台调整。',modelDefaults:'新群默认',thinking:'思考深度',title:'连接你的项目',intro:'选好项目与执行器，接入飞书后就能在群里交代任务。',step1:'配置项目',step2:'飞书扫码',step3:'开始使用',name:'项目名称',rootBefore:'新项目保存在',rootAfter:'',workdir:'项目目录（绝对路径）',executor:'执行器',executorHint:'两个都装了才需要选；只装了一个会自动用它。',basic:'我不是组织管理员',basicHint:'跳过可用范围调整与应用发布，稍后由管理员完成。',start:'扫码连接飞书',cancel:'取消',chatHint:'自动建群没有成功。请在飞书里手动建一个群，把机器人拉进去，复制群 ID（oc_…）粘贴到这里继续：',resume:'继续',back:'返回修改',again:'重试',back2:'返回项目设置',doneHint:'飞书已接入，正在打开控制台；去新群里交代第一条任务吧。',noRunner:'未检测到可用执行器，请先安装 Codex 或 Claude Code 并登录，再重新打开此页面。',waiting:'等待扫码确认…',preparing:'正在准备…',chat:'需要你手动建群',done:'接入完成',failed:'接入没有完成',init:'重试初始化',launching:'接入完成，正在启动控制台…',switching:'正在切换到控制台…',cannotCancel:'现在这一步不能取消，请稍等。',cancelling:'正在取消，等待当前步骤结束…',offline:'暂时无法连接接入页。请确认 SintBot 仍在运行，然后刷新页面。',handoffFailed:'控制台未能就绪，请查看终端中的启动错误后刷新页面。',retryConnection:'刷新页面',requestFailed:'请求失败，请重试。',localHint:'也可以先在本机对话，之后再接飞书。',localStart:'先在本机使用',localPreparing:'正在准备本机对话…',localDone:'准备好了',localLaunching:'准备好了，正在打开控制台…',localDoneHint:'配置已写好。这一页几秒后会切到控制台；到「对话」里发「读取 README 第一行」试试。',step1Note:'选择工作目录与执行器',step2Note:'用手机飞书确认授权',step3Note:'自动建群，发送第一条任务',projectHeading:'项目设置',projectIntro:'它将在这个目录里处理你的任务。',existingFolder:'使用已有项目目录',advanced:'组织接入选项',teamHint:'需要飞书企业或团队身份',appearance:'外观',systemTheme:'跟随系统',lightTheme:'亮色',darkTheme:'暗色',footerLocal:'由这台 Mac 执行任务',footerSettings:'接入后可在控制台调整设置',progressDetails:'查看接入详情',scanHint:'用手机飞书扫描二维码，并确认授权。',progressHint:'正在完成接入，请保持窗口打开。',localProgressHint:'正在准备项目和本机对话。'}};
 let lang='en';try{const saved=localStorage.getItem('sbot-lang');lang=saved==='zh'||saved==='en'?saved:(navigator.language||'').toLowerCase().startsWith('zh')?'zh':'en'}catch(e){lang=(navigator.language||'').toLowerCase().startsWith('zh')?'zh':'en'}
-const t=k=>words[lang][k]||k;
+const t=k=>words[lang][k]??k;
 const api=async(p,b)=>{const r=await fetch(p,b?{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b),signal:AbortSignal.timeout(5000)}:{cache:'no-store',signal:AbortSignal.timeout(5000)});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||String(r.status));return j};
 let last=null,timer=null,formError='',actionError='',actionKey='',polling=false,handoffStarted=false;
 function displayError(error){return translate(error&&error.message||String(error),lang)||t('requestFailed')}
-function renderForm(st){$('#root').textContent=st.defaults.projectsRoot;const box=$('#providers');const chosen=document.querySelector('input[name=prov]:checked')?.value;box.replaceChildren();const avail=Object.keys(st.runners||{}).filter(k=>st.runners[k]);$('#start').disabled=!avail.length;
+function renderForm(st){$('#root').textContent=st.defaults.projectsRoot;const box=$('#providers');const chosen=document.querySelector('input[name=prov]:checked')?.value;box.replaceChildren();const avail=Object.keys(st.runners||{}).filter(k=>st.runners[k]);$('#start').disabled=!avail.length;$('#startLocal').disabled=!avail.length;
  if(!avail.length){const hint=document.createElement('span');hint.className='hint';hint.style.color='var(--fail)';hint.textContent=t('noRunner');box.appendChild(hint);return}
- if(avail.length===1){box.textContent=avail[0]==='claude'?'Claude Code':'Codex';return}
+ if(avail.length===1){const badge=document.createElement('span');badge.className='provider-only';badge.textContent=avail[0]==='claude'?'Claude Code':'Codex';box.appendChild(badge);return}
  for(const r of avail){const l=document.createElement('label'),radio=document.createElement('input');radio.type='radio';radio.name='prov';radio.value=r;radio.checked=r===(chosen||avail[0]);l.append(radio,document.createTextNode(' '+(r==='claude'?'Claude Code':'Codex')));box.appendChild(l)}}
-function restore(st){if(!st.input)return;$('#name').value=st.input.name||'sintbot';$('#workdir').value=st.input.workdir||'';$('#basic').checked=!!st.input.basic;if(st.input.provider){const r=document.querySelector('input[name=prov][value="'+st.input.provider+'"]');if(r)r.checked=true}}
-function render(st){last=st;if(st.phase!=='running')actionKey='';const running=st.phase!=='form';$('#form').classList.toggle('hidden',running);$('#run').classList.toggle('hidden',!running);$('#formErr').textContent=formError?translate(formError,lang):'';if(!running)return;
- $('#status').textContent=t(st.phase==='running'?(st.qr?'waiting':'preparing'):st.phase==='waitingChat'?'chat':st.phase==='done'?'done':'failed');
+function restore(st){if(!st.input)return;$('#name').value=st.input.name||'sintbot';$('#workdir').value=st.input.workdir||'';$('#basic').checked=!!st.input.basic;if(st.input.workdir)$('#folderDetails').open=true;if(st.input.basic)$('#advancedDetails').open=true;if(st.input.provider){const r=document.querySelector('input[name=prov][value="'+st.input.provider+'"]');if(r)r.checked=true}}
+function render(st){const previous=last?.phase;last=st;const phaseStep=st.phase==='form'?0:st.mode==='local'||st.phase==='done'||st.appId?2:1;document.querySelectorAll('.steps li').forEach((el,i)=>{el.classList.toggle('active',i===phaseStep);el.classList.toggle('complete',i<phaseStep)});if(st.phase!=='running')actionKey='';const running=st.phase!=='form';$('#form').classList.toggle('hidden',running);$('#run').classList.toggle('hidden',!running);$('#formErr').textContent=formError?translate(formError,lang):'';if(!running)return;
+ const local=st.mode==='local';$('#runSummary').textContent=st.phase==='failed'?translate(st.notice||st.lines.at(-1)||'',lang):t(local?'localProgressHint':st.qr?'scanHint':'progressHint');if((st.phase==='failed'&&previous!=='failed')||actionError||actionKey)$('#progressDetails').open=true;$('#status').textContent=t(st.phase==='running'?(local?'localPreparing':st.qr?'waiting':'preparing'):st.phase==='waitingChat'?'chat':st.phase==='done'?(local?'localDone':'done'):'failed');
+ const dh=document.querySelector('#doneBox [data-i18n]');if(dh){dh.dataset.i18n=local?'localDoneHint':'doneHint';dh.textContent=t(dh.dataset.i18n)}
  $('#modelDefaults').classList.toggle('hidden',!st.modelDefaults);$('#modelDefaults').textContent=st.modelDefaults?t('modelDefaults')+': '+(st.modelDefaults.name||st.modelDefaults.model)+' · '+t('thinking')+': '+st.modelDefaults.effort:'';
  $('#status').className='status '+st.phase;$('#qr').innerHTML=st.phase==='running'&&st.qr?st.qr:'';$('#log').textContent=st.lines.map(l=>translate(l,lang)).concat(actionKey?[t(actionKey)]:actionError?[translate(actionError,lang)]:[]).join('\n');$('#log').scrollTop=1e9;
  $('#cancel').classList.toggle('hidden',st.phase!=='running');$('#chat').classList.toggle('hidden',st.phase!=='waitingChat');$('#chatBack').classList.toggle('hidden',st.phase!=='waitingChat');$('#retry').classList.toggle('hidden',st.phase!=='failed');$('#doneBox').classList.toggle('hidden',st.phase!=='done');$('#again').textContent=t(st.initOnly?'init':'again')}
-function setLanguage(value){lang=value==='zh'?'zh':'en';$('#language').value=lang;document.documentElement.lang=lang==='zh'?'zh-CN':'en';document.title='SintBot · '+(lang==='zh'?'接入飞书':'Connect Feishu');document.querySelectorAll('[data-i18n]').forEach(el=>{el.textContent=t(el.dataset.i18n)});if(last){renderForm(last);render(last)}try{localStorage.setItem('sbot-lang',lang)}catch(e){}}
+function setLanguage(value){lang=value==='zh'?'zh':'en';$('#language').value=lang;document.documentElement.lang=lang==='zh'?'zh-CN':'en';document.title='SintBot · '+(lang==='zh'?'项目接入':'Project setup');document.querySelectorAll('[data-i18n]').forEach(el=>{el.textContent=t(el.dataset.i18n)});if(last){renderForm(last);render(last)}try{localStorage.setItem('sbot-lang',lang)}catch(e){}}
 $('#language').onchange=()=>setLanguage($('#language').value);setLanguage(lang);
+const media=matchMedia('(prefers-color-scheme:dark)');let theme='system';try{theme=localStorage.getItem('sbot-theme')||'system'}catch(e){}
+function applyTheme(){document.documentElement.dataset.theme=theme==='system'?(media.matches?'dark':'light'):theme;$('#theme').value=theme;}
+if(!['system','light','dark'].includes(theme))theme='system';applyTheme();media.addEventListener('change',applyTheme);$('#theme').onchange=()=>{theme=$('#theme').value;try{localStorage.setItem('sbot-theme',theme)}catch(e){}applyTheme()};
 // A valid console response must be HTML without the setup marker. A failed
 // request can mean normal handoff or a stopped process; the wait is bounded.
-async function handoff(){if(handoffStarted)return;handoffStarted=true;clearInterval(timer);$('#status').textContent=t(last?.phase==='done'?'launching':'switching');for(let i=0;i<60;i++){try{const r=await fetch('/',{cache:'no-store',signal:AbortSignal.timeout(3000)});if(r.ok&&/text\/html/.test(r.headers.get('content-type')||'')){const html=await r.text();if(!html.includes('data-sintbot-setup=')&&html.includes('<html')){location.replace('/');return}}}catch(e){}await new Promise(r=>setTimeout(r,2000))}actionError=t('handoffFailed');$('#status').textContent=t('failed');$('#log').textContent+='\n'+actionError;const reload=document.createElement('button');reload.className='btn';reload.textContent=t('retryConnection');reload.onclick=()=>location.reload();$('#run').appendChild(reload)}
+async function handoff(){if(handoffStarted)return;handoffStarted=true;clearInterval(timer);$('#status').textContent=t(last?.phase==='done'?(last.mode==='local'?'localLaunching':'launching'):'switching');for(let i=0;i<60;i++){try{const r=await fetch('/',{cache:'no-store',signal:AbortSignal.timeout(3000)});if(r.ok&&/text\/html/.test(r.headers.get('content-type')||'')){const html=await r.text();if(!html.includes('data-sintbot-setup=')&&html.includes('<html')){location.replace('/');return}}}catch(e){}await new Promise(r=>setTimeout(r,2000))}actionError=t('handoffFailed');$('#progressDetails').open=true;$('#status').textContent=t('failed');$('#log').textContent+='\n'+actionError;const reload=document.createElement('button');reload.className='btn';reload.textContent=t('retryConnection');reload.onclick=()=>location.reload();$('#run').appendChild(reload)}
 let gone=0;async function poll(){if(polling||handoffStarted)return;polling=true;try{const st=await api('/api/setup/state');if(!st.phase){await handoff();return}gone=0;if(!last){renderForm(st);restore(st)}formError='';render(st);if(st.phase==='done')void handoff()}catch(e){if(last&&last.phase!=='form'&&++gone>=2)void handoff();else if(!last||last.phase==='form'){formError=t('offline');$('#formErr').textContent=formError}}finally{polling=false}}
 async function start(extra){formError='';actionError='';actionKey='';$('#formErr').textContent='';const prov=document.querySelector('input[name=prov]:checked');const input={name:$('#name').value.trim(),workdir:$('#workdir').value.trim(),provider:prov?prov.value:'',basic:$('#basic').checked,...extra};
  try{const r=await api('/api/setup/start',input);render(r.state)}catch(e){formError=e.message;actionError=e.message;if(last)render(last);else $('#formErr').textContent=displayError(e)}}
-$('#start').onclick=()=>start({});$('#again').onclick=()=>start({});$('#resume').onclick=()=>start({chatId:$('#chatId').value.trim()});
+async function startLocal(){formError='';actionError='';actionKey='';$('#formErr').textContent='';const prov=document.querySelector('input[name=prov]:checked');
+ try{const r=await api('/api/setup/local',{name:$('#name').value.trim(),workdir:$('#workdir').value.trim(),provider:prov?prov.value:''});render(r.state)}catch(e){formError=e.message;actionError=e.message;if(last)render(last);else $('#formErr').textContent=displayError(e)}}
+$('#startLocal').onclick=startLocal;
+$('#start').onclick=()=>start({});$('#again').onclick=()=>(last&&last.mode==='local'?startLocal():start({}));$('#resume').onclick=()=>start({chatId:$('#chatId').value.trim()});
 $('#cancel').onclick=async()=>{try{const r=await api('/api/setup/cancel',{});actionKey=r.ok?'cancelling':'cannotCancel';render(last)}catch(e){actionError=e.message;render(last)}};
 const back=async()=>{try{await api('/api/setup/reset',{});formError='';actionError='';actionKey='';render(await api('/api/setup/state'))}catch(e){actionError=e.message;render(last)}};$('#back').onclick=back;$('#back2').onclick=back;
 api('/api/setup/state').then(st=>{renderForm(st);restore(st);render(st)}).catch(e=>{formError=t('offline');$('#formErr').textContent=formError});timer=setInterval(poll,1500);

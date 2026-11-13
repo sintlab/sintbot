@@ -42,6 +42,7 @@ const { createSessionStore } = require('./sessions') // 登录会话落盘 + 30 
 const { listWecomSessions, wecomAuthShow } = require('../platform/wecom')
 const { createWecomCli } = require('../platform/wecomcli')
 const { guessBotName } = require('../platform/wecomname') // 机器人名从群历史的 @ 里统计(企微没有取机器人信息的接口) // 企业微信:群候选 = 机器人被 @ 过的群(控制台「绑定群」用)
+const { newLocalChatId, isLocalChatId } = require('../platform/local')
 const { platformsConfigured, chatPlatform, inferChatPlatform, PLATFORMS } = require('../config') // 双平台并存:哪些平台配齐了 · 某群属于哪个平台(与 daemon 路由器同一个函数)
 const { feishuClient, fetchBotOpenId, fetchAppIdentity, fetchChats, createChat, fetchChatMembers, addChatMembers, deleteChat, sendChatText, larkErrMsg, feishuPrecheck, fetchAdminCandidates, resolveContactToOpenId, fetchOrgUsers } = require('../platform/feishu')
 const { slackPrecheck, fetchSlackChannels, sendSlackText } = require('../platform/slack') // Slack:控制台侧只用这三个助手(收发在 daemon 里)
@@ -177,7 +178,7 @@ function connHealthStatus(c) {
   return 'fail' // failed / stopped
 }
 // 连接健康字典 → 概览健康行(一行一个平台)。⚠ 兼容旧形状:单个快照(带 state 字段)按飞书算 —— 单测与旧 daemon 都这么给。
-const CONN_LABEL = { feishu: '飞书连接', wecom: '企业微信连接', slack: 'Slack 连接' }
+const CONN_LABEL = { feishu: '飞书连接', wecom: '企业微信连接', slack: 'Slack 连接', local: '本机对话' }
 function connHealthRows(conn) {
   if (!conn) return []
   if (typeof conn.state === 'string') return [{ status: connHealthStatus(conn), label: CONN_LABEL.feishu, detail: connHealthDetail(conn) }]
@@ -878,7 +879,10 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       // ⚠ 还要带 X-Sbot-Local 头:自定义头逼出 CORS 预检,而控制台不答预检 ⇒ 本机网页的跨站 POST(no-cors text/plain)到不了签票
       //   (文件头钉的不变量:环回绑定不是安全边界)。本机进程(群 agent 的 sbot browser link)加个头不费事。对抗审查 🟡3。
       const viaLocalMint = isMintPath && localNoProxy && String(req.headers['x-sbot-local'] || '') === '1'
-      if (p.startsWith('/api/') && !openPath && !authed(req, url) && !viaTakeover && !viaLocalMint) return sendJSON(res, 401, { error: 'unauthorized — 重新打开控制台页面' })
+      // 桌面壳(或本机的其它监控)只想知道「现在有没有活在跑」:只给计数,不给任何群名、内容或配置,
+      // 门槛与上面的签票接口相同 —— 本机环回、不带反代头、带 X-Sbot-Local。
+      const viaLocalShell = p === '/api/shell/activity' && req.method === 'GET' && localNoProxy && String(req.headers['x-sbot-local'] || '') === '1'
+      if (p.startsWith('/api/') && !openPath && !authed(req, url) && !viaTakeover && !viaLocalMint && !viaLocalShell) return sendJSON(res, 401, { error: 'unauthorized — 重新打开控制台页面' })
       if (runtimePolicy && p.startsWith('/api/') && !runtimePolicy.allows(req.method, p)) {
         return sendJSON(res, 409, { error: runtimePolicy.capabilities.reason, code: 'C2_CONSOLE_UNSUPPORTED' })
       }
@@ -1230,6 +1234,50 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       // ⚠ 是否显示到群里由 operator 选:显示 ⇒ 群成员看得见来龙去脉;不显示 ⇒ 群里凭空多出一轮,
       //   改动没争议时无所谓,一旦有争议就会被读成「它自己乱改」。默认显示 —— 安全的一边是可见。
       // ⚠ 注入给 agent 的是**原文**,发进群的才过 redact:注入侧脱敏会改坏 operator 的指令本身。
+      // 本机对话(src/platform/local.js):控制台里直接与它对话,不经任何聊天平台。一段对话就是一条
+      // platform:'local' 的群项目路由,这句话与群消息走同一个受理入口、同一种持久收据;这里只做搬运。
+      if (p === '/api/shell/activity' && req.method === 'GET') {
+        let live = null
+        try { live = getLiveState ? getLiveState() : null } catch { live = null }
+        const count = value => Number.isSafeInteger(value) && value > 0 ? value : 0
+        return sendJSON(res, 200, { running: !!(live && live.running), active: count(live?.concurrency?.active),
+          waiting: count(live?.waiting), queued: count(live?.queue), held: count(live?.held) })
+      }
+      if (p === '/api/local/history' && req.method === 'GET') {
+        const chatId = url.searchParams.get('chatId') || ''
+        if (!control || !control.localHistory) return sendJSON(res, 400, { error: '后台服务未运行 — 这个动作需要它在跑' })
+        let messages = null
+        try {
+          messages = control.localHistory(chatId, { limit: Number(url.searchParams.get('limit')) || 200,
+            after: url.searchParams.get('after') || null })
+        } catch (e) { return sendJSON(res, 400, { error: (e && e.message) || String(e) }) }
+        if (!messages) return sendJSON(res, 404, { error: '没有这段本机对话' })
+        return sendJSON(res, 200, { chatId, messages })
+      }
+      if (p === '/api/local/send' && req.method === 'POST') {
+        const b0 = await body(req)
+        const chatId = String(b0 && b0.chatId != null ? b0.chatId : '')
+        const t = String(b0 && b0.text != null ? b0.text : '')
+        if (!t.trim()) return sendJSON(res, 400, { error: '内容不能为空' })
+        const requestId = typeof (b0 && b0.requestId) === 'string' &&
+          /^[0-9a-f]{32}$/.test(b0.requestId) ? b0.requestId : undefined
+        if (!requestId) return sendJSON(res, 400, { error: '这次提交缺少有效的提交编号,请刷新控制台后再试', reason: 'request-id' })
+        const r = (control && control.localSend)
+          ? await control.localSend(chatId, t, { requestId })
+          : { ok: false, reason: 'no-daemon' }
+        audit.append({ kind: 'local-send', chatId, ok: !!r.ok, reason: r.reason || null,
+          where: r.where ? r.where.state : null, chars: t.length, ts: Date.now() })
+        if (!r.ok) {
+          const why = { 'no-daemon': '后台服务未运行 — 对话需要它在跑', unbound: '没有这段本机对话',
+            paused: '这段对话已暂停,先恢复再发', 'not-serving': '服务正在启动或停止,这句没有处理,请稍后重发',
+            empty: '内容不能为空', 'too-long': '内容过长(上限 20000 字)',
+            'request-id': '这次提交的编号已被另一句话用过,请重新发送',
+            'store-failed': '这句没能写入本机对话记录,未处理;请检查磁盘空间后重发',
+            'inject-failed': '这句已记下,但服务没有受理(详见服务日志);请稍后重发' }[r.reason] || '发送失败'
+          return sendJSON(res, 409, { error: why, reason: r.reason || null, id: r.id || null })
+        }
+        return sendJSON(res, 200, { ok: true, id: r.id, where: r.where || null })
+      }
       if (p === '/api/groups/say' && req.method === 'POST') {
         const b0 = await body(req)
         const chatId = String(b0 && b0.chatId != null ? b0.chatId : '')
@@ -1819,7 +1867,12 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         catch (e) { return sendJSON(res, 400, { error: (e && e.message) || String(e) }) }
       }
       if (p === '/api/groups' && req.method === 'POST') {
-        const { chatId, workdir: workdirIn, provider, model, name, platform } = await body(req)
+        const { chatId: chatIdIn, workdir: workdirIn, provider, model, name, platform } = await body(req)
+        // 新建本机对话:标识由服务端生成(oc_local_ 前缀是保留的,见 src/platform/local.js),前端不必也不能自拟
+        const createdLocal = platform === 'local' && !chatIdIn
+        const chatId = createdLocal ? newLocalChatId() : chatIdIn
+        if (platform === 'local' && !isLocalChatId(chatId)) return sendJSON(res, 400, { error: '本机对话的标识不合法' })
+        if (platform !== 'local' && isLocalChatId(chatId) && !(readRaw().groups || {})[chatId]) return sendJSON(res, 400, { error: '这个标识保留给本机对话' })
         if (!chatId || !workdirIn) return sendJSON(res, 400, { error: 'chatId 与 workdir 必填' })
         if (platform !== undefined && platform !== '' && !PLATFORMS.includes(platform)) return sendJSON(res, 400, { error: `platform 只认 ${PLATFORMS.join(' / ')}` })
         // 显式平台与 id 形态打架(oc_ 标企微 / wr… 标飞书)一定是弹窗档位没切对,不替人猜、直接拒(对抗审查:改既有群时会把企微群改写成飞书)
@@ -1909,7 +1962,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         if (isNewBinding && next.platform === 'wecom' && control && control.notifyGroup) {
           try { control.notifyGroup(chatId, bindNoticeText(workdir, 'wecom')); noticeQueued = true } catch (e) { log('bind notice failed: ' + (e && e.message)) }
         }
-        return sendJSON(res, 200, { ...(await buildState()), notified, noticeQueued })
+        return sendJSON(res, 200, { ...(await buildState()), notified, noticeQueued, ...(createdLocal ? { createdChatId: chatId } : {}) })
       }
       if (p === '/api/groups' && req.method === 'DELETE') {
         const chatId = url.searchParams.get('chatId'); const raw = readRaw()

@@ -190,7 +190,7 @@ test('server: serves the page locally, exposes state, starts and completes over 
   t.after(() => srv.close())
   const page = await request(addr, 'GET', '/')
   assert.equal(page.status, 200)
-  assert.match(page.body, /把项目接进飞书/)
+  assert.match(page.body, /连接你的项目/)
   assert.match(page.body, /1\.4\.17/)
   const state = JSON.parse((await request(addr, 'GET', '/api/setup/state')).body)
   assert.equal(state.phase, 'form')

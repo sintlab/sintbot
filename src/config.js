@@ -256,6 +256,9 @@ function platformsConfigured(cfg) {
 // (企微单聊 chatId 是对方 userid,没有形态可认)。
 function inferChatPlatform(chatId) {
   const id = String(chatId || '')
+  // A conversation held in the console itself (src/platform/local.js). Its
+  // prefix is reserved, so it is told apart before the Feishu shape below.
+  if (/^oc_local_/.test(id)) return 'local'
   if (/^oc_/.test(id)) return 'feishu'
   if (/^wr[A-Za-z0-9_-]{6,}$/.test(id)) return 'wecom'
   // Slack:频道 C… / 私有 G… / 私聊 D…,后接全大写字母数字。⚠ 企微单聊 userid 也可能长这样(「DAVID1234」),
@@ -266,7 +269,9 @@ function inferChatPlatform(chatId) {
 // 形态推断的结果在「推出 slack 却没配 Slack」时不作数(企微 userid 撞形态),其余照旧。
 const trustGuess = (guess, on) => (guess === 'slack' && !on.slack ? null : guess)
 
-const PLATFORMS = ['feishu', 'wecom', 'slack']
+// 'local' needs no credentials and is never the fallback for an unrecognized
+// ID: platformsConfigured() does not list it, so `live` below never contains it.
+const PLATFORMS = ['feishu', 'wecom', 'slack', 'local']
 
 // 把每个群的 platform 归一成 'feishu' | 'wecom' 写进 cfg.groups[*].platform(内存态);返回推断记录给 doctor。
 // 规则见 loadConfig 里的注释。只配了一个平台时所有认不出形态的群都归它;一个都没配时按飞书(老行为,doctor 另有行报没配平台)。

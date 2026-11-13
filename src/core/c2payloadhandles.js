@@ -310,7 +310,9 @@ class C2PayloadHandles {
           job.msg?._c2ReceiptId !== id || job.msg.chatId !== chatId ||
           job.msg.msgId !== receipt.sourceId || job.msg.quiet ||
           typeof job.platform?.replyOnce !== 'function' ||
-          typeof job.platform?.createStreamingCard !== 'function' ||
+          // A card platform, or one that declared plain replies at admission.
+          !(typeof job.platform.createStreamingCard === 'function' ||
+            job.platform.features?.plainReplies === true && job.platform.createStreamingCard === undefined) ||
           this.#journal.noticeStatus(id) !== null) {
         throw new Error('C2 ordinary queue payload differs from durable receipt')
       }

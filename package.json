@@ -1,8 +1,8 @@
 {
   "name": "sintbot",
-  "version": "1.4.18",
+  "version": "1.4.19",
   "private": false,
-  "description": "Drive your Mac projects from Feishu groups with Codex or Claude Code, using a built-in agent core.",
+  "description": "A personal AI agent on your Mac: local conversations and Feishu project groups with Codex or Claude Code.",
   "bin": {
     "sbot": "bin/sintbot-v2.js",
     "sintbot": "bin/sintbot-v2.js"
@@ -71,7 +71,6 @@
     "src/cdp.js",
     "src/config.js",
     "src/connect.js",
-    "src/setupserver.js",
     "src/consolesay.js",
     "src/consoletrials.js",
     "src/core/brain.js",
@@ -125,6 +124,7 @@
     "src/modelcatalog.js",
     "src/platform/board.js",
     "src/platform/feishu.js",
+    "src/platform/local.js",
     "src/platform/modelcard.js",
     "src/platform/multi.js",
     "src/platform/noticecard.js",
@@ -142,6 +142,7 @@
     "src/recordedanswers.js",
     "src/runtimefacts.js",
     "src/setupmodels.js",
+    "src/setupserver.js",
     "src/ui/auth.js",
     "src/ui/browser.html",
     "src/ui/browserroutes.js",

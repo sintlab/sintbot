@@ -1,4 +1,4 @@
-# Install SintBot 1.4.18 with an AI assistant
+# Install SintBot 1.4.19 with an AI assistant
 
 English · [简体中文](./zh-CN/AI-ASSISTED-INSTALL.md)
 
@@ -15,5 +15,5 @@ Use the terminal on the Mac that will run SintBot. A cloud shell cannot install 
 ## Copyable request
 
 ```text
-Install SintBot 1.4.18 on this Mac using the one-line installation guide. Preserve existing services, configuration, state and Codex or Claude Code account data. Do not expose credentials. Verify the actual installed executable and binary core, configure the Feishu groups with their runners, and initialize only clean new state. Run the foreground preflight and an authorized read-only group test, check the result, then verify clean stop/restart. Stop temporary processes when finished, and distinguish package installation from successful group acceptance.
+Install SintBot 1.4.19 on this Mac using the one-line installation guide. Preserve existing services, configuration, state and Codex or Claude Code account data. Do not expose credentials. Verify the actual installed executable and binary core, configure the Feishu groups with their runners, and initialize only clean new state. Run the foreground preflight and an authorized read-only group test, check the result, then verify clean stop/restart. Stop temporary processes when finished, and distinguish package installation from successful group acceptance.
 ```

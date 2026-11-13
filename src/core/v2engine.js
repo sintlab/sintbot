@@ -26,6 +26,9 @@ const { DEFAULT_VALUE: MODEL_CARD_DEFAULT } = require('../platform/modelcard')
 // A /model card answers taps for ten minutes; older cards turn read-only.
 const MODEL_CARD_TTL_MS = 10 * 60 * 1000
 const { GROUP_COMMANDS, RUNTIME_ENTRY, runtimeCommand } = require('../runtimefacts')
+// Platforms whose routes this engine serves: Feishu groups and the console's
+// own conversations (src/platform/local.js), which share every durable rule.
+const DURABLE_PLATFORMS = ['feishu', 'local']
 const NO_REPLY = 'NO_REPLY'
 const SYSTEM_APPENDIX = systemAppendix(NO_REPLY)
 const V2_NORMAL_ROUTE_MISSING = Object.freeze(['complete durable v2 authority'])
@@ -867,10 +870,14 @@ async runDurableV2Message(msg, platform) {
         typeof msg.chatId !== 'string' || !msg.chatId ||
         typeof msg.msgId !== 'string' ||
         !/^om_[A-Za-z0-9_-]{1,124}$/.test(msg.msgId) ||
-        !platform || platform.features?.cardQuota !== true ||
+        !platform ||
         typeof platform.reply !== 'function' ||
         typeof platform.replyOnce !== 'function' ||
-        typeof platform.createStreamingCard !== 'function') {
+        // A card platform streams into its reply card. A plain platform (the
+        // console's own conversation) declares that its one final reply is a
+        // text line; the terminal path then never opens a card.
+        !(platform.features?.cardQuota === true && typeof platform.createStreamingCard === 'function' ||
+          platform.features?.plainReplies === true && platform.createStreamingCard === undefined)) {
       throw new Error('C2 v2 ordinary Feishu message is unsupported or closed')
     }
     // An unmigrated chat command is user input, not an authority fault. It is
@@ -886,7 +893,7 @@ async runDurableV2Message(msg, platform) {
     }
     const group = this._resolveGroup(msg.chatId)
     const { provider } = group ? this._resolveProvider(msg.chatId, group) : {}
-    if (!group || group.paused || group.platform && group.platform !== 'feishu' ||
+    if (!group || group.paused || group.platform && !DURABLE_PLATFORMS.includes(group.platform) ||
         !provider || !['claude', 'codex'].includes(provider.runner)) {
       throw new Error('C2 v2 ordinary group control is not migrated')
     }
@@ -1189,7 +1196,7 @@ async runDurableV2Stop(msg, platform) {
       throw durableV2StopUnavailable(rt)
     }
     const group = this._resolveGroup(chatId)
-    if (!group || group.paused || group.platform && group.platform !== 'feishu') {
+    if (!group || group.paused || group.platform && !DURABLE_PLATFORMS.includes(group.platform)) {
       throw new Error('C2 v2 /stop group control is not migrated')
     }
     const requestedGeneration = rt.v2RunnerGeneration
@@ -1313,7 +1320,7 @@ async runDurableV2Skip(msg) {
       throw new Error('C2 v2 /skip is unsupported or closed')
     }
     const group = this._resolveGroup(chatId)
-    if (!group || group.paused || group.platform && group.platform !== 'feishu') {
+    if (!group || group.paused || group.platform && !DURABLE_PLATFORMS.includes(group.platform)) {
       throw new Error('C2 v2 /skip group control is not migrated')
     }
     // As for /stop, a /skip with nothing it may cancel is refused before receipt.

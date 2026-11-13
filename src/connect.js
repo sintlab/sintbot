@@ -17,11 +17,14 @@ const { installationStateDir, MANIFEST } = require('./c2install')
 const { defaultProjectsRoot, tooWideReason, realpathLenient } = require('./projectsroot')
 const { fillPicks } = require('./core/modelcmd')
 const { applyBrainChange } = require('./groupbrain')
+const { newLocalChatId, isLocalChatId } = require('./platform/local')
 
 const CONNECT_OPTIONS = Object.freeze({
   config: { type: 'string' }, 'data-dir': { type: 'string' }, workdir: { type: 'string' },
   name: { type: 'string' }, provider: { type: 'string' }, 'app-id': { type: 'string' },
   chat: { type: 'string' }, basic: { type: 'boolean' }, 'no-open': { type: 'boolean' },
+  // Add Feishu to an installation that so far only holds local conversations.
+  attach: { type: 'boolean' },
 })
 const APP_ID = /^cli_[A-Za-z0-9]{6,64}$/
 const CHAT_ID = /^oc_[A-Za-z0-9_-]{1,124}$/
@@ -44,6 +47,7 @@ function defaultDeps(deps) {
     feishuClient: feishu.feishuClient,
     feishu,
     initializeInstallation: (file, options) => require('./c2install').initializeInstallation(file, options),
+    validateAttached: (raw, file, options) => require('./c2install').loadInstallationFromRaw(raw, file, { ...options, allowAddedGroups: true }),
     spawn: require('node:child_process').spawn,
     spawnSync: require('node:child_process').spawnSync,
     fs: nodeFs,
@@ -177,6 +181,37 @@ function assertFreshState(fs, stateDir) {
     'and connect never overwrites or migrates existing state')
 }
 
+// --attach: Feishu joins an installation of local conversations. The existing
+// configuration, journals and transcripts stay; only the Feishu block and one
+// new group are added. Anything that already carries platform credentials or
+// a platform group is someone's connected installation and is refused.
+function assertAttachable(existing, configPath) {
+  if (!existing) throw new Error(`${configPath} does not exist; run sintbot connect without --attach for a new installation`)
+  if (existing.unreadable) throw new Error(`${configPath} is not readable JSON; fix it before attaching Feishu`)
+  if (existing.feishu?.appId || existing.feishu?.appSecret || existing.wecom || existing.slack) {
+    throw new Error(`${configPath} already holds chat platform credentials; --attach only adds Feishu to local conversations`)
+  }
+  const groups = Object.entries(existing.groups || {})
+  if (!groups.length || groups.some(([chatId, group]) => group?.platform !== 'local' || !isLocalChatId(chatId))) {
+    throw new Error(`${configPath} must hold only local conversations to attach Feishu`)
+  }
+}
+
+// The service must be stopped: it keeps the configuration it started with, and
+// the new group's journal is registered by the next start. A lock left by a
+// process that no longer exists does not block.
+function assertServiceStopped(fs, stateDir, isAlive = pid => { try { process.kill(pid, 0); return true } catch (error) { return error.code === 'EPERM' } }) {
+  let text
+  try { text = fs.readFileSync(path.join(stateDir, 'daemon.lock'), 'utf8') } catch (error) {
+    if (error.code === 'ENOENT') return
+    throw error
+  }
+  const pid = Number(text.trim())
+  if (!Number.isSafeInteger(pid) || pid < 1 || isAlive(pid)) {
+    throw new Error(`SintBot is running (${path.join(stateDir, 'daemon.lock')}); stop it before attaching Feishu, then start it again`)
+  }
+}
+
 function probeRunners(spawnSync, env) {
   const runners = {}
   for (const runner of RUNNERS) {
@@ -274,8 +309,17 @@ async function connectFlow(argv, d, abort) {
   const configPath = values.config ? path.resolve(values.config)
     : d.env.SBOT_CONFIG ? path.resolve(d.env.SBOT_CONFIG) : path.join(d.home, '.sbot', 'config.json')
   if (!path.isAbsolute(configPath)) throw new Error('The configuration path must be absolute')
-  assertReplaceable(readExistingConfig(fs, configPath), configPath, reuseAppId)
-  assertFreshState(fs, stateDir)
+  const attach = values.attach === true
+  const assertTarget = () => {
+    if (attach) {
+      assertAttachable(readExistingConfig(fs, configPath), configPath)
+      assertServiceStopped(fs, stateDir, d.isAlive)
+    } else {
+      assertReplaceable(readExistingConfig(fs, configPath), configPath, reuseAppId)
+      assertFreshState(fs, stateDir)
+    }
+  }
+  assertTarget()
 
   // Project directory per the directory rule: an existing --workdir, or a new
   // folder under ~/Projects named by --name or a prompt.
@@ -489,8 +533,17 @@ async function connectFlow(argv, d, abort) {
     // installation that appeared while this page was waiting.
     fs.mkdirSync(path.dirname(configPath), { recursive: true, mode: 0o700 })
     withFileLock(configPath, () => {
-      assertReplaceable(readExistingConfig(fs, configPath), configPath, reuseAppId)
-      assertFreshState(fs, stateDir)
+      assertTarget()
+      // Attach: the installation's own file plus the Feishu block and the new
+      // group. The merged configuration is checked against the existing
+      // journals before anything is written, and the old file is kept.
+      let next = built.config
+      if (attach) {
+        const current = readExistingConfig(fs, configPath)
+        next = { ...current, feishu: built.config.feishu,
+          providers: { ...built.config.providers, ...(current.providers || {}) },
+          groups: { ...current.groups, [chatId]: built.config.groups[chatId] } }
+      }
       if (!observed.exists) {
         fs.mkdirSync(path.dirname(workdir), { recursive: true, mode: 0o755 })
         fs.mkdirSync(workdir, { mode: 0o755 })
@@ -502,8 +555,17 @@ async function connectFlow(argv, d, abort) {
         fs.writeFileSync(readme, built.readme, { mode: 0o644, flag: 'wx' })
         createdReadme = true
       }
+      if (attach) {
+        // The project folder exists now, so this is the check the next start makes.
+        d.validateAttached(next, configPath, { dataDir: stateDir })
+        const backups = path.join(stateDir, 'config-backups')
+        fs.mkdirSync(backups, { recursive: true, mode: 0o700 })
+        const backup = path.join(backups, `${new Date(d.now()).toISOString().replace(/[:.]/g, '-')}-attach-feishu.json`)
+        fs.copyFileSync(configPath, backup)
+        fs.chmodSync(backup, 0o600)
+      }
       if (fs.existsSync(configPath)) fs.chmodSync(configPath, 0o600)
-      atomicWriteJSON(configPath, built.config, { mode: 0o600 })
+      atomicWriteJSON(configPath, next, { mode: 0o600 })
       configCommitted = true
     })
     plan = decide('config', { observed: { configPath } })
@@ -514,9 +576,10 @@ async function connectFlow(argv, d, abort) {
   }
   if (plan.verdict === 'stop') return 1
 
-  // Step 7: journals, under the unchanged fresh-state rules.
+  // Step 7: journals, under the unchanged fresh-state rules. An attached
+  // group has none yet: the next start registers it beside the existing ones.
   try {
-    d.initializeInstallation(configPath, { dataDir: stateDir })
+    if (!attach) d.initializeInstallation(configPath, { dataDir: stateDir })
     plan = core.connectPlan('init', { basic })
   } catch (error) { plan = decide('init', { code: LOCAL_FAILURE, msg: error?.message || String(error) }) }
   if (plan.verdict === 'stop') return 1
@@ -524,6 +587,117 @@ async function connectFlow(argv, d, abort) {
   const bin = fs.existsSync(installed) ? '"$HOME/.local/share/sintbot/bin/sintbot"' : 'sintbot'
   stdout.write(`${plan.notice}\n${bin} start --config ${shellQuote(configPath)} --data-dir ${shellQuote(stateDir)} --ui\n`)
   return 0
+}
+
+// Setup without a chat platform: one conversation held in the console. It
+// takes the same directory rule, configuration builder (the core's
+// connect_config, platform "local"), live model defaults and fresh-state
+// checks as the scan flow, and writes the same two things: the configuration
+// and the journals. Nothing leaves this Mac.
+async function runLocalSetup(input = {}, deps = {}) {
+  const d = defaultDeps(deps)
+  const { fs, stderr, stdout } = d
+  const abort = new AbortController()
+  const onSignal = () => abort.abort()
+  for (const signal of ['SIGINT', 'SIGTERM']) d.signals.on(signal, onSignal)
+  const say = text => stderr.write(`${text}\n`)
+  const interrupted = () => {
+    if (!abort.signal.aborted) return false
+    say('已取消，没有写入任何文件。')
+    return true
+  }
+  const decide = (step, value) => { const plan = core.connectPlan(step, value); say(plan.notice); return plan }
+  try {
+    if (input.provider !== undefined && !RUNNERS.includes(input.provider)) throw new Error('--provider must be codex or claude')
+    const stateDir = installationStateDir(input.dataDir === undefined ? path.join(d.home, '.sbot') : input.dataDir)
+    const configPath = input.config ? path.resolve(input.config)
+      : d.env.SBOT_CONFIG ? path.resolve(d.env.SBOT_CONFIG) : path.join(d.home, '.sbot', 'config.json')
+    if (!path.isAbsolute(configPath)) throw new Error('The configuration path must be absolute')
+    const assertUnclaimed = () => {
+      if (readExistingConfig(fs, configPath)) throw new Error(`${configPath} already exists; move it aside before setting up`)
+      assertFreshState(fs, stateDir)
+    }
+    assertUnclaimed()
+
+    let workdir
+    const explicit = input.workdir !== undefined
+    if (explicit) {
+      workdir = input.workdir
+      if (typeof workdir !== 'string' || !path.isAbsolute(workdir) || workdir !== path.resolve(workdir)) throw new Error('--workdir must be a normalized absolute path')
+      let stat = null
+      try { stat = fs.statSync(workdir) } catch {}
+      if (!stat?.isDirectory()) throw new Error('--workdir must be an existing directory')
+    } else {
+      const name = input.name === undefined ? 'sintbot' : input.name
+      if (typeof name !== 'string' || !PROJECT_NAME.test(name) || name === '.' || name === '..') throw new Error('The project name may only use letters, digits, ".", "_" and "-" (max 60)')
+      workdir = path.join(defaultProjectsRoot({ home: d.home }), name)
+    }
+    const early = core.connectPlan('dir', { observed: dirObserved(fs, workdir, explicit, d.home) })
+    if (early.verdict === 'stop') { say(early.notice); return 1 }
+
+    const runners = probeRunners(d.spawnSync, d.env)
+    const available = RUNNERS.filter(runner => runners[runner])
+    if (!available.length) throw new Error('Install and sign in to Codex or Claude Code first; neither answered --version')
+    const provider = input.provider === undefined ? available[0] : input.provider
+    if (!runners[provider]) throw new Error(`${provider} did not answer --version; install and sign in to it first`)
+
+    const chatId = (d.newLocalChatId || newLocalChatId)()
+    const built = core.connectConfig({ platform: 'local', chatId, name: input.title || '本机对话',
+      workdir, home: d.home, provider, runners })
+    if (!built.ok) throw new Error(built.error)
+    const catalog = d.modelCatalog || connectModelCatalog()
+    say('正在读取执行器推荐的型号和思考深度…')
+    let selectedCatalog
+    try { selectedCatalog = await catalog(provider, { runner: provider }) } catch {}
+    if (interrupted()) return EXIT_INTERRUPTED
+    if (!selectedCatalog || selectedCatalog.ok !== true || selectedCatalog.source !== 'live' ||
+        !Array.isArray(selectedCatalog.models) || !selectedCatalog.models.length) {
+      throw new Error(`Could not read live model defaults for ${provider}. Check the executor login and network, then retry.`)
+    }
+    const modelDefaults = applyInitialGroupDefaults(built.config, chatId, selectedCatalog)
+    d.onModelDefaults?.(modelDefaults)
+    say(`对话默认：${modelDefaults.name} · ${modelDefaults.effort}。之后可在控制台修改。`)
+
+    const observed = dirObserved(fs, workdir, explicit, d.home)
+    if (decide('dir', { observed }).verdict === 'stop') return 1
+    if (interrupted()) return EXIT_INTERRUPTED
+    let createdDir = false, createdReadme = false, configCommitted = false
+    const readme = path.join(workdir, 'README.md')
+    let plan
+    try {
+      fs.mkdirSync(path.dirname(configPath), { recursive: true, mode: 0o700 })
+      withFileLock(configPath, () => {
+        assertUnclaimed()
+        if (!observed.exists) {
+          fs.mkdirSync(path.dirname(workdir), { recursive: true, mode: 0o755 })
+          fs.mkdirSync(workdir, { mode: 0o755 })
+          createdDir = true
+        }
+        if (!fs.existsSync(readme)) {
+          fs.writeFileSync(readme, built.readme, { mode: 0o644, flag: 'wx' })
+          createdReadme = true
+        }
+        atomicWriteJSON(configPath, built.config, { mode: 0o600 })
+        configCommitted = true
+      })
+      plan = decide('config', { observed: { configPath } })
+    } catch (error) {
+      if (createdReadme && !configCommitted) { try { fs.unlinkSync(readme) } catch {} }
+      if (createdDir) { try { if (!fs.readdirSync(workdir).length) fs.rmdirSync(workdir) } catch {} }
+      plan = decide('config', { code: LOCAL_FAILURE, msg: error?.message || String(error), observed: { configPath } })
+    }
+    if (plan.verdict === 'stop') return 1
+
+    try {
+      d.initializeInstallation(configPath, { dataDir: stateDir })
+      plan = core.connectPlan('init', { observed: { platform: 'local' } })
+    } catch (error) { plan = decide('init', { code: LOCAL_FAILURE, msg: error?.message || String(error) }) }
+    if (plan.verdict === 'stop') return 1
+    stdout.write(`${plan.notice}\n`)
+    return 0
+  } finally {
+    for (const signal of ['SIGINT', 'SIGTERM']) d.signals.off(signal, onSignal)
+  }
 }
 
 const appVersions = (client, appId) => client.request({ method: 'GET',
@@ -563,4 +737,4 @@ async function scannerName(client, openId, sdkName, basic, d) {
   return name ? core.connectManifest(basic, name, d.version).appPreset.name : ''
 }
 
-module.exports = { runConnect, CONNECT_OPTIONS, sdkAddons, qrPage, failureInput, probeRunners, EXIT_INTERRUPTED, connectModelCatalog, applyInitialGroupDefaults }
+module.exports = { runConnect, runLocalSetup, CONNECT_OPTIONS, sdkAddons, qrPage, failureInput, probeRunners, EXIT_INTERRUPTED, connectModelCatalog, applyInitialGroupDefaults }

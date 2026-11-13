@@ -6,11 +6,12 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const { parseArgs } = require('node:util')
-const { applyProxyEnv, chatPlatform } = require('../src/config')
+const { applyProxyEnv, chatPlatform, platformsConfigured } = require('../src/config')
 const { secureDataDir } = require('../src/core/datadir')
 const { StateStore } = require('../src/core/store')
 const { createFeishuPlatform, feishuClient } = require('../src/platform/feishu')
 const { createMultiPlatform } = require('../src/platform/multi')
+const { createLocalPlatform } = require('../src/platform/local')
 const { isC2InputRejection, answerC2InputRejection } = require('../src/core/c2inputrejection')
 
 // Answers stream into the reply card while the model works. The card is
@@ -73,7 +74,7 @@ async function runSetupMode({ configFile, dataDir, host, port, open }) {
     runners: probeRunners(), host, port, log: message => process.stderr.write(`Setup · ${message}\n`) })
   await setup.listen()
   const url = `http://${host === '::1' ? '[::1]' : host}:${port}/`
-  process.stderr.write(`SintBot has no Feishu configuration yet. Open ${url} to connect by scanning.\n`)
+  process.stderr.write(`SintBot is not set up yet. Open ${url} to connect Feishu by scanning, or to start with a conversation on this Mac.\n`)
   if (open && process.platform === 'darwin') {
     try { require('node:child_process').spawn('open', [url], { stdio: 'ignore', detached: true }).unref() } catch {}
   }
@@ -93,7 +94,7 @@ async function runSetupMode({ configFile, dataDir, host, port, open }) {
     process.off('SIGINT', onSignal); process.off('SIGTERM', onSignal)
     await setup.close()
   }
-  process.stderr.write('Setup · Feishu connected; starting the service\n')
+  process.stderr.write('Setup · configuration written; starting the service\n')
 }
 
 // Model and depth used to live on model cards; they now belong to each group.
@@ -149,7 +150,7 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
   const { createC2ServiceStartGate } = require('../src/core/c2servicestartgate')
   const { C2PayloadHandles } = require('../src/core/c2payloadhandles')
   const { createC2LocalEffectExecutor, resolveC2LocalEffectTurn } = require('../src/core/c2localeffectexecutor')
-  const { createFeishuRecoverySender } = require('../src/core/c2platformrecoverysender')
+  const { createFeishuRecoverySender, createLocalRecoverySender, createRoutedRecoverySender } = require('../src/core/c2platformrecoverysender')
   const { createC2V2SourceQuarantine } = require('../src/core/c2sourcequarantine')
   const { Engine } = require('../src/core/v2engine')
   const { createC2MultiGroupService } = require('../src/c2multigroupservice')
@@ -298,15 +299,33 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
         finish(result)
       },
       createTransport: () => {
-        const client = feishuClient(cfg.feishu.appId, cfg.feishu.appSecret)
-        const adapter = createFeishuPlatform({ appId: cfg.feishu.appId,
-          appSecret: cfg.feishu.appSecret, botOpenId: cfg.feishu.botOpenId,
-          onlyWhenMentioned: cfg.feishu.onlyWhenMentioned === true,
-          ws: cfg.feishu.ws || {}, card: cfg.feishu.card || {}, client })
-        const platform = createMultiPlatform({ adapters: { feishu: adapter },
+        // The console's own conversations are always available, so one can be
+        // added online. Feishu joins when its credentials are configured; an
+        // installation of local conversations alone opens no outside connection.
+        const local = createLocalPlatform({ stateDir,
+          senderName: (() => { try { return require('node:os').userInfo().username } catch { return '' } })(),
+          onEvent: event => ui?.pushEvent('local-message', event),
+          log: message => process.stderr.write(`Local chat · ${message}\n`) })
+        const adapters = { local }
+        let client = null
+        if (platformsConfigured(cfg).feishu) {
+          client = feishuClient(cfg.feishu.appId, cfg.feishu.appSecret)
+          adapters.feishu = createFeishuPlatform({ appId: cfg.feishu.appId,
+            appSecret: cfg.feishu.appSecret, botOpenId: cfg.feishu.botOpenId,
+            onlyWhenMentioned: cfg.feishu.onlyWhenMentioned === true,
+            ws: cfg.feishu.ws || {}, card: cfg.feishu.card || {}, client })
+        }
+        const platform = createMultiPlatform({ adapters,
           resolve: chatId => chatPlatform(cfg, chatId) })
-        const sender = createFeishuRecoverySender({ cfg, platform, client })
-        liveTransport = { platform, sender, stopPlatform: () => adapter.stop({ strict: true }) }
+        const sender = createRoutedRecoverySender({ cfg, senders: {
+          local: createLocalRecoverySender({ cfg, platform }),
+          ...(client ? { feishu: createFeishuRecoverySender({ cfg, platform, client }) } : {}) } })
+        liveTransport = { platform, sender,
+          stopPlatform: async () => {
+            const stopped = await Promise.all([
+              adapters.feishu ? adapters.feishu.stop({ strict: true }) : true, local.stop()])
+            return stopped.every(value => value === true)
+          } }
         return liveTransport
       },
       createRecoveryAuthority: ({ route, transport, assertWriterLock: lock }) => {
@@ -397,6 +416,12 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
             durableV2Version: require('../package.json').version,
             durableV2DataDir: stateDir,
             durableV2ConsoleEnabled: uiEnabled,
+            // What outlives a session in this project: its convention files and the
+            // executor's own memory directory, probed (never guessed) each turn so
+            // either executor is told they exist. Paths and size buckets only.
+            projectMemory: (workdir, options) => {
+              try { return require('../src/projectmemory').probeHandover(workdir, options) } catch { return null }
+            },
             durableV2NormalRoute: true, durableV2StreamFrames: streamFrames(cfg) })
           return { journal, gate, runtime, engine, handles }
         } catch (error) { gate.stop(); throw error }
@@ -440,6 +465,7 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
         // Console injection enters through the same ingress as a group
         // message, posted and answered with that group's own adapter.
         getPlatform: chatId => liveTransport?.platform.forChat(chatId) || null,
+        getLocal: () => liveTransport?.platform.get('local') || null,
         routeMessage: (msg, adapter) => service.routeMessage(msg, adapter),
         isServing: () => service.serving, isFrozen: () => service.inMaintenance,
         assertWriterLock, ...configControl, setGroupBrain, modelCatalog, updater,
@@ -530,7 +556,7 @@ const HELP = `SintBot macOS Feishu multi-group candidate
 Usage:
   sintbot init [--config <absolute path>] [--data-dir <absolute path>]
   sintbot start [--config <absolute path>] [--data-dir <absolute path>] [--preflight] [--ui] [--ui-host <address>] [--ui-port <port>] [--no-open]
-  sintbot connect [--config <absolute path>] [--data-dir <absolute path>] [--workdir <absolute path>] [--name <project>] [--provider codex|claude] [--app-id <cli_…>] [--chat <oc_…>] [--basic] [--no-open]
+  sintbot connect [--config <absolute path>] [--data-dir <absolute path>] [--workdir <absolute path>] [--name <project>] [--provider codex|claude] [--app-id <cli_…>] [--chat <oc_…>] [--basic] [--attach] [--no-open]
   sintbot incident seal --group <oc_…> [--config <absolute path>] [--data-dir <absolute path>] [--reason <text>]
   sintbot feishu <action> [arguments…] [--chat <oc_…>] [--config <path>]
   sintbot version
@@ -549,6 +575,9 @@ Console shows live groups, binds groups and switches models or projects of idle 
 in a group, /model lists or switches models. Unsupported actions stay disabled.
 feishu sends to a group without the service (send-msg · send-notice · send-file · send-image ·
 history · reply · edit · recall · download · react); sintbot feishu --help lists the arguments.
+A conversation in the console needs no Feishu: the setup page offers it, and the console's Chat page adds more.
+connect --attach adds Feishu to such an installation later: stop the service, run it, start again; the
+conversations, their journals and the configuration stay, and a backup of the configuration is kept.
 Canvas, scheduled tasks, terminal chat and other platforms are unavailable.
 A group whose last result cannot be proven is held alone; the other groups keep serving.
 Restart first: a journal that can recover reopens on its own. If the group is still held,

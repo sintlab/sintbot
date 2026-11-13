@@ -1,5 +1,32 @@
 [
   {
+    "version": "1.4.19",
+    "date": "2026-11-13",
+    "name": "Local conversations and a refined desktop interface",
+    "items": [
+      {
+        "t": "Chat directly on your Mac",
+        "d": "Choose a project and executor without connecting a chat platform first. Conversations stay on your Mac, and Feishu can be attached later."
+      },
+      {
+        "t": "A compact, consistent interface",
+        "d": "Setup and console share light and dark themes and follow the system by default. Collapsible project cards, settings navigation and responsive layouts fit narrower windows."
+      },
+      {
+        "t": "Project memory accompanies each task",
+        "d": "Each turn points to project convention files and available executor memory, preserving the project context."
+      },
+      {
+        "t": "Safer history and connection setup",
+        "d": "Recover cleanly after interrupted transcript writes. Attaching Feishu preserves local routes and history, and the package includes the complete local conversation module."
+      },
+      {
+        "t": "Compact reply cards",
+        "d": "Elapsed time, usage and model share one footer that wraps naturally on phones."
+      }
+    ]
+  },
+  {
     "version": "1.4.18",
     "date": "2026-11-12",
     "name": "Browser setup and Claude idle compaction",

@@ -1,6 +1,7 @@
 'use strict'
 
 const { chatPlatform } = require('../config')
+const { isLocalChatId, isLocalMessageId } = require('../platform/local')
 
 const RECEIPT_ID = /^[0-9a-f]{32}$/
 const FEISHU_CHAT_ID = /^oc_[A-Za-z0-9_-]{1,124}$/
@@ -73,4 +74,76 @@ function createFeishuRecoverySender({ cfg, platform, client } = {}) {
   return Object.freeze({ resolveTarget, send })
 }
 
-module.exports = { createFeishuRecoverySender }
+// The same single-attempt notice for a local conversation: one appended line
+// under the accepted message. A failed append reports null (unknown), exactly
+// as an ambiguous chat service call does; it is never retried.
+function createLocalRecoverySender({ cfg, platform } = {}) {
+  if (!cfg || typeof cfg !== 'object' || !cfg.groups ||
+      !platform || typeof platform.get !== 'function' || typeof platform.forChat !== 'function' ||
+      typeof platform.get('local')?.notice !== 'function') {
+    throw new TypeError('C2 local recovery needs active conversation routing')
+  }
+  const local = platform.get('local')
+
+  function validReceipt(receipt) {
+    if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt) ||
+        !RECEIPT_ID.test(receipt.id || '') ||
+        !isLocalChatId(receipt.chatId) ||
+        receipt.source !== 'message' ||
+        !isLocalMessageId(receipt.sourceId)) {
+      throw new TypeError('C2 local recovery receipt identity invalid')
+    }
+    if (!cfg.groups[receipt.chatId] || chatPlatform(cfg, receipt.chatId) !== 'local' ||
+        platform.get('local') !== local || platform.forChat(receipt.chatId) !== local) {
+      throw new Error('C2 local recovery conversation route is unavailable')
+    }
+  }
+
+  function resolveTarget(receipt) {
+    validReceipt(receipt)
+    return Object.freeze({ receiptId: receipt.id, chatId: receipt.chatId,
+      sourceId: receipt.sourceId,
+      replyCtx: Object.freeze({ chatId: receipt.chatId, messageId: receipt.sourceId }) })
+  }
+
+  async function send(receipt, target) {
+    validReceipt(receipt)
+    if (!target || typeof target !== 'object' || Array.isArray(target) ||
+        target.receiptId !== receipt.id || target.chatId !== receipt.chatId ||
+        target.sourceId !== receipt.sourceId ||
+        target.replyCtx?.chatId !== receipt.chatId ||
+        target.replyCtx?.messageId !== receipt.sourceId) {
+      throw new Error('C2 local recovery target differs from durable receipt')
+    }
+    try {
+      const id = local.notice(receipt.chatId, NOTICE_TEXT, receipt.sourceId)
+      return isLocalMessageId(id) ? id : null
+    } catch { return null }
+  }
+
+  return Object.freeze({ resolveTarget, send })
+}
+
+// One sender for a service that carries several platforms: each receipt goes
+// to the sender of the platform its conversation is configured for. A receipt
+// whose platform has no sender here is refused, never rerouted.
+function createRoutedRecoverySender({ cfg, senders } = {}) {
+  if (!cfg || typeof cfg !== 'object' || !cfg.groups || !senders || typeof senders !== 'object' ||
+      !Object.keys(senders).length ||
+      Object.values(senders).some(sender => typeof sender?.resolveTarget !== 'function' ||
+        typeof sender.send !== 'function')) {
+    throw new TypeError('C2 recovery routing needs one sender per active platform')
+  }
+  const senderOf = receipt => {
+    const name = chatPlatform(cfg, receipt?.chatId)
+    const sender = name && Object.hasOwn(senders, name) ? senders[name] : null
+    if (!sender) throw new Error('C2 recovery route has no sender for this conversation')
+    return sender
+  }
+  return Object.freeze({
+    resolveTarget: receipt => senderOf(receipt).resolveTarget(receipt),
+    send: (receipt, target) => senderOf(receipt).send(receipt, target),
+  })
+}
+
+module.exports = { createFeishuRecoverySender, createLocalRecoverySender, createRoutedRecoverySender }

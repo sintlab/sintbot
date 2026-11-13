@@ -20,7 +20,7 @@
 
 ---
 
-SintBot is a self-hosted daemon that puts a coding agent in your team's group chat. You bind a group to a project directory, and then anyone in that group can hand it work. It reads and changes code, designs, runs scripts and reports back, all on your own machine.
+SintBot is a personal AI agent that runs on your own Mac. You message it in Feishu or Slack, and it does the work on your computer: it reads and changes code, designs, runs scripts and reports back. On your own, it is your assistant in a group of one. In a team's project group, it is a teammate anyone in the group can hand work to. Either way a group is bound to a project directory, and everything runs on your own machine.
 
 SintBot uses **Claude Code** and **Codex** as agent runners, with tools, MCP servers, skills and project instructions. Each group chooses its runner and model: Claude through Claude Code, GPT through Codex, or GLM, MiniMax, DeepSeek and other compatible endpoints through Claude Code.
 
@@ -50,6 +50,14 @@ The script checks the environment, installs SintBot and verifies the result, wit
 Installing with an AI assistant? Use the [AI-assisted install and first-use guide](./docs/AI-ASSISTED-INSTALL.md).
 
 **3. @ the bot in your group.** Start with a read-only request: “Read the first line of this project's README and reply with that line.” Then try a concrete task, such as investigating a bug or reviewing a page. See the [usage guide](https://sintbot.com/guide/usage/) for examples.
+
+### On your own
+
+You do not need a team to use SintBot. The scan in step 2 creates a group with only you and the bot in it, bound to one project folder. Leave the Mac on and message that group from your phone: the work happens on the Mac and the result comes back to the chat. Bind another group in the console for each further project.
+
+Feishu only lets an enterprise or team identity create the app, so a personal Feishu account needs a team first; creating one is free.
+
+On Slack it works the same way in a channel or in a direct message with the bot, in a workspace you can create yourself for free. The [installation guide](./docs/install.md) says which platforms the current package connects.
 
 ### Pick a model: no single provider required
 

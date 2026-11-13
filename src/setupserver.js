@@ -364,18 +364,22 @@ function setupPage({ version = '' } = {}) {
 <html lang="en" data-sintbot-setup="true"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>SintBot · Connect Feishu</title>
 <style>
-:root{--ink:#13171c;--muted:#6b7280;--line:#e5e7eb;--paper:#f6f5f1;--copper:#dd7d3d;--fail:#b91c1c;--ok:#15803d}
-*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.6 -apple-system,"PingFang SC","Helvetica Neue",sans-serif}
-.wrap{max-width:720px;margin:0 auto;padding:40px 20px 60px}h1{font-size:24px;margin:0 0 6px}.sub{color:var(--muted);margin:0 0 26px}
-.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:22px 24px;margin-bottom:18px}
-label.f{display:block;font-size:13px;font-weight:600;margin:14px 0 6px}input[type=text]{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;font:inherit}
-.hint{color:var(--muted);font-size:13px;margin:6px 0 0}.row{display:flex;gap:16px;flex-wrap:wrap;align-items:center}
-.btn{display:inline-block;padding:10px 18px;border-radius:8px;border:1px solid var(--line);background:#fff;font:inherit;cursor:pointer;min-height:40px}
-.btn.primary{background:var(--copper);border-color:var(--copper);color:#fff}.btn:disabled{opacity:.5;cursor:default}
-.qr{display:flex;justify-content:center;padding:10px 0}.qr svg{width:min(300px,100%);height:auto;aspect-ratio:1}
-.log{font-size:13px;line-height:1.7;max-height:320px;overflow:auto;background:var(--paper);border-radius:8px;padding:12px 14px;white-space:pre-wrap;word-break:break-word}
-.status{font-weight:600}.status.failed{color:var(--fail)}.status.done{color:var(--ok)}
-.steps{margin:0;padding-left:20px;color:var(--muted);font-size:13px}.hidden{display:none}
+:root{--ink:#1a1714;--muted:#6b6259;--line:#e6ded1;--line-hi:#d3c8b6;--paper:#faf8f4;--inset:rgba(26,23,20,.05);--copper:#a16b33;--copper-hi:#8a5a29;--fail:#e55934;--ok:#4d7c0f}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:13px/20px -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Hiragino Sans GB","Helvetica Neue",sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{max-width:560px;margin:0 auto;padding:32px 24px 48px}h1{font-size:18px;line-height:26px;font-weight:600;margin:0 0 4px}.sub{color:var(--muted);font-size:12px;line-height:18px;margin:0 0 16px}
+.card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:12px}
+label.f{display:block;font-size:13px;font-weight:500;margin:14px 0 6px}input[type=text]{width:100%;height:32px;padding:0 10px;border:1px solid var(--line-hi);border-radius:6px;background:#fff;color:inherit;font:inherit;transition:border-color .15s,box-shadow .15s}
+input[type=text]:focus{outline:none;border-color:var(--copper);box-shadow:0 0 0 3px rgba(161,107,51,.2)}input[type=checkbox],input[type=radio]{accent-color:var(--copper)}
+select{height:28px;padding:0 6px;border:1px solid var(--line-hi);border-radius:6px;background:#fff;color:inherit;font:inherit}
+.hint{color:var(--muted);font-size:12px;line-height:18px;margin:6px 0 0}.row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.btn{display:inline-flex;align-items:center;height:32px;padding:0 14px;border-radius:6px;border:1px solid var(--line-hi);background:#fff;color:inherit;font:inherit;font-weight:500;cursor:pointer;transition:background-color .15s,border-color .15s}
+.btn:hover:not(:disabled){border-color:var(--muted)}.btn.primary{background:var(--copper);border-color:var(--copper);color:#fff;font-weight:600}.btn.primary:hover:not(:disabled){background:var(--copper-hi);border-color:var(--copper-hi)}.btn:disabled{opacity:.45;cursor:default}
+.btn:focus-visible,select:focus-visible,input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline:2px solid var(--copper);outline-offset:2px}
+.qr{display:flex;justify-content:center;padding:12px 0}.qr svg{width:min(260px,100%);height:auto;aspect-ratio:1}
+.log{font-size:12px;line-height:18px;max-height:280px;overflow:auto;background:var(--inset);border-radius:6px;padding:10px 12px;white-space:pre-wrap;word-break:break-word}
+.status{font-size:14px;font-weight:600}.status.failed{color:var(--fail)}.status.done{color:var(--ok)}
+.steps{margin:0;padding-left:18px;color:var(--muted);font-size:12px;line-height:20px}.hidden{display:none}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
 </style></head><body><div class="wrap">
 <div class="row" style="justify-content:space-between"><h1 data-i18n="title">Connect your project to Feishu</h1><label class="hint">Language <select id="language" aria-label="Language"><option value="en">English</option><option value="zh">简体中文</option></select></label></div><p class="sub">SintBot ${String(version).replace(/[&<>"\']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c])} · <span data-i18n="intro">This page is only available on this Mac. After you confirm the scan, setup creates the app, project folder and group, then saves your configuration.</span></p>
 

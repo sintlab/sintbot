@@ -182,7 +182,8 @@ function createHistoryPoll({
     bump(chatId, now() + hotOf()) // 喂过 ⇒ 下次拉取按热档提前(跟进窗口由机器人开口时开,这里不开 —— 门控口径不变)
   }
 
-  const chatIds = () => { try { return (chats() || []).filter((id) => /^wr/.test(String(id))) } catch { return [] } }
+  // 只轮询真实群:单聊会话 id(wr_dm_…)没有群历史可拉
+  const chatIds = () => { try { return (chats() || []).filter((id) => /^wr/.test(String(id)) && !/^wr_dm_/.test(String(id))) } catch { return [] } }
   // 一个定时器,到点扫一遍:只拉到期的群,拉完按各自档位记下次;定时器定在最早到期的那个群。
   // 手动调 tick()(测试 / 排障)= 不看档位全拉一遍;定时器走 tick(false) 只拉到期的
   // ⚠ 不可重入:一轮 tick 里 await 着门控 / 媒体下载时,kick / noteActivity 会重定定时器 —— 若放任第二个 tick 并发跑同一个群,

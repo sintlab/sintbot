@@ -1,5 +1,24 @@
 [
   {
+    "version": "1.4.22",
+    "date": "2026-11-14",
+    "name": "Connect WeCom by scanning",
+    "items": [
+      {
+        "t": "Scan to create the WeCom bot",
+        "d": "Choose WeCom during setup, or add it from console Settings, and scan with WeCom on your phone. The bot is created and its credentials are saved on this Mac. You can still enter an existing Bot ID and Secret."
+      },
+      {
+        "t": "Start from any message",
+        "d": "Message the bot directly, or @mention it in a group, to bind the project. A personal organization with only you in it works through direct chat. Existing Feishu projects are kept."
+      },
+      {
+        "t": "Tasks and files in WeCom",
+        "d": "Use Codex or Claude Code, stop tasks, and have the assistant send project files and images back. The reply arrives when a task finishes; unknown send results are not retried automatically."
+      }
+    ]
+  },
+  {
     "version": "1.4.21",
     "date": "2026-11-13",
     "name": "Fast for GPT groups; held groups handled in the console",

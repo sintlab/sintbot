@@ -16,7 +16,8 @@
 function createMultiPlatform({ adapters = {}, resolve = () => null, log = () => {} } = {}) {
   const names = Object.keys(adapters).filter((n) => adapters[n])
   if (!names.length) throw new Error('multi: at least one platform adapter required')
-  const only = names.length === 1 ? adapters[names[0]] : null
+  let receiver = null, activeHooks = {}, stopped = false
+  const only = () => names.length === 1 ? adapters[names[0]] : null
   const seen = new Map() // chatId → 最近一次入站消息来自哪个适配器:配置判不出归属的会话(企微单聊 id 没形态)靠它,消息从哪边来就往哪边回
 
   // 某个会话该走哪个适配器:配置(群 platform / id 形态 / 唯一平台)> 最近入站 > 只有一个适配器就是它;都没有 ⇒ null(调用方决定报什么)
@@ -24,7 +25,7 @@ function createMultiPlatform({ adapters = {}, resolve = () => null, log = () => 
     let name = null
     try { name = resolve(chatId) } catch { name = null }
     if (name && adapters[name]) return adapters[name]
-    return seen.get(chatId) || only
+    return seen.get(chatId) || only()
   }
   const miss = (what, chatId) => { log(`${what}: 判不出会话 ${chatId} 属于哪个平台(已配 ${names.join(' / ')}),未发送 —— 给这个群补 platform 字段`); return null }
 
@@ -33,8 +34,29 @@ function createMultiPlatform({ adapters = {}, resolve = () => null, log = () => 
     names: () => names.slice(),
     get: (name) => adapters[name] || null,
     forChat,
+    seal() { stopped = true; receiver = null },
+
+    async add(name, adapter) {
+      if (stopped || !receiver) throw new Error('multi: transport is not running')
+      if (!name || adapters[name] || !adapter || typeof adapter.start !== 'function') throw new Error('multi: invalid or duplicate adapter')
+      const { byPlatform, ...base } = activeHooks
+      // Publish the route only after start has accepted its callback. Until
+      // then any inbound frame is ignored, never routed to a different adapter.
+      let ready = false
+      try {
+        await adapter.start(msg => {
+          if (!ready || stopped) return
+          if (msg?.chatId) seen.set(msg.chatId, adapter)
+          return receiver(msg, adapter, name)
+        }, { ...base, ...((byPlatform || {})[name] || {}) })
+      } catch (error) { await adapter.stop?.({ strict: true }); throw error }
+      if (stopped) { await adapter.stop?.({ strict: true }); throw new Error('multi: transport stopped during addition') }
+      adapters[name] = adapter; names.push(name); ready = true
+      return true
+    },
 
     async start(onMessage, hooks = {}) {
+      receiver = onMessage; activeHooks = hooks; stopped = false
       const { byPlatform, ...base } = hooks || {}
       await Promise.all(names.map((name) => {
         const a = adapters[name]
@@ -82,6 +104,7 @@ function createMultiPlatform({ adapters = {}, resolve = () => null, log = () => 
     },
 
     async stop() {
+      stopped = true; receiver = null
       await Promise.all(names.map((name) => Promise.resolve(adapters[name].stop && adapters[name].stop()).catch(() => {})))
     },
   }

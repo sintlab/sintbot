@@ -24,7 +24,7 @@ function run(args, options = {}) {
 
 test('installed entry reports this release and its supported commands', () => {
   const pkg = require('../package.json')
-  assert.equal(pkg.version, '1.4.21')
+  assert.equal(pkg.version, '1.4.22')
   assert.equal(pkg.bin.sintbot, 'bin/sintbot-v2.js')
   assert.equal(pkg.bin.sbot, pkg.bin.sintbot)
   const version = run([entry, '--version'])
@@ -91,4 +91,21 @@ test('the package ships its declared runtime files without development artifacts
   for (const required of ['src/c2multigroupservice.js', 'src/c2console.js', 'src/c2incident.js', 'src/c2updater.js', 'src/c2upgradeswitch.js', 'src/ui/console.html']) {
     assert.ok(pkg.files.includes(required), required)
   }
+})
+
+test('every relative require in the shipped files resolves to a shipped file', () => {
+  const pkg = require('../package.json')
+  // npm always packs package.json, whatever `files` lists.
+  const shipped = new Set([...pkg.files, 'package.json'])
+  const missing = []
+  for (const file of pkg.files.filter(f => f.endsWith('.js'))) {
+    const source = fs.readFileSync(path.join(root, file), 'utf8')
+    for (const match of source.matchAll(/require\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*\)/g)) {
+      const base = path.posix.normalize(path.posix.join(path.posix.dirname(file), match[1]))
+      if (![base, `${base}.js`, `${base}.json`, `${base}/index.js`].some(candidate => shipped.has(candidate))) {
+        missing.push(`${file} -> ${match[1]}`)
+      }
+    }
+  }
+  assert.deepEqual(missing, [])
 })

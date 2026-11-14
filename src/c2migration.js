@@ -85,10 +85,12 @@ function loadC2MigrationFence({ stateDir, routes } = {}) {
     },
   })
 }
+// Feishu (and local) or WeCom conversations; only Feishu groups were ever fenced.
+const BOUND_CHAT = /^(?:oc_|wr)[A-Za-z0-9_-]{1,124}$/
 // A group bound online after a reviewed cut must not carry legacy state:
 // its old messages would have no admission fence.
 function assertNoLegacyGroupState({ stateDir, chatId } = {}) {
-  if (!path.isAbsolute(stateDir || '') || !CHAT.test(chatId || '')) fail()
+  if (!path.isAbsolute(stateDir || '') || !BOUND_CHAT.test(chatId || '')) fail()
   const file = path.join(stateDir, 'legacy-evidence', 'state-before.json')
   if (!fs.existsSync(path.join(stateDir, 'c2-migration.json')) && !fs.existsSync(file)) return true
   const legacy = JSON.parse(readPrivate(file))

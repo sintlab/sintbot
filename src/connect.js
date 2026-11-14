@@ -595,6 +595,14 @@ async function connectFlow(argv, d, abort) {
 // checks as the scan flow, and writes the same two things: the configuration
 // and the journals. Nothing leaves this Mac.
 async function runLocalSetup(input = {}, deps = {}) {
+  return runConversationSetup(input, deps, 'local')
+}
+
+async function runWecomSetup(input = {}, deps = {}) {
+  return runConversationSetup(input, deps, 'wecom')
+}
+
+async function runConversationSetup(input = {}, deps = {}, platform = 'local') {
   const d = defaultDeps(deps)
   const { fs, stderr, stdout } = d
   const abort = new AbortController()
@@ -641,10 +649,8 @@ async function runLocalSetup(input = {}, deps = {}) {
     const provider = input.provider === undefined ? available[0] : input.provider
     if (!runners[provider]) throw new Error(`${provider} did not answer --version; install and sign in to it first`)
 
-    const chatId = (d.newLocalChatId || newLocalChatId)()
-    const built = core.connectConfig({ platform: 'local', chatId, name: input.title || '本机对话',
-      workdir, home: d.home, provider, runners })
-    if (!built.ok) throw new Error(built.error)
+    // The live model defaults are read first: a failure here stops before a
+    // bot is created or a conversation is bound.
     const catalog = d.modelCatalog || connectModelCatalog()
     say('正在读取执行器推荐的型号和思考深度…')
     let selectedCatalog
@@ -654,6 +660,47 @@ async function runLocalSetup(input = {}, deps = {}) {
         !Array.isArray(selectedCatalog.models) || !selectedCatalog.models.length) {
       throw new Error(`Could not read live model defaults for ${provider}. Check the executor login and network, then retry.`)
     }
+
+    // WeCom conversations are named after the project; local ones keep their title.
+    const title = platform === 'wecom' ? path.basename(workdir) : input.title || '本机对话'
+    const buildFor = (chatId, credentials) => core.connectConfig({ platform, chatId, ...credentials, name: title,
+      workdir, home: d.home, provider, runners })
+    let chatId, built
+    if (platform === 'wecom') {
+      // Credentials come from the form, or from a scan that creates the bot
+      // (input.scan). Scanned ones live only in this run's memory and the
+      // caller's callback; a retry may hand the same bot back as input.bot.
+      let bot
+      if (input.scan === true) {
+        const preflight = buildFor('wr_setup_preflight', { botId: 'scan_preflight', secret: 'scan_preflight' })
+        if (!preflight.ok) throw new Error(preflight.error)
+        const reuse = input.bot && typeof input.bot.botId === 'string' && typeof input.bot.secret === 'string' ? input.bot : null
+        bot = reuse || await (deps.provisionWecomBot || require('./wecomprovision').provisionWecomBot)({
+          signal: abort.signal, onNotice: say, onQr: url => d.onWecomQr?.(url), ...(deps.wecomScan || {}) })
+        d.onWecomBot?.(bot)
+      } else bot = { botId: input.botId, secret: input.secret }
+      const transport = require('./wecomsetuptransport')
+      // The first direct chat or group @mention binds the conversation. The
+      // core checks the binding while the setup connection is still open, so
+      // the reply in WeCom only follows an accepted configuration.
+      chatId = await (deps.discoverWecomGroup || transport.discoverWecomGroup)({
+        botId: bot.botId, secret: bot.secret, signal: abort.signal,
+        inboxDir: path.join(stateDir, 'wecom-inbox'),
+        ...(input.scan === true ? { notice: require('./wecomprovision').WECOM_SCAN_NOTICES.botReady } : {}),
+        confirm: async ({ chatId: found }) => {
+          built = buildFor(found, { botId: bot.botId, secret: bot.secret })
+          if (!built.ok) throw new Error(built.error)
+          return transport.confirmReply(title)
+        },
+        onNotice: say })
+      if (!built || built.config?.groups?.[chatId] === undefined) built = buildFor(chatId, { botId: bot.botId, secret: bot.secret })
+    } else {
+      chatId = (d.newLocalChatId || newLocalChatId)()
+      built = buildFor(chatId, {})
+    }
+    if (interrupted()) return EXIT_INTERRUPTED
+    if (!built.ok) throw new Error(built.error)
+    if (platform === 'wecom' && built.config.groups?.[chatId] && !built.config.groups[chatId].name) built.config.groups[chatId].name = title
     const modelDefaults = applyInitialGroupDefaults(built.config, chatId, selectedCatalog)
     d.onModelDefaults?.(modelDefaults)
     say(`对话默认：${modelDefaults.name} · ${modelDefaults.effort}。之后可在控制台修改。`)
@@ -690,7 +737,7 @@ async function runLocalSetup(input = {}, deps = {}) {
 
     try {
       d.initializeInstallation(configPath, { dataDir: stateDir })
-      plan = core.connectPlan('init', { observed: { platform: 'local' } })
+      plan = core.connectPlan('init', { observed: { platform } })
     } catch (error) { plan = decide('init', { code: LOCAL_FAILURE, msg: error?.message || String(error) }) }
     if (plan.verdict === 'stop') return 1
     stdout.write(`${plan.notice}\n`)
@@ -737,4 +784,4 @@ async function scannerName(client, openId, sdkName, basic, d) {
   return name ? core.connectManifest(basic, name, d.version).appPreset.name : ''
 }
 
-module.exports = { runConnect, runLocalSetup, CONNECT_OPTIONS, sdkAddons, qrPage, failureInput, probeRunners, EXIT_INTERRUPTED, connectModelCatalog, applyInitialGroupDefaults }
+module.exports = { runConnect, runLocalSetup, runWecomSetup, CONNECT_OPTIONS, sdkAddons, qrPage, failureInput, probeRunners, EXIT_INTERRUPTED, connectModelCatalog, applyInitialGroupDefaults }

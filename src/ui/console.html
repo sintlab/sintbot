@@ -590,6 +590,8 @@ label.f{display:block;font-size:12px;line-height:18px;font-weight:500;color:var(
 .fx-body code,.fx-guide>summary code,.fx-ident-hint code{font-family:var(--mono);font-size:11px;background:var(--hover);border-radius:4px;padding:1px 5px;color:var(--ember-soft)}
 /* 卡内分区小标题(凭证 / 身份 / 访问地址) */
 .fx-sub{font-size:12px;line-height:18px;font-weight:600;color:var(--dim);margin:16px 0 8px;display:flex;align-items:center;gap:10px}
+/* 设置 → 添加企业微信:扫码二维码与手动折叠区 */
+.wa-actions{flex-wrap:wrap;gap:8px;margin-bottom:8px}.wa-qr{display:flex;justify-content:flex-start;margin:12px 0 4px}.wa-qr svg{display:block;width:min(200px,100%);height:auto;aspect-ratio:1;background:#fff;border:8px solid #fff;border-radius:8px;shape-rendering:crispEdges}.wa-manual{margin:12px 0 0}#wecomAttachCard .hint{overflow-wrap:anywhere}.wa-off{display:none!important}
 .fx-sub::after{content:"";flex:1;height:1px;background:var(--line)}
 /* 预检结果清单 */
 .fx-check{border:1px solid var(--line);border-radius:8px;background:var(--inset-bg);padding:4px 10px;margin:8px 0 4px}
@@ -4148,7 +4150,7 @@ function renderSettings(){
       <div class="hint" style="margin-top:10px">执行权限已改<b>按群设</b> —— 见「群·项目」每张卡(缺省 <b>dontAsk 只读 · fail-closed</b>)。</div>
     </div>
     ${botCard}
-    ${!S.runtimeCapabilities?fxSlackCard(S.slack||null)+fxWecomCard(S.wecom||null):''}
+    ${!S.runtimeCapabilities?fxSlackCard(S.slack||null)+fxWecomCard(S.wecom||null):fxWecomAttachCard()}
     ${aboutCard}
     ${updateCard}
   </div>`;
@@ -4191,7 +4193,7 @@ function renderSettings(){
     catch(e){toast(e.message,'err');}};
   // 只开着控制台的守护进程(还没接平台):第一次接上平台时说一句接下来会发生什么(服务托管的会自己重启连上)
   {const pl=S.platforms||{};if(S.setupMode&&(pl.feishu||pl.slack||pl.wecom)&&!window._sbRestartToast){window._sbRestartToast=1;toast(S.setupMode.supervised?'已接上聊天平台 —— 后台服务几秒后自动重启并连上':'已接上聊天平台 —— 在终端里重启 sintbot start --ui 连上','ok');}}
-  bindWecomCard();
+  bindWecomCard(); bindWecomAttachCard();
   bindFxFolds();
   const lo=$('#logoutBtn');if(lo)lo.onclick=async()=>{try{await api('/api/logout','POST',{});}catch{}dropToken();TOKEN='';location.reload();};
   const la=$('#logoutAllBtn');if(la)la.onclick=async()=>{try{const r=await api('/api/logout/all','POST',{});toast('已退出 '+(r.n||0)+' 个登录','ok');}catch(e){toast(e.message,'err');return;}dropToken();TOKEN='';setTimeout(()=>location.reload(),600);};
@@ -4329,6 +4331,41 @@ function fxWecomIdent(we){
       <div class="fx-ident-hint" id="wConnLine">${esc(wecomConnText(c))}</div>
       <div class="fx-ident-hint">${src}</div>
     </div><div class="fx-ident-act"><button class="btn" id="wIdentRefresh" title="扫最近几个群的历史,被 @ 最多的名字就是它">刷新身份</button></div></div>`;
+}
+/* 设置 → 添加企业微信:扫码创建机器人为主,手动填写 Bot ID / Secret 折叠备选。接入任务在服务端跑(扫码、等首条消息、
+   保存配置、激活连接);这里只轮询 /api/wecom/attach。任务状态放在 WA 里,设置页重画时照样显示二维码与进度;
+   密钥只在提交那一下经过页面,任务状态里没有密钥和扫码会话。 */
+const WA={job:null,polling:false,loaded:false};
+function fxWecomAttachCard(){
+ if(S.platforms&&S.platforms.wecom)return `<div class="card"><h3>企业微信</h3><p class="hint">已添加连接。请在企业微信里给机器人发送任务。</p><p class="hint">${esc(wecomConnText(S.conn&&S.conn.wecom))}</p><button class="btn" id="waRetryConnection">刷新连接状态</button></div>`;
+ return `<div class="card" id="wecomAttachCard"><h3>添加企业微信</h3><p class="hint">用手机企业微信扫码，按提示创建机器人。添加后保留现有飞书和项目。</p><div class="field"><label for="waWorkdir">项目目录</label><input id="waWorkdir" placeholder="选择已有项目的完整目录"></div><div class="field"><label for="waProvider">执行器</label><select id="waProvider">${(S.providers||[]).filter(p=>!p.hidden&&(S.wecomAttachProviders||[]).includes(p.name)&&['codex','claude'].includes(p.runner||'claude')).map(({name})=>`<option value="${esc(name)}"${name===S.defaultProvider?' selected':''}>${esc(name)}</option>`).join('')}</select></div><div class="inline wa-actions"><button class="btn primary" id="waScan">扫码创建机器人</button><button class="btn wa-off" id="waCancel">取消接入</button></div><div class="wa-qr wa-off" id="waQr" aria-label="企业微信二维码"></div><p class="hint" id="waStatus" role="status" aria-live="polite">扫码后在企业微信里给机器人发一句话（单聊，或在群里 @它）即可完成接入。</p><details class="fx-guide wa-manual" id="waManual"><summary><span class="caret">${IC.chevronRight}</span><span>已有机器人？手动填写 Bot ID 和 Secret</span></summary><div class="fx-body"><p class="hint" style="margin-top:8px">在企业微信工作台创建智能机器人，选择 API 模式和长连接。</p><div class="field"><label for="waId">Bot ID</label><input id="waId" autocomplete="off" spellcheck="false"></div><div class="field"><label for="waSecret">Secret</label><input id="waSecret" type="password" autocomplete="off" spellcheck="false"></div><button class="btn" id="waStart">连接并绑定项目</button><p class="hint" style="margin-top:8px">密钥只保存在这台 Mac。连接后，在企业微信里给机器人发一句话（单聊，或在群里 @它）。</p></div></details></div>`;
+}
+function waPaint(){
+ const card=$('#wecomAttachCard');if(!card)return;const j=WA.job,running=!!(j&&j.phase==='running');
+ const qr=$('#waQr');qr.innerHTML=running&&j.qr?j.qr:'';qr.classList.toggle('wa-off',!(running&&j.qr));
+ if(j&&j.notice)$('#waStatus').textContent=j.notice;
+ $('#waCancel').classList.toggle('wa-off',!running);$('#waScan').disabled=running;$('#waStart').disabled=running;
+}
+async function waPoll(){
+ if(WA.polling)return;WA.polling=true;
+ try{for(let i=0;i<1200&&WA.job&&WA.job.phase==='running';i++){await new Promise(r=>setTimeout(r,2000));try{WA.job=await api('/api/wecom/attach')}catch(e){break}waPaint();}
+  if(WA.job&&WA.job.phase==='done'){S=await api('/api/state');renderAll();toast('企业微信已添加','ok')}}
+ catch(e){toast(e.message,'err')}finally{WA.polling=false;waPaint();}
+}
+async function waRun(body){
+ try{WA.job=await api('/api/wecom/attach','POST',body);waPaint();void waPoll();}
+ catch(e){$('#waStatus').textContent=e.message;}
+}
+function bindWecomAttachCard(){
+ if($('#waRetryConnection'))$('#waRetryConnection').onclick=async()=>{try{await api('/api/wecom/attach/retry','POST',{});S=await api('/api/state');renderAll();toast('企业微信已连接','ok')}catch(e){toast(e.message,'err')}};
+ if(!$('#waScan'))return;
+ const common=()=>({workdir:$('#waWorkdir').value.trim(),provider:$('#waProvider').value});
+ $('#waCancel').onclick=async()=>{try{await api('/api/wecom/attach/cancel','POST',{});}catch(e){toast(e.message,'err')}};
+ $('#waScan').onclick=()=>waRun({...common(),scan:true});
+ $('#waStart').onclick=()=>{const body={...common(),botId:$('#waId').value.trim(),secret:$('#waSecret').value};$('#waSecret').value='';waRun(body);};
+ // 页面刷新后接上正在跑的接入任务(只查一次)
+ if(!WA.loaded){WA.loaded=true;api('/api/wecom/attach').then(j=>{if(j&&j.phase==='running'){WA.job=j;waPaint();void waPoll();}}).catch(()=>{});}
+ waPaint();
 }
 function fxWecomCard(we){
   const on=!!(we&&(we.botId||we.botIdRef)&&we.secretStatus!=='none');
@@ -4835,6 +4872,47 @@ updateThemeBtn();
 /* I18N_DICT_BEGIN —— 合并翻译片段时整块替换这两个数组,不要改此标记之外的代码
    ⚠ 正则一律 ^…$ 整串、不加 g 标志;更具体的条目必须排在泛化条之前。 */
 const I18N_EN=[
+  ["执行器","Executor"],
+  ["添加企业微信", "Add WeCom"],
+  ["连接并绑定项目", "Connect and bind project"],
+  ["取消接入", "Cancel connection"],
+  ["刷新连接状态", "Refresh connection status"],
+  ["选择已有项目的完整目录", "Enter the full path of an existing project"],
+  ["企业微信已添加", "WeCom added"],
+  ["企业微信已连接", "WeCom connected"],
+  ["企业微信接入正在进行", "WeCom connection is in progress"],
+  ["配置已保存，企业微信尚未鉴权成功；请在设置中刷新连接状态，勿重复添加", "Configuration saved, but WeCom has not authenticated. Refresh connection status in Settings instead of adding it again."],
+  ["企业微信仍未连接，请检查网络、机器人凭据或是否被其他实例占用", "WeCom is still disconnected. Check the network, credentials and whether another instance owns the bot."],
+  ["扫码创建机器人", "Scan to create bot"],
+  ["用手机企业微信扫码，按提示创建机器人。添加后保留现有飞书和项目。", "Scan with WeCom on your phone and follow the prompts to create the bot. Existing Feishu connections and projects are preserved."],
+  ["扫码后在企业微信里给机器人发一句话（单聊，或在群里 @它）即可完成接入。", "After scanning, send the bot any message in WeCom (a direct chat, or @mention it in a group) to finish."],
+  ["已有机器人？手动填写 Bot ID 和 Secret", "Already have a bot? Enter Bot ID and Secret"],
+  ["在企业微信工作台创建智能机器人，选择 API 模式和长连接。", "In WeCom Workbench, create a smart bot in API mode and select long connection."],
+  ["密钥只保存在这台 Mac。连接后，在企业微信里给机器人发一句话（单聊，或在群里 @它）。", "The secret stays on this Mac. After connecting, send the bot any message in WeCom (a direct chat, or @mention it in a group)."],
+  ["已添加连接。请在企业微信里给机器人发送任务。", "Connection added. Send the bot a task in WeCom."],
+  ["企业微信二维码", "WeCom QR code"],
+  ["正在申请企业微信二维码…", "Requesting a WeCom QR code…"],
+  ["正在连接企业微信…", "Connecting to WeCom…"],
+  ["请用手机企业微信扫码，按提示创建机器人。", "Scan with WeCom on your phone and follow the prompts to create the bot."],
+  ["二维码已过期，已换一张新的。", "The QR code expired, so a new one is shown."],
+  ["机器人已创建。在企业微信里给它发一句话（单聊，或在群里 @它）即可完成接入。", "Bot created. Send it any message in WeCom (a direct chat, or @mention it in a group) to finish."],
+  ["在企业微信里给机器人发一句话（单聊，或在群里 @它）即可完成接入。", "Send the bot any message in WeCom (a direct chat, or @mention it in a group) to finish."],
+  ["无法申请企业微信二维码，请检查网络后重试", "Could not get a WeCom QR code. Check your network and retry."],
+  ["查询扫码结果失败，请检查网络后重试", "Could not check the scan result. Check your network and retry."],
+  ["扫码已完成，但企业微信没有返回机器人信息，请重试", "The scan finished, but WeCom did not return the bot details. Please retry."],
+  ["二维码已过期，请重试", "The QR code expired. Please retry."],
+  ["等待消息超时，请在企业微信里给机器人发一句话后重试", "No message arrived. Send the bot a message in WeCom, then retry."],
+  ["企业微信已添加，请在企业微信里发送任务。", "WeCom added. Send your tasks in WeCom."],
+  ["企业微信接入失败", "WeCom setup failed"],
+  ["已取消接入", "Connection cancelled."],
+  ["机器人连接不可用，请检查凭据及是否被其他设备使用", "The bot connection is unavailable. Check its credentials and whether another device is using it."],
+  ["机器人连接失败，请检查凭据和网络", "Could not connect the bot. Check its credentials and your network."],
+  ["机器人连接尚未完全关闭，请稍后重试", "The bot connection has not closed yet. Please retry shortly."],
+  ["请填写机器人 Bot ID 和 Secret", "Enter the bot ID and secret."],
+  ["请选择已有项目目录", "Choose an existing project folder."],
+  ["已经接入企业微信，请使用已有连接", "WeCom is already connected. Use the existing connection."],
+  ["服务尚未就绪或正在维护，请稍后接入", "The service is not ready or is under maintenance. Try again shortly."],
+
   /* 本机对话 */
   ["不再显示", "Don't show again"],
   ["在「对话」里交代第一件事", "Ask for your first task in Chat"],

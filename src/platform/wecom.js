@@ -22,6 +22,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const crypto = require('node:crypto')
+const { uploadWecomMedia } = require('./wecommedia')
 const https = require('node:https')
 const http = require('node:http')
 const { execFile } = require('node:child_process')
@@ -41,6 +42,54 @@ const MD_SAFE_BYTES = 19_000    // 自留余量:切片时按它切,免得边界�
 const STREAM_ROLL_MS = 9 * 60_000 // 流式 10 分钟硬上限 ⇒ 9 分钟就收掉这一段、另起一段接着流
 const RESPOND_WINDOW_MS = 23 * 3600_000 // 回调 req_id 的可回复窗口(文档 24h,自留 1h)
 const MEDIA_MAX_BYTES = 100 * 1024 * 1024 // 入站媒体上限(文档:文件 / 视频 ≤ 100MB)
+
+// ── Durable identities ─────────────────────────────────────────────────────────
+//
+// The durable route keys every receipt by (conversation, source message). WeCom
+// gives a group a stable `wr…` id, a direct chat no conversation id at all, and
+// a message an opaque `msgid` with no fixed shape. The adapter maps them into
+// shapes the durable path already validates and that can never collide with a
+// Feishu or local identity:
+//   - group: its own `wr…` id (a real group id never starts with `wr_dm_`);
+//   - direct chat: `wr_dm_<lowercase hex of the sender userid's UTF-8>`, decoded
+//     back to the userid (chat_type 1) for every outbound push;
+//   - message: `om_wecom_<24 hex>`, a keyed hash of the bot and the raw msgid, so
+//     the same message delivered twice always maps to the same receipt.
+// A reply or push confirmed by the platform reports a fresh `om_wecom_` id: WeCom
+// returns no message id of its own, and the durable path requires one.
+const WECOM_CHAT_ID = /^wr[A-Za-z0-9_-]{1,124}$/
+const WECOM_DM_CHAT_ID = /^wr_dm_((?:[0-9a-f]{2}){1,60})$/
+const WECOM_MESSAGE_ID = /^om_wecom_[0-9a-f]{24}$/
+const isWecomChatId = (value) => typeof value === 'string' && WECOM_CHAT_ID.test(value)
+const isWecomDmChatId = (value) => typeof value === 'string' && WECOM_DM_CHAT_ID.test(value)
+const isWecomMessageId = (value) => typeof value === 'string' && WECOM_MESSAGE_ID.test(value)
+const isWecomGroupChatId = (value) => isWecomChatId(value) && !value.startsWith('wr_dm_')
+
+// A userid too long for the conversation shape (more than 60 bytes) has no id.
+function wecomDmChatId(userId) {
+  if (typeof userId !== 'string' || !userId) return null
+  const id = 'wr_dm_' + Buffer.from(userId, 'utf8').toString('hex')
+  return WECOM_DM_CHAT_ID.test(id) ? id : null
+}
+// Only the canonical encoding decodes: another spelling of the same userid is no id.
+function wecomDmUserId(chatId) {
+  const m = typeof chatId === 'string' ? WECOM_DM_CHAT_ID.exec(chatId) : null
+  if (!m) return null
+  const userId = Buffer.from(m[1], 'hex').toString('utf8')
+  return Buffer.from(userId, 'utf8').toString('hex') === m[1] ? userId : null
+}
+function wecomMessageId(botId, rawMsgId) {
+  if (typeof botId !== 'string' || !botId || typeof rawMsgId !== 'string' || !rawMsgId) return null
+  return 'om_wecom_' + crypto.createHash('sha256').update('sintbot-wecom-message-v1\0')
+    .update(botId).update('\0').update(rawMsgId).digest('hex').slice(0, 24)
+}
+const newWecomReplyId = () => 'om_wecom_' + crypto.randomBytes(12).toString('hex')
+// The conversation a callback or event belongs to, or null when it has no valid identity.
+function wecomChatIdOf(body) {
+  if (!body || typeof body !== 'object') return null
+  if (body.chattype === 'group') return isWecomGroupChatId(body.chatid) ? body.chatid : null
+  return wecomDmChatId(body.from && body.from.userid)
+}
 
 // ── 纯函数:入站归一 ───────────────────────────────────────────────────────────────
 
@@ -82,13 +131,15 @@ function parseFrame(raw) {
 
 // 一条回调 body ⇒ 引擎能吃的形状(media 另给,由调用方决定下不下载)。什么都没有 ⇒ null。
 //   返回 { chatId, chatType('single'|'group'), userId, msgId, createTimeMs, text, media:[{kind,url,aeskey,name}] }
+//   · chatId:群 = 它的 wr… id;单聊 = wr_dm_<发送人 userid 的十六进制>(见上面 Durable identities);认不出 ⇒ null
+//   · msgId:平台原始 msgid(没有 ⇒ null);适配器再把它映射成持久来源 id
 //   · text:文本 / 图文混排的文字 / 语音转写(前缀标明)/ 引用(附在末尾)
 //   · media:图片 / 文件 / 视频的加密下载坐标(url 五分钟内有效,aeskey 解密)
 function normalizeInbound(body, { botName } = {}) {
   if (!body || typeof body !== 'object') return null
   const chatType = body.chattype === 'group' ? 'group' : 'single'
   const userId = (body.from && body.from.userid) || 'unknown'
-  const chatId = chatType === 'group' ? body.chatid : userId
+  const chatId = wecomChatIdOf(body)
   if (!chatId) return null
   const parts = []
   const media = []
@@ -124,7 +175,7 @@ function normalizeInbound(body, { botName } = {}) {
     chatId,
     chatType,
     userId,
-    msgId: body.msgid || `${chatId}:${body.create_time || Date.now()}`,
+    msgId: (typeof body.msgid === 'string' || Number.isSafeInteger(body.msgid)) && body.msgid !== '' ? String(body.msgid) : null,
     createTimeMs: body.create_time ? Number(body.create_time) * 1000 : Date.now(),
     text,
     plain: plainKey(parts.slice(0, ownParts)), // 去重键:只有本条的文字段(不含「引用:…」),空白归一 —— 与轮询侧 wecompoll.plainText 同口径
@@ -373,11 +424,14 @@ function createStreamSession({ send, sendMarkdown, now = () => Date.now(), setTi
  *   onIssue          — ({issue:'kicked'|'auth-expired'|'tool-gated', detail}) 平台侧要人处理的事(bin 转成运维告警)
  *   gate             — 便宜模型门控 async (chatId, {text, sender, recent}) => bool(规则不放行的消息再问它;不传 = 没有第二道门)
  *   log / onConn     — 日志 / 连接状态变化回调(控制台 SSE)
+ *   streamingReplies — true = 旧引擎的流式回复(createStreamingCard);默认 false = 持久路径的形状:
+ *                      不提供 createStreamingCard、声明 plainReplies,每条最终回答经 replyOnce 一次送达
  *   WebSocket / wsUrl / now / setTimer / clearTimer / exec / fetchBuffer — 测试注入
  */
 function createWecomPlatform(o = {}) {
   const { botId, secret } = o
   if (!botId || !secret) throw new Error('wecom: botId and secret required')
+  const streamingReplies = o.streamingReplies === true
   // 机器人名 / 点名词可以给函数(bin 给的是「现读 engine.cfg」):控制台改了名字热生效,不用重启 —— 10-12 用户在控制台改名后
   // 发现要重启才认,而卡上只说过凭据要重启。启动横幅与「已装」日志读一次即可,剥 @ / 点名 / 门控提示词每次现取。
   let learnedName = null // 从群消息的 @ 里学到的名字:配置里没填 / 填错时的依据;控制台「刷新身份」会把它落进配置
@@ -470,6 +524,22 @@ function createWecomPlatform(o = {}) {
   // ── 连接生命周期(看门狗:健康快照 + 卡死重建的退避决策;本文件只喂事件)──────────
   const watchdog = createWatchdog({ now, log, onConn, rebuild: () => connect() })
 
+  // 唯一一条长连接只建一次:start 与 openOutbound(启动恢复要先发告知,那时服务还没接上处理函数)谁先来谁建,
+  // 后来的复用它。stop 之后 openOutbound 不再重连;再次 start 才算重新启用。
+  let running = false
+  let retired = false
+  function begin() {
+    if (running) return
+    running = true
+    stopping = false
+    connect()
+    pingTimer = setInterval(pingTick, PING_MS)
+    if (pingTimer.unref) pingTimer.unref()
+    tickTimer = setInterval(() => watchdog.tick(), TICK_MS)
+    if (tickTimer.unref) tickTimer.unref()
+    log('企业微信长连接已启动(心跳 30s · 75s 无回包重连)')
+  }
+
   function connect() {
     if (stopping) return
     if (halted) { log('企业微信:已因重复被踢停止重连,重启守护进程才会再连'); return }
@@ -494,6 +564,7 @@ function createWecomPlatform(o = {}) {
           log('企业微信长连接已订阅')
         } else {
           log(`企业微信订阅失败(${ack.errcode}): ${ack.errmsg || ''}`)
+          releaseWaiters(false)
           watchdog.onError(new Error(`subscribe ${ack.errcode} ${ack.errmsg || ''}`))
           try { sock.terminate ? sock.terminate() : sock.close() } catch {}
         }
@@ -527,7 +598,7 @@ function createWecomPlatform(o = {}) {
     lastEventAt = now(); watchdog.onEvent()
     if (f.cmd === 'aibot_msg_callback') {
       const b = f.body || {}
-      const key = b.chattype === 'group' ? (b.chatid || '?') : ((b.from && b.from.userid) || '?')
+      const key = wecomChatIdOf(b) || '?' // 同一会话串行:与投递出去的 chatId 同一个键
       const prev = inbound.get(key) || Promise.resolve()
       const next = prev.then(() => onInbound(f)).catch((e) => log('企业微信入站处理异常: ' + (e && e.message)))
       inbound.set(key, next)
@@ -541,14 +612,20 @@ function createWecomPlatform(o = {}) {
     const body = f.body || {}
     learnName(body)
     const norm = normalizeInbound(body, { botName: botNameOf() })
-    if (!norm) return
+    if (!norm) {
+      if (!wecomChatIdOf(body)) log('企业微信入站消息的会话标识不可用(群 id 形态不对,或单聊发送人账号缺失 / 过长),已丢弃')
+      return
+    }
+    // 持久来源 id:同一条消息重投得到同一个;没有平台 msgid 的消息没有可去重的身份,不投递
+    const msgId = wecomMessageId(String(botId), norm.msgId)
+    if (!msgId) { log('企业微信入站消息缺少消息 id,已丢弃'); return }
     chatTypes.set(norm.chatId, norm.chatType === 'group' ? 2 : 1); atSeen.add(norm.chatId)
     // 媒体到手就落盘(链接五分钟失效),标记进正文
     const marks = []
     for (let i = 0; i < norm.media.length; i++) {
       const m = norm.media[i]
       try {
-        const p = await saveMedia(m, `${norm.msgId}-${i + 1}`)
+        const p = await saveMedia(m, `${msgId}-${i + 1}`)
         marks.push(mediaMark(m.kind, p))
       } catch (e) { log(`企业微信媒体下载失败(${m.kind}): ` + (e && e.message)); marks.push(`[${m.kind === 'image' ? '图片' : '文件'} 下载失败]`) } // 原话只进日志(里面有路径 / 工具名,agent 会复述)
     }
@@ -575,11 +652,24 @@ function createWecomPlatform(o = {}) {
       userId: norm.userId,
       senderName,
       text,
-      msgId: norm.msgId,
+      msgId,
       createTimeMs: norm.createTimeMs,
-      replyCtx: { chatId: norm.chatId, chatType: norm.chatType, reqId, reqAt: now() },
+      // messageId 是持久路径的回复锚点(= 来源 id);真正回复靠 reqId(窗口内)或主动推送
+      replyCtx: { chatId: norm.chatId, chatType: norm.chatType, messageId: msgId, reqId, reqAt: now() },
     }
-    if (!onMessage) return
+    deliver(msg)
+  }
+
+  // 收到消息时服务还没接上处理函数(启动恢复期间为发告知提前连上了):先按到达顺序存着,start 时依次交出。
+  // 有上限:超出的只记日志 —— 这与断线期间平台不补发的消息同一性质,不会被当成已受理。
+  const EARLY_MAX = 64
+  const early = []
+  function deliver(msg) {
+    if (!onMessage) {
+      if (early.length < EARLY_MAX) early.push(msg)
+      else log('企业微信:服务就绪前到达的消息过多,这一条未处理')
+      return
+    }
     Promise.resolve(onMessage(msg)).catch((e) => log('企业微信 onMessage 异常: ' + (e && e.message)))
   }
 
@@ -588,7 +678,7 @@ function createWecomPlatform(o = {}) {
     const ev = body.event || {}
     const reqId = f.headers && f.headers.req_id
     const userId = (body.from && body.from.userid) || 'unknown'
-    const chatId = body.chattype === 'group' ? body.chatid : userId
+    const chatId = wecomChatIdOf(body) // 与入站消息同一套会话 id(单聊 = wr_dm_…)
     if (chatId) chatTypes.set(chatId, body.chattype === 'group' ? 2 : 1)
     if (ev.eventtype === 'disconnected_event') {
       const t = now(); kicks.push(t); while (kicks.length && t - kicks[0] > 10 * 60_000) kicks.shift()
@@ -706,16 +796,57 @@ function createWecomPlatform(o = {}) {
     }
   }
 
-  // 主动推送要带 chat_type:入站时按 chatId 记过的优先;没见过的按形态猜 —— 群会话 id 以 wr 开头(真机实证),其余当 userid
-  const chatTypeOf = (chatId) => chatTypes.get(chatId) || (/^wr/.test(String(chatId)) ? 2 : 1)
+  // 主动推送要带 chat_type:单聊会话 id(wr_dm_…)一律 1;入站时按 chatId 记过的优先;没见过的按形态猜 ——
+  // 群会话 id 以 wr 开头(真机实证),其余当 userid(旧调用方直接给的账号)
+  const chatTypeOf = (chatId) => isWecomDmChatId(chatId) ? 1 : chatTypes.get(chatId) || (/^wr/.test(String(chatId)) ? 2 : 1)
+  // 主动推送的目标:单聊会话 id 解回发送人 userid;解不出(不是规范编码)⇒ null,调用方不发
+  function pushTarget(chatId) {
+    if (typeof chatId !== 'string' || !chatId) return null
+    if (chatId.startsWith('wr_dm_')) {
+      const userId = wecomDmUserId(chatId)
+      return userId ? { chatid: userId, chat_type: 1 } : null
+    }
+    return { chatid: chatId, chat_type: chatTypeOf(chatId) }
+  }
 
   // 两条出站路:respond = 对某条回调的回复(透传 req_id,排队 / 进度 / 正文都走它);send = 主动推送(合成消息、定时任务、告警)。
   // 都按 errcode 判,被拒返回 null —— 这是 Platform 契约里「确认没送到」的信号,调用方据此重试或记账。
   async function sendMarkdown(chatId, content) {
+    const target = pushTarget(chatId)
+    if (!target) { log('企业微信发送放弃:会话标识无法解析'); return null }
     if (!subscribed && !(await whenSubscribed(SEND_WAIT_MS))) { log(`企业微信发送放弃:等了 ${SEND_WAIT_MS / 1000}s 长连接仍未订阅成功`); return null }
-    const ack = await call('aibot_send_msg', { chatid: chatId, chat_type: chatTypeOf(chatId), msgtype: 'markdown', markdown: { content } })
+    const ack = await call('aibot_send_msg', { ...target, msgtype: 'markdown', markdown: { content } })
     if (ack.errcode) { log(`企业微信发送被拒(${ack.errcode}): ${ack.errmsg || ''}${pushRejectHint(ack.errcode, chatId)}`); return null }
     return 'ok'
+  }
+
+  // 持久路径的单次外发:每段只发一次、只认平台回包 errcode 0。被拒、超时、断线都如实报「未确认」(code ≠ 0),
+  // 这里不重试、不改走另一条路 —— 外发前调用方已记下一次尝试,未确认的结果由它记成 unknown,永不重放。
+  // 超过单帧上限的正文按 splitMarkdown 分段依次发:前一段确认了才发下一段;任一段未确认就停,整条报未确认
+  // (已发出的前几段留在群里,不补发,也不重发)。全部确认才回 { code: 0, data: { message_id } }。
+  async function deliverOnce(replyCtx, chunks, respond) {
+    const target = respond ? null : pushTarget(replyCtx.chatId)
+    if (!respond && !target) throw new TypeError('durable WeCom delivery has no resolvable conversation')
+    if (retired || !subscribed && !running) {
+      log('企业微信单次外发未发出:长连接未启用或已关停')
+      return { code: -1, msg: 'not connected', data: { parts: chunks.length, confirmedParts: 0 } }
+    }
+    if (!subscribed && !(await whenSubscribed(SEND_WAIT_MS))) {
+      log(`企业微信单次外发未发出:等了 ${SEND_WAIT_MS / 1000}s 长连接仍未订阅成功`)
+      return { code: -1, msg: 'not connected', data: { parts: chunks.length, confirmedParts: 0 } }
+    }
+    for (let i = 0; i < chunks.length; i++) {
+      const markdown = { content: chunks[i] }
+      const ack = respond
+        ? await call('aibot_respond_msg', { msgtype: 'markdown', markdown }, replyCtx.reqId)
+        : await call('aibot_send_msg', { ...target, msgtype: 'markdown', markdown })
+      if (!ack || ack.errcode !== 0) {
+        const code = ack && Number.isSafeInteger(ack.errcode) && ack.errcode !== 0 ? ack.errcode : -1
+        log(`企业微信单次外发未确认(第 ${i + 1}/${chunks.length} 段,${code}): ${(ack && ack.errmsg) || ''}${respond ? '' : pushRejectHint(code, replyCtx.chatId)}`)
+        return { code, msg: (ack && ack.errmsg) || 'unconfirmed', data: { parts: chunks.length, confirmedParts: i } }
+      }
+    }
+    return { code: 0, data: { message_id: newWecomReplyId(), parts: chunks.length } }
   }
   // 846607 一个码两种人话(官方调研第 5 条):本进程收到过该会话的 @ ⇒ 必是超频(每会话 30 条 / 分、1000 条 / 时);
   // 没收到过 ⇒ 多半是「还没人 @ 过机器人」(主动推送的前提),但「有人 @ 过」是服务端跨重启的事实而 atSeen 重启即空 ——
@@ -735,18 +866,17 @@ function createWecomPlatform(o = {}) {
     chatLabel: '企业微信群',
     // history 有(走官方 CLI 拉近 7 天群历史);回复 / 编辑 / 撤回 / 表情 / 下载 / 画布 / 生图没有;回复是普通消息不是钉住的卡片;send-msg 渲染 markdown
     // imagen / takeoverCard 翻回 true(P2):生图完成通知与接管入口都已按平台分流(走官方命令行工具,见 bin 的 imagenWorker / cmdBrowser)
-    features: { editRecall: false, react: false, download: false, boards: false, imagen: true, takeoverCard: true, cardPinned: false, plainSend: false, mediaMarker: 'path', noticeCard: false },
+    // plainReplies:持久路径上每条回答是一条普通消息(经 replyOnce),不开流式卡片 —— 引擎只在平台这样声明、
+    // 且确实没有 createStreamingCard 时才走这条路。旧引擎要流式时传 streamingReplies: true。
+    features: { editRecall: false, react: false, download: false, boards: false, imagen: true, takeoverCard: true, cardPinned: false, plainSend: false, mediaMarker: 'path', noticeCard: false, ...(streamingReplies ? {} : { plainReplies: true }) },
 
     async start(cb, h = {}) {
       onMessage = cb
       hooks = h || {}
-      stopping = false
-      connect()
-      pingTimer = setInterval(pingTick, PING_MS)
-      if (pingTimer.unref) pingTimer.unref()
-      tickTimer = setInterval(() => watchdog.tick(), TICK_MS)
-      if (tickTimer.unref) tickTimer.unref()
-      log('企业微信长连接已启动(心跳 30s · 75s 无回包重连)')
+      retired = false
+      begin()
+      // 为启动恢复提前连上期间到达的消息:按到达顺序交给刚接上的处理函数
+      for (const msg of early.splice(0)) deliver(msg)
       // 「不 @ 也回复」:有命令行工具且 pollSec > 0 才起;群列表每 tick 现读(跟随热重载)
       if (cli && pollSec > 0 && typeof o.pollChats === 'function') {
         const wcli = createWecomCli({ bin: cli, exec })
@@ -782,6 +912,15 @@ function createWecomPlatform(o = {}) {
       }
     },
 
+    ready(timeoutMs = 15000) { return whenSubscribed(timeoutMs) },
+    // 启动恢复在服务接上处理函数之前就要发告知:先把这唯一一条长连接建起来(已建则复用)。
+    // 期间到达的消息先存着,start 时交出;stop 之后不再重连。返回是否已在(或正在)连接。
+    openOutbound() {
+      if (retired) return false
+      begin()
+      return true
+    },
+    listChats() { return [...chatTypes.entries()].filter(([, type]) => type === 2).map(([chatId]) => ({ chatId, name: `企业微信群 · ${chatId.slice(-6)}` })) },
     connHealth() {
       return { ...watchdog.snapshot(), lastAckAt, lastEventAt, subscribed, pingTimeoutSec: Math.round(STALE_MS / 1000), botName: botNameOf(), botNameLearned: learnedName, halted, encryptedUserIds: warnedEncUser }
     },
@@ -810,6 +949,46 @@ function createWecomPlatform(o = {}) {
       return allConfirmed ? 'ok' : null
     },
 
+    // The durable terminal effect (and queue / stop / refusal notices). The
+    // caller has already recorded one attempt; this sends the answer exactly
+    // once and reports the platform's verdict in the shape the durable path
+    // reads: { code: 0, data: { message_id } } only when every part was
+    // acknowledged. A rejection, a lost ACK or a dropped connection returns a
+    // non-zero code; nothing here retries or falls back to another route.
+    // Within the reply window it answers the callback's req_id; afterwards (or
+    // for a message with no req_id) it pushes to the conversation.
+    async replyOnce(replyCtx, content) {
+      if (!replyCtx || !isWecomMessageId(replyCtx.messageId) || !isWecomChatId(replyCtx.chatId) ||
+          typeof content !== 'string' || !content) {
+        throw new TypeError('durable WeCom reply needs exact message target and text')
+      }
+      const chunks = splitMarkdown(mdForWecom(content))
+      if (!chunks.length) throw new TypeError('durable WeCom reply needs visible text')
+      return deliverOnce(replyCtx, chunks, canRespond(replyCtx))
+    },
+
+    // One push to a conversation, for a startup recovery notice: a single
+    // part, a single attempt. Returns its receipt id, or null when not
+    // confirmed (the caller records that as unknown and never resends).
+    async pushOnce(chatId, content) {
+      if (!isWecomChatId(chatId) || typeof content !== 'string' || !content) {
+        throw new TypeError('WeCom push needs an exact conversation and text')
+      }
+      const chunks = splitMarkdown(mdForWecom(content))
+      if (chunks.length !== 1) throw new TypeError('WeCom single push must fit one message')
+      const response = await deliverOnce({ chatId }, chunks, false)
+      return response.code === 0 ? response.data.message_id : null
+    },
+
+    async sendMedia(chatId, bytes, { type = 'file', filename } = {}) {
+      const target = pushTarget(chatId)
+      if (!target || !subscribed) return null
+      const mediaId = await uploadWecomMedia(call, bytes, { type, filename })
+      const ack = await call('aibot_send_msg', { ...target, msgtype: type, [type]: { media_id: mediaId } })
+      return ack?.errcode === 0 ? 'ok' : null
+    },
+
+    // 主动推送一条(可分段):全部确认才回一个 om_wecom_ 回执 id(企微不给消息 id;控制台插话要拿它当持久来源),否则 null
     async send(chatId, content) {
       const chunks = splitMarkdown(mdForWecom(content))
       if (!chunks.length || !chatId) return null
@@ -820,19 +999,21 @@ function createWecomPlatform(o = {}) {
         if (typeof ack !== 'string' || !ack) allConfirmed = false
       }
       if (poll) poll.kick(chatId, AFTER_REPLY_POLL_MS)
-      return allConfirmed ? 'ok' : null
+      return allConfirmed ? newWecomReplyId() : null
     },
 
     // 发一张按钮卡(通用形状见 toTemplateCard);返回 { msgId:null, taskId } —— 企微不回消息 id,按钮事件靠 task_id 对号
     async sendCard(chatId, card) {
       const tc = toTemplateCard(card)
+      const target = pushTarget(chatId)
+      if (!target) { log('企业微信发卡放弃:会话标识无法解析'); return null }
       if (!subscribed && !(await whenSubscribed(SEND_WAIT_MS))) { log(`企业微信发卡放弃:等了 ${SEND_WAIT_MS / 1000}s 长连接仍未订阅成功`); return null }
-      const ack = await call('aibot_send_msg', { chatid: chatId, chat_type: chatTypeOf(chatId), msgtype: 'template_card', template_card: tc })
+      const ack = await call('aibot_send_msg', { ...target, msgtype: 'template_card', template_card: tc })
       if (ack.errcode) { log(`企业微信发卡被拒(${ack.errcode}): ${ack.errmsg || ''}`); return null }
       return { msgId: null, cardId: null, taskId: tc.task_id }
     },
 
-    // 流式回复:只有带 req_id 的真实消息才有(合成消息 / 定时任务退回普通回复)
+    // 流式回复(旧引擎,streamingReplies: true 才有):只有带 req_id 的真实消息才有(合成消息 / 定时任务退回普通回复)
     async createStreamingCard(replyCtx) {
       if (!canRespond(replyCtx)) return null
       const reqId = replyCtx.reqId
@@ -847,21 +1028,43 @@ function createWecomPlatform(o = {}) {
       return sess
     },
 
-    async stop() {
+    async stop({ strict = false } = {}) {
+      let confirmed = true
       stopping = true
+      running = false
+      retired = true
+      early.length = 0 // 没交出去的早到消息没有收据,随连接一起作废(与断线期间的消息同一性质)
       releaseWaiters(false) // 关停时排队的发送别再等了
       if (poll) { try { poll.stop() } catch {} poll = null }
       if (pingTimer) { clearInterval(pingTimer); pingTimer = null }
       if (tickTimer) { clearInterval(tickTimer); tickTimer = null }
       try { watchdog.stop() } catch {}
       gen++
-      try { if (ws) (ws.terminate ? ws.terminate() : ws.close()) } catch {}
+      const closing = ws
       ws = null
+      if (closing) {
+        if (strict && closing.readyState !== 3) {
+          confirmed = await new Promise(resolve => {
+            let done = false
+            const finish = value => { if (done) return; done = true; clearTimeout(timeout); closing.removeListener?.('close', closed); resolve(value) }
+            const closed = () => finish(true)
+            const timeout = setTimeout(() => finish(false), 3000)
+            closing.once?.('close', closed)
+            try { closing.terminate ? closing.terminate() : closing.close() } catch { finish(false) }
+            if (closing.readyState === 3) finish(true)
+          })
+        } else {
+          try { closing.terminate ? closing.terminate() : closing.close() } catch { confirmed = false }
+        }
+      }
+      return strict ? confirmed : undefined
     },
 
     // 测试钩子
     _internal: { call, chatTypes, nameCache, handleFrame, normalizeInbound, pingTick, poll: () => poll, placePolledMedia },
   }
+  // 持久路径只认「没有 createStreamingCard 且声明 plainReplies」的普通回复平台:不给它留一个会被误用的流式入口
+  if (!streamingReplies) delete platform.createStreamingCard
 
   return platform
 }
@@ -939,6 +1142,15 @@ function expandHome(p) {
 
 module.exports = {
   createWecomPlatform,
+  isWecomChatId,
+  isWecomDmChatId,
+  isWecomGroupChatId,
+  isWecomMessageId,
+  wecomDmChatId,
+  wecomDmUserId,
+  wecomMessageId,
+  WECOM_CHAT_ID,
+  WECOM_MESSAGE_ID,
   createStreamSession,
   listWecomSessions,
   wecomAuthShow,

@@ -2,6 +2,7 @@
 
 const { chatPlatform } = require('../config')
 const { isLocalChatId, isLocalMessageId } = require('../platform/local')
+const { isWecomChatId, isWecomMessageId } = require('../platform/wecom')
 
 const RECEIPT_ID = /^[0-9a-f]{32}$/
 const FEISHU_CHAT_ID = /^oc_[A-Za-z0-9_-]{1,124}$/
@@ -124,6 +125,51 @@ function createLocalRecoverySender({ cfg, platform } = {}) {
   return Object.freeze({ resolveTarget, send })
 }
 
+// The same single-attempt notice for a WeCom group or direct chat. A receipt
+// keeps no req_id (the callback's reply window does not survive a restart), so
+// the notice is one push to the conversation on the adapter's own connection:
+// it opens that one socket early when recovery runs before the service starts
+// serving, and never a second one. One part, one attempt; anything but a
+// confirmed ACK reports null (unknown), which is never retried.
+function createWecomRecoverySender({ cfg, platform } = {}) {
+  const adapter = platform?.get?.('wecom')
+  if (!cfg?.groups || typeof adapter?.pushOnce !== 'function' || typeof platform?.forChat !== 'function') {
+    throw new TypeError('C2 WeCom recovery needs active conversation routing')
+  }
+  function validReceipt(receipt) {
+    if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt) ||
+        !RECEIPT_ID.test(receipt.id || '') || receipt.source !== 'message' ||
+        !isWecomMessageId(receipt.sourceId) || !isWecomChatId(receipt.chatId)) {
+      throw new TypeError('C2 WeCom recovery receipt identity invalid')
+    }
+    if (!cfg.groups[receipt.chatId] || chatPlatform(cfg, receipt.chatId) !== 'wecom' ||
+        platform.get('wecom') !== adapter || platform.forChat(receipt.chatId) !== adapter) {
+      throw new Error('C2 WeCom recovery conversation route is unavailable')
+    }
+  }
+  function resolveTarget(receipt) {
+    validReceipt(receipt)
+    return Object.freeze({ receiptId: receipt.id, chatId: receipt.chatId, sourceId: receipt.sourceId,
+      replyCtx: Object.freeze({ chatId: receipt.chatId, messageId: receipt.sourceId }) })
+  }
+  async function send(receipt, target) {
+    validReceipt(receipt)
+    if (!target || typeof target !== 'object' || Array.isArray(target) ||
+        target.receiptId !== receipt.id || target.chatId !== receipt.chatId ||
+        target.sourceId !== receipt.sourceId ||
+        target.replyCtx?.chatId !== receipt.chatId ||
+        target.replyCtx?.messageId !== receipt.sourceId) {
+      throw new Error('C2 WeCom recovery target differs from durable receipt')
+    }
+    try {
+      adapter.openOutbound?.()
+      const id = await adapter.pushOnce(receipt.chatId, NOTICE_TEXT)
+      return isWecomMessageId(id) ? id : null
+    } catch { return null }
+  }
+  return Object.freeze({ resolveTarget, send })
+}
+
 // One sender for a service that carries several platforms: each receipt goes
 // to the sender of the platform its conversation is configured for. A receipt
 // whose platform has no sender here is refused, never rerouted.
@@ -146,4 +192,4 @@ function createRoutedRecoverySender({ cfg, senders } = {}) {
   })
 }
 
-module.exports = { createFeishuRecoverySender, createLocalRecoverySender, createRoutedRecoverySender }
+module.exports = { createWecomRecoverySender, createFeishuRecoverySender, createLocalRecoverySender, createRoutedRecoverySender }

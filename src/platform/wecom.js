@@ -22,6 +22,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const crypto = require('node:crypto')
+const { uploadWecomMedia } = require('./wecommedia')
 const https = require('node:https')
 const http = require('node:http')
 const { execFile } = require('node:child_process')
@@ -494,6 +495,7 @@ function createWecomPlatform(o = {}) {
           log('企业微信长连接已订阅')
         } else {
           log(`企业微信订阅失败(${ack.errcode}): ${ack.errmsg || ''}`)
+          releaseWaiters(false)
           watchdog.onError(new Error(`subscribe ${ack.errcode} ${ack.errmsg || ''}`))
           try { sock.terminate ? sock.terminate() : sock.close() } catch {}
         }
@@ -782,6 +784,8 @@ function createWecomPlatform(o = {}) {
       }
     },
 
+    ready(timeoutMs = 15000) { return whenSubscribed(timeoutMs) },
+    listChats() { return [...chatTypes.entries()].filter(([, type]) => type === 2).map(([chatId]) => ({ chatId, name: `企业微信群 · ${chatId.slice(-6)}` })) },
     connHealth() {
       return { ...watchdog.snapshot(), lastAckAt, lastEventAt, subscribed, pingTimeoutSec: Math.round(STALE_MS / 1000), botName: botNameOf(), botNameLearned: learnedName, halted, encryptedUserIds: warnedEncUser }
     },
@@ -808,6 +812,14 @@ function createWecomPlatform(o = {}) {
       }
       if (poll && replyCtx && replyCtx.chatId) poll.kick(replyCtx.chatId, AFTER_REPLY_POLL_MS) // 答完几秒就补拉一次:跟进句通常紧跟在回答后
       return allConfirmed ? 'ok' : null
+    },
+
+    async sendMedia(chatId, bytes, { type = 'file', filename } = {}) {
+      if (!chatId || !subscribed) return null
+      const mediaId = await uploadWecomMedia(call, bytes, { type, filename })
+      const ack = await call('aibot_send_msg', { chatid: chatId, chat_type: chatTypeOf(chatId),
+        msgtype: type, [type]: { media_id: mediaId } })
+      return ack?.errcode === 0 ? 'ok' : null
     },
 
     async send(chatId, content) {
@@ -847,7 +859,8 @@ function createWecomPlatform(o = {}) {
       return sess
     },
 
-    async stop() {
+    async stop({ strict = false } = {}) {
+      let confirmed = true
       stopping = true
       releaseWaiters(false) // 关停时排队的发送别再等了
       if (poll) { try { poll.stop() } catch {} poll = null }
@@ -855,8 +868,24 @@ function createWecomPlatform(o = {}) {
       if (tickTimer) { clearInterval(tickTimer); tickTimer = null }
       try { watchdog.stop() } catch {}
       gen++
-      try { if (ws) (ws.terminate ? ws.terminate() : ws.close()) } catch {}
+      const closing = ws
       ws = null
+      if (closing) {
+        if (strict && closing.readyState !== 3) {
+          confirmed = await new Promise(resolve => {
+            let done = false
+            const finish = value => { if (done) return; done = true; clearTimeout(timeout); closing.removeListener?.('close', closed); resolve(value) }
+            const closed = () => finish(true)
+            const timeout = setTimeout(() => finish(false), 3000)
+            closing.once?.('close', closed)
+            try { closing.terminate ? closing.terminate() : closing.close() } catch { finish(false) }
+            if (closing.readyState === 3) finish(true)
+          })
+        } else {
+          try { closing.terminate ? closing.terminate() : closing.close() } catch { confirmed = false }
+        }
+      }
+      return strict ? confirmed : undefined
     },
 
     // 测试钩子

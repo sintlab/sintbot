@@ -1,12 +1,14 @@
-# Install SintBot 1.4.21
+# Install SintBot 1.4.22
 
 English · [简体中文](./zh-CN/install.md)
 
-You need a Mac, Node.js 22 or newer, and projects stored on that Mac. Install and sign in to at least one runner: Codex or Claude Code. This release connects 1–32 Feishu China groups, binds each group to one local project, and runs in the foreground.
+You need a Mac, Node.js 22 or newer, and projects stored on that Mac. Install and sign in to at least one runner: Codex or Claude Code. This release connects 1–32 project conversations across Feishu China and WeCom groups, binds each group to one local project, and runs in the foreground.
 
 ## Desktop app
 
-On an Apple silicon Mac, [download SintBot for macOS](https://github.com/sintlab/sintbot-desktop/releases/latest), drag it to Applications and open it. Node.js is included. Choose a project and executor, then start locally or scan with Feishu. Closing the window or quitting the app keeps the service running; Stop holds across logins until you choose Start. Remove Background Service preserves configuration and history.
+On an Apple silicon Mac, [download SintBot for macOS](https://github.com/sintlab/sintbot-desktop/releases/latest), drag it to Applications and open it. Node.js is included. Choose a project and executor, then start locally, scan with Feishu, or connect a WeCom smart bot. Closing the window or quitting the app keeps the service running; Stop holds across logins until you choose Start. Remove Background Service preserves configuration and history.
+
+For WeCom, follow the separate [connection and usage guide](./platforms/wecom.md).
 
 ## 1. Install with one command
 
@@ -14,7 +16,7 @@ On an Apple silicon Mac, [download SintBot for macOS](https://github.com/sintlab
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-The installer checks the environment, installs `sintbot@1.4.21` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.21`. No sudo is needed.
+The installer checks the environment, installs `sintbot@1.4.22` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.22`. No sudo is needed.
 
 To preview, append `-s -- --dry-run`. To choose another location, set `SINTBOT_INSTALL_DIR` and adjust the executable paths below.
 
@@ -208,3 +210,7 @@ If a group stays paused, first restart: a group whose records can recover reopen
 Sealing keeps the old journal unchanged under `incidents/` in the data directory and gives the group a new journal; messages left unfinished before the seal are never processed again. Start the service again to reopen the group. When the service runs in the background (for example under the desktop app), **Seal and continue** on the console overview's "Needs attention" card performs the same seal and the service restarts by itself; it waits until other groups have no task. The service still starts when every group is paused, so the console stays available. A preflight fails while any group would stay paused. Never delete journals or resend to get around a paused group. Run only one connected process per Feishu app. This release does not register a background service.
 
 [Illustrated website guide](https://sintbot.com/guide/install/) · [AI-assisted installation](./AI-ASSISTED-INSTALL.md)
+
+## Connect WeCom
+
+Choose WeCom on the first-launch setup page, or add it from Settings in an existing console. Follow the [WeCom connection guide](./platforms/wecom.md) to create the bot, bind a group and send the first task.

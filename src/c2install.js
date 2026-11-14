@@ -14,7 +14,7 @@ const { validatePersistentReceipts, validatePersistentRelation } = require('./co
 const VALIDATORS = { validateState: validatePersistentState,
   validateReceipts: validatePersistentReceipts, validateRelation: validatePersistentRelation }
 
-const GROUP_ID = /^oc_[A-Za-z0-9_-]{1,124}$/
+const GROUP_ID = /^(?:oc_|wr)[A-Za-z0-9_-]{1,124}$/
 // A conversation held in the console (src/platform/local.js). Its identity is
 // a reserved subset of the group shape, so every journal rule applies as is.
 const { isLocalChatId } = require('./platform/local')
@@ -84,15 +84,17 @@ function resolveInstallation(cfg, configFile, stateDir, { allowAddedGroups = fal
   const configured = platformsConfigured(cfg)
   const groups = Object.entries(cfg.groups || {}).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
   if (groups.length < 1 || groups.length > 32) {
-    throw new Error('This release requires 1 to 32 explicit Feishu groups')
+    throw new Error('This release requires 1 to 32 explicit project conversations')
   }
   // Feishu credentials are required exactly when a Feishu group is configured.
   // An installation of local conversations alone has no platform credentials.
-  const needsFeishu = groups.some(([, group]) => group?.platform !== 'local')
+  const needsFeishu = groups.some(([, group]) => group?.platform === 'feishu')
   if (path.resolve(cfg._path || '') !== path.resolve(configFile) ||
-      needsFeishu && !configured.feishu || configured.wecom || configured.slack || cfg.wecom || cfg.slack ||
+      needsFeishu && !configured.feishu ||
+      groups.some(([, group]) => group?.platform === 'wecom') && !configured.wecom ||
+      configured.slack || cfg.slack ||
       (cfg._groupPlatform?.inferred || []).length || cfg.alerts?.chatId) {
-    throw new Error('This release accepts explicit Feishu message routes without synthetic sources')
+    throw new Error('This release accepts explicit supported message routes without synthetic sources')
   }
   if (!Number.isSafeInteger(cfg.agent.maxConcurrent) || cfg.agent.maxConcurrent < 1 ||
       cfg.agent.maxConcurrent > 32) throw new Error('maxConcurrent must be an integer from 1 to 32')
@@ -125,10 +127,11 @@ function resolveInstallation(cfg, configFile, stateDir, { allowAddedGroups = fal
   const routes = groups.map(([chatId, group]) => {
     // The reserved local prefix and the local platform always go together:
     // a Feishu group can never take a local identity, nor the reverse.
-    if (!GROUP_ID.test(chatId) || !group || !['feishu', 'local'].includes(group.platform) ||
+    if (!GROUP_ID.test(chatId) || !group || !['feishu', 'local', 'wecom'].includes(group.platform) ||
         (group.platform === 'local') !== isLocalChatId(chatId) ||
+        (group.platform === 'wecom') !== /^wr/.test(chatId) ||
         group.platform !== 'local' && /^oc_local_/.test(chatId)) {
-      throw new Error('Every configured group must have an explicit Feishu identity')
+      throw new Error('Every configured group must have an explicit matching platform identity')
     }
     if (group.paused !== undefined && typeof group.paused !== 'boolean') {
       throw new Error('Group paused must be a boolean')

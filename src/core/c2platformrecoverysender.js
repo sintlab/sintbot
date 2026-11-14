@@ -124,6 +124,38 @@ function createLocalRecoverySender({ cfg, platform } = {}) {
   return Object.freeze({ resolveTarget, send })
 }
 
+// Recovery uses the already owned connection. It never opens a second socket
+// or replays the original task. An unconfirmed notice remains unknown.
+function createWecomRecoverySender({ cfg, platform } = {}) {
+  const adapter = platform?.get?.('wecom')
+  if (!cfg?.groups || typeof adapter?.send !== 'function' || typeof platform?.forChat !== 'function') {
+    throw new TypeError('C2 WeCom recovery needs active group routing')
+  }
+  function validate(receipt) {
+    if (!receipt || !RECEIPT_ID.test(receipt.id || '') || receipt.source !== 'message' ||
+        typeof receipt.sourceId !== 'string' || !receipt.sourceId ||
+        !/^wr[A-Za-z0-9_-]+$/.test(receipt.chatId || '') ||
+        !cfg.groups[receipt.chatId] || chatPlatform(cfg, receipt.chatId) !== 'wecom' ||
+        platform.get('wecom') !== adapter || platform.forChat(receipt.chatId) !== adapter) {
+      throw new Error('C2 WeCom recovery receipt or route unavailable')
+    }
+  }
+  function resolveTarget(receipt) {
+    validate(receipt)
+    return Object.freeze({ receiptId: receipt.id, chatId: receipt.chatId, sourceId: receipt.sourceId })
+  }
+  async function send(receipt, target) {
+    validate(receipt)
+    if (!target || target.receiptId !== receipt.id || target.chatId !== receipt.chatId ||
+        target.sourceId !== receipt.sourceId) throw new Error('C2 WeCom recovery target differs from receipt')
+    try {
+      const ack = await adapter.send(receipt.chatId, NOTICE_TEXT)
+      return typeof ack === 'string' && ack ? ack : null
+    } catch { return null }
+  }
+  return Object.freeze({ resolveTarget, send })
+}
+
 // One sender for a service that carries several platforms: each receipt goes
 // to the sender of the platform its conversation is configured for. A receipt
 // whose platform has no sender here is refused, never rerouted.
@@ -146,4 +178,4 @@ function createRoutedRecoverySender({ cfg, senders } = {}) {
   })
 }
 
-module.exports = { createFeishuRecoverySender, createLocalRecoverySender, createRoutedRecoverySender }
+module.exports = { createWecomRecoverySender, createFeishuRecoverySender, createLocalRecoverySender, createRoutedRecoverySender }

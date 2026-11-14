@@ -1,6 +1,6 @@
 {
   "name": "sintbot",
-  "version": "1.4.21",
+  "version": "1.4.22",
   "private": false,
   "description": "A personal AI agent on your Mac: local conversations and Feishu project groups with Codex or Claude Code.",
   "bin": {
@@ -158,7 +158,13 @@
     "src/updater.js",
     "src/upgrade.js",
     "src/upgradeannounce.js",
-    "src/usage.js"
+    "src/usage.js",
+    "src/wecomattach.js",
+    "src/wecomsetuptransport.js",
+    "src/wecomtools.js",
+    "src/platform/wecommedia.js",
+    "docs/platforms/wecom.md",
+    "docs/zh-CN/platforms/wecom.md"
   ],
   "scripts": {
     "start": "node bin/sintbot-v2.js start"

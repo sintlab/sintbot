@@ -13,8 +13,8 @@ const { createHash } = require('node:crypto')
 const { C2DurableJournal } = require('./core/c2durablejournal')
 const { assertJournalScope, assertPrivateDirectory, VALIDATORS } = require('./c2install')
 
-const GROUP_ID = /^oc_[A-Za-z0-9_-]{1,124}$/
-const FEISHU_MESSAGE_ID = /^om_[A-Za-z0-9_-]{1,124}$/
+const GROUP_ID = /^(?:oc_|wr)[A-Za-z0-9_-]{1,124}$/
+const { validIncidentSourceId } = require('./core/c2sourcequarantine')
 const SCHEMA = 'sbot-c2-incident-seal-v1'
 
 const sha256 = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex')
@@ -79,7 +79,7 @@ function sealC2GroupIncident({ installation, chatId, reason = 'operator sealed a
       throw new Error('Opening the group journal changed it; preserve every file for review')
     }
     const pending = snapshot.receipts.pending
-    if (pending.some(item => item.source !== 'message' || !FEISHU_MESSAGE_ID.test(item.sourceId))) {
+    if (pending.some(item => item.source !== 'message' || !validIncidentSourceId(chatId, item.sourceId))) {
       throw new Error('The journal holds a receipt that is not a Feishu message; review it manually')
     }
     const incidents = path.join(stateDir, 'incidents')

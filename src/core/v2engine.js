@@ -295,11 +295,11 @@ function v2QueueSelection(queue) {
 function releaseSkillLines(platform) {
   const features = manifestFeatures({ ...(platform?.features || {}),
     boards: false, imagen: false, takeoverCard: false })
-  const lines = manifestSkills({ features: { ...features, localAnswers: true },
+  const lines = manifestSkills({ features: { ...features, localAnswers: true, wecomTools: platform?.skillCmd === 'sbot wecom' },
     platformName: String(platform?.chatLabel || '飞书群').replace(/群$/, '') })
   const cron = lines.findIndex(line => line.startsWith('【定时任务】'))
   return (cron < 0 ? lines : lines.slice(0, cron))
-    .map(line => line.replace(/sbot feishu/g, `${runtimeCommand()} feishu`))
+    .map(line => line.replace(/sbot feishu/g, `${runtimeCommand()} feishu`).replace(/sbot wecom/g, `${runtimeCommand()} wecom`))
 }
 
 // The group skills call `sbot feishu`. A machine can carry another `sbot` on
@@ -521,7 +521,7 @@ baseSkillEnv(chatId) {
     return { ...(bin ? { PATH: [bin, process.env.PATH].filter(Boolean).join(path.delimiter) } : {}),
       SBOT_RUNTIME_ENTRY: RUNTIME_ENTRY, SBOT_RUNTIME_VERSION: this.durableV2Version || '',
       ...(this.durableV2DataDir ? { SBOT_DATA_DIR: this.durableV2DataDir } : {}),
-      SBOT_CHAT_ID: chatId, ...(g && g.platform ? { SBOT_PLATFORM: g.platform } : {}), TZ: this.tz, ...(this.cfg._path ? { SBOT_CONFIG: this.cfg._path } : {}), ...(this.uiLocalUrl ? { SBOT_UI_URL: this.uiLocalUrl } : {}) }
+      SBOT_CHAT_ID: chatId, ...(this.wecomSocket && g?.platform === 'wecom' ? { SBOT_WECOM_SOCKET: this.wecomSocket } : {}), ...(g && g.platform ? { SBOT_PLATFORM: g.platform } : {}), TZ: this.tz, ...(this.cfg._path ? { SBOT_CONFIG: this.cfg._path } : {}), ...(this.uiLocalUrl ? { SBOT_UI_URL: this.uiLocalUrl } : {}) }
   }
 
 _resolveGroup(chatId) {
@@ -2607,7 +2607,8 @@ classifyDurableV2UnresolvedTurn({ chatId, receiptId, turnToken, effectId,
     const policy = manifestPolicy(group.permissionMode, provider.runner === 'codex',
       group.allowedTools, group.disallowedTools)
     const brand = this.cfg.brand || 'SintBot'
-    const groupTools = group.platform === 'feishu' && manifestFeatures(platform.features || {}).skills
+    const wecomTools = group.platform === 'wecom' && !!this.wecomSocket
+    const groupTools = wecomTools || group.platform === 'feishu' && manifestFeatures(platform.features || {}).skills
     const info = group.repo && this.repoInfo ? this.repoInfo(group.workdir, group.repo) : null
     const manifest = [
       ...manifestHeader({ restrictedV2: true, brand, chatLabel: platform.chatLabel || '项目群',
@@ -2619,7 +2620,7 @@ classifyDurableV2UnresolvedTurn({ chatId, receiptId, turnToken, effectId,
         noVision: provider.vision === false, platformName: platform.chatLabel || '项目群',
         permissionTier: policy.tier, tz: this.tz, publicUrl: '', uiUrl: '', lanUrl: '' }),
       ...manifestContext({ restrictedV2: true, brand, isCodex: provider.runner === 'codex',
-        groupCommands: GROUP_COMMANDS, groupTools,
+        groupCommands: GROUP_COMMANDS, groupTools, wecomTools,
         consoleEnabled: this.durableV2ConsoleEnabled === true,
         pmem: this.projectMemory ? this.projectMemory(group.workdir,
           { full: policy.full, isCodex: provider.runner === 'codex' }) : null,

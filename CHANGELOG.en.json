@@ -1,5 +1,24 @@
 [
   {
+    "version": "1.4.22",
+    "date": "2026-11-14",
+    "name": "Connect WeCom project groups",
+    "items": [
+      {
+        "t": "Connect WeCom in the App",
+        "d": "Choose WeCom during setup or add a bot from console Settings. Bind a project by mentioning the API long-connection bot in its group, while preserving existing Feishu projects."
+      },
+      {
+        "t": "Work with tasks and attachments",
+        "d": "Use Codex or Claude Code, view task progress, stop tasks and send project files or images. Sends reuse the owned connection and do not automatically retry unknown results."
+      },
+      {
+        "t": "Clear connection status",
+        "d": "Completion requires authentication confirmation. Refresh status when configuration is saved but the connection is unavailable. Separate WeCom setup and usage guides explain the steps."
+      }
+    ]
+  },
+  {
     "version": "1.4.21",
     "date": "2026-11-13",
     "name": "Fast for GPT groups; held groups handled in the console",

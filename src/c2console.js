@@ -10,7 +10,7 @@ const { taskId } = require('./core/enginecheckpoint')
 
 // A host facade over existing v2 authorities, not a second execution engine.
 // The allowlist applies after the existing console's authentication boundary.
-const READ_PATHS = ['/api/state', '/api/events', '/api/inbox', '/api/activity', '/api/activity/detail',
+const READ_PATHS = ['/api/wecom/chats', '/api/wecom/attach', '/api/state', '/api/events', '/api/inbox', '/api/activity', '/api/activity/detail',
   '/api/changelog', '/api/changelog-en', '/api/codex/models', '/api/usage',
   '/api/plugins', '/api/design/styles', '/api/design/icons', '/api/fs/listdir',
   '/api/feishu/admin-candidates', '/api/feishu/org-users', '/api/feishu/resolve-contact',
@@ -22,7 +22,7 @@ const READ_PATHS = ['/api/state', '/api/events', '/api/inbox', '/api/activity', 
   // without credentials (see serverbase).
   '/api/shell/activity',
   START_PATH, CALLBACK_PATH]
-const WRITE_PATHS = ['/api/login', '/api/logout', '/api/logout/all',
+const WRITE_PATHS = ['/api/wecom/attach', '/api/wecom/attach/cancel', '/api/wecom/attach/retry', '/api/login', '/api/logout', '/api/logout/all',
   '/api/ui/network', '/api/ui/public-url', '/api/ui/update-settings', '/api/feishu/admins',
   '/api/groups', '/api/groups/provider', '/api/groups/brain', '/api/fs/mkdir',
   '/api/groups/order', '/api/groups/policy', '/api/groups/redact',
@@ -395,7 +395,8 @@ function createC2Console(options = {}) {
   const facade = createC2ConsoleFacade(options)
   // The process-wide model list (also used by /model), when the service has one.
   facade.modelCatalog = typeof options.modelCatalog === 'function' ? options.modelCatalog : null
-  const ui = createUiServer({ configPath, host, log, getConnHealth, updater: options.updater || null,
+  const ui = createUiServer({
+    getWecomChats: options.getWecomChats, wecomAttach: options.wecomAttach, configPath, host, log, getConnHealth, updater: options.updater || null,
     onHostChange: options.onHostChange,
     getLiveState: facade.getLiveState, control: facade.control, runtimePolicy: facade,
     issuesPath: path.join(stateDir, 'issues.jsonl'),

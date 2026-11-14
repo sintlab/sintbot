@@ -224,7 +224,7 @@ function bindNoticeText(workdir, platform = 'feishu', cmd = '/help') {
   return `✅ 本群已绑定项目「${path.basename(String(workdir || '')) || '(未命名)'}」\n${platform === 'wecom' ? '@我 派单(只有 @ 我的消息我才收得到)' : '直接发消息或 @我 派单'};${cmd} 查看命令`
 }
 
-function createUiServer({ configPath, getLiveState = null, getConnHealth = null, onConfigChange = null, onHostChange = null, control = null, updater = null, host = '127.0.0.1', log = () => {}, issuesPath = null, sessionsPath = null, auditPath = null, ledgerPath = null, inboxDismissPath = null, fetchImpl = null, cdpImpl = null, onTakeoverClaim = null, onTakeoverExpire = null, onTakeoverEnd = null, takeoverNow = null, wecomExec = null, verifyFile = null, setupMode = null, cronRecoveryEnabled = false, runtimePolicy = null, cronTools = null } = {}) {
+function createUiServer({ configPath, getLiveState = null, getConnHealth = null, onConfigChange = null, onHostChange = null, control = null, updater = null, host = '127.0.0.1', log = () => {}, issuesPath = null, sessionsPath = null, auditPath = null, ledgerPath = null, inboxDismissPath = null, fetchImpl = null, cdpImpl = null, onTakeoverClaim = null, onTakeoverExpire = null, onTakeoverEnd = null, takeoverNow = null, wecomExec = null, verifyFile = null, setupMode = null, cronRecoveryEnabled = false, runtimePolicy = null, cronTools = null, wecomAttach = null, getWecomChats = null } = {}) {
   // Legacy scheduling rules are injected by its compatibility wrapper only.
   // The durable console cannot acquire those rules through this base module.
   const unsupportedCron = () => { throw new Error('当前控制台未接入定时任务') }
@@ -723,6 +723,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       health,
       providers,
       defaultProvider: raw.defaultProvider || cfg.defaultProvider,
+      wecomAttachProviders: Object.keys(raw.providers || {}),
       modelNames: knownModelNames(), // official names registered from the live model lists
       groups,
       // 项目根目录:绑群弹窗的路径提示用 projectsRoots(生效值);设置页那张卡用 projectsRootsInfo
@@ -884,6 +885,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
     localBase: () => { const a = server.address(); return a ? `http://127.0.0.1:${a.port}` : '' },
     secureFor: (req) => String(req.headers['x-forwarded-proto'] || '') === 'https',
   })
+  let wecomJob = { phase: 'idle', notice: '' }, wecomAbort = null
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost')
     const p = url.pathname
@@ -908,6 +910,27 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       if (p.startsWith('/api/') && !openPath && !authed(req, url) && !viaTakeover && !viaLocalMint && !viaLocalShell) return sendJSON(res, 401, { error: 'unauthorized — 重新打开控制台页面' })
       if (runtimePolicy && p.startsWith('/api/') && !runtimePolicy.allows(req.method, p)) {
         return sendJSON(res, 409, { error: runtimePolicy.capabilities.reason, code: 'C2_CONSOLE_UNSUPPORTED' })
+      }
+      if (p === '/api/wecom/chats' && req.method === 'GET' && runtimePolicy) return sendJSON(res, 200, { chats: getWecomChats?.() || [], hint: '请在目标群 @机器人 一次，再刷新。这里只列出本次运行收到过消息的群。' })
+      if (p === '/api/wecom/attach' && req.method === 'GET') return sendJSON(res, 200, wecomJob)
+      if (p === '/api/wecom/attach/retry' && req.method === 'POST') {
+        if (!wecomAttach) return sendJSON(res, 409, { error: '企业微信接入不可用' })
+        return sendJSON(res, 200, await wecomAttach.retry())
+      }
+      if (p === '/api/wecom/attach/cancel' && req.method === 'POST') {
+        wecomAbort?.abort(); return sendJSON(res, 200, { ok: true })
+      }
+      if (p === '/api/wecom/attach' && req.method === 'POST') {
+        if (!wecomAttach) return sendJSON(res, 409, { error: '当前服务不能添加企业微信连接' })
+        if (wecomJob.phase === 'running') return sendJSON(res, 409, { error: '企业微信接入正在进行' })
+        const input = await body(req)
+        wecomAbort = new AbortController()
+        wecomJob = { phase: 'running', notice: '正在连接企业微信…' }
+        void wecomAttach.run(input, { signal: wecomAbort.signal,
+          onNotice: notice => { wecomJob.notice = notice } }).then(result => {
+            wecomJob = { phase: 'done', notice: '企业微信已添加，请在群里发送任务。', chatId: result.chatId }
+          }, error => { wecomJob = { phase: 'failed', notice: error?.message || '企业微信接入失败' } })
+        return sendJSON(res, 200, wecomJob)
       }
       if (!cronTools && p.startsWith('/api/groups/cron/')) {
         return sendJSON(res, 409, { error: '当前控制台未接入定时任务', code: 'C2_CONSOLE_UNSUPPORTED' })
@@ -2734,7 +2757,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         else c.write(msg)
       } catch { sseClients.delete(c) } }
     },
-    close() { clearInterval(tick); for (const c of sseClients) { try { c.end() } catch {} } try { browserRoutes.close() } catch {} server.close(); if (typeof server.closeAllConnections === 'function') server.closeAllConnections(); if (updater) updater.close() },
+    close() { wecomAbort?.abort(); clearInterval(tick); for (const c of sseClients) { try { c.end() } catch {} } try { browserRoutes.close() } catch {} server.close(); if (typeof server.closeAllConnections === 'function') server.closeAllConnections(); if (updater) updater.close() },
     _browserRoutes: browserRoutes, // 测试探 CDP 会话注册表用
   }
 }

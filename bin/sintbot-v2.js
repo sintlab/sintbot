@@ -10,6 +10,7 @@ const { applyProxyEnv, chatPlatform, platformsConfigured } = require('../src/con
 const { secureDataDir } = require('../src/core/datadir')
 const { StateStore } = require('../src/core/store')
 const { createFeishuPlatform, feishuClient } = require('../src/platform/feishu')
+const { createWecomPlatform } = require('../src/platform/wecom')
 const { createMultiPlatform } = require('../src/platform/multi')
 const { createLocalPlatform } = require('../src/platform/local')
 const { isC2InputRejection, answerC2InputRejection } = require('../src/core/c2inputrejection')
@@ -32,7 +33,7 @@ async function startService(rest) {
   const setupConfig = path.resolve(values.config || process.env.SBOT_CONFIG || path.join(installationStateDir(values['data-dir']), 'config.json'))
   if (!fs.existsSync(setupConfig)) {
     if (preflightOnly || values.ui !== true) {
-      throw new Error('No configuration yet. Run `sintbot start --ui` and connect Feishu in the browser (or `sintbot connect` in the terminal)')
+      throw new Error('No configuration yet. Run `sintbot start --ui` and connect Feishu or WeCom in the browser (or `sintbot connect` in the terminal)')
     }
     await runSetupMode({ configFile: setupConfig, dataDir: values['data-dir'],
       host: values['ui-host'] || '127.0.0.1', port: Number(values['ui-port'] || 4600),
@@ -150,7 +151,7 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
   const { createC2ServiceStartGate } = require('../src/core/c2servicestartgate')
   const { C2PayloadHandles } = require('../src/core/c2payloadhandles')
   const { createC2LocalEffectExecutor, resolveC2LocalEffectTurn } = require('../src/core/c2localeffectexecutor')
-  const { createFeishuRecoverySender, createLocalRecoverySender, createRoutedRecoverySender } = require('../src/core/c2platformrecoverysender')
+  const { createWecomRecoverySender, createFeishuRecoverySender, createLocalRecoverySender, createRoutedRecoverySender } = require('../src/core/c2platformrecoverysender')
   const { createC2V2SourceQuarantine } = require('../src/core/c2sourcequarantine')
   const { Engine } = require('../src/core/v2engine')
   const { createC2MultiGroupService } = require('../src/c2multigroupservice')
@@ -224,6 +225,8 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
   let updater
   let consoleSeal = null
   let liveTransport
+  let forceStartupExit = false
+  let wecomTools, wecomToolDir, wecomSocketPath
   let activity
   let onSigint, onSigterm
   try {
@@ -274,6 +277,8 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
       ui?.close()
       updater?.close()
       await activity?.close()
+      await wecomTools?.close()
+      if (wecomToolDir) { try { fs.rmdirSync(wecomToolDir) } catch {} }
       lock.release()
       let code = result.code
       if (seal) {
@@ -329,15 +334,34 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
             onlyWhenMentioned: cfg.feishu.onlyWhenMentioned === true,
             ws: cfg.feishu.ws || {}, card: cfg.feishu.card || {}, client })
         }
+        if (platformsConfigured(cfg).wecom) {
+          adapters.wecom = createWecomPlatform({ botId: cfg.wecom.botId, secret: cfg.wecom.secret,
+            botName: cfg.wecom.botName, cli: false, pollSec: 0,
+            inboxDir: require('node:path').join(stateDir, 'wecom-inbox'),
+            log: message => process.stderr.write(`WeCom · ${message}\n`) })
+        }
         const platform = createMultiPlatform({ adapters,
           resolve: chatId => chatPlatform(cfg, chatId) })
-        const sender = createRoutedRecoverySender({ cfg, senders: {
+        const senders = {
           local: createLocalRecoverySender({ cfg, platform }),
-          ...(client ? { feishu: createFeishuRecoverySender({ cfg, platform, client }) } : {}) } })
+          ...(adapters.wecom ? { wecom: createWecomRecoverySender({ cfg, platform }) } : {}),
+          ...(client ? { feishu: createFeishuRecoverySender({ cfg, platform, client }) } : {}) }
+        const sender = createRoutedRecoverySender({ cfg, senders })
         liveTransport = { platform, sender,
+          addWecom: async config => {
+            if (platform.get('wecom')) throw new Error('企业微信连接已存在')
+            const adapter = createWecomPlatform({ botId: config.wecom.botId, secret: config.wecom.secret,
+              botName: config.wecom.botName, cli: false, pollSec: 0,
+              inboxDir: path.join(stateDir, 'wecom-inbox'),
+              log: message => process.stderr.write(`WeCom · ${message}\n`) })
+            await platform.add('wecom', adapter)
+            senders.wecom = createWecomRecoverySender({ cfg, platform })
+          },
           stopPlatform: async () => {
+            platform.seal()
             const stopped = await Promise.all([
-              adapters.feishu ? adapters.feishu.stop({ strict: true }) : true, local.stop()])
+              adapters.feishu ? adapters.feishu.stop({ strict: true }) : true,
+              adapters.wecom ? adapters.wecom.stop({ strict: true }) : true, local.stop()])
             return stopped.every(value => value === true)
           } }
         return liveTransport
@@ -437,13 +461,21 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
               try { return require('../src/projectmemory').probeHandover(workdir, options) } catch { return null }
             },
             durableV2NormalRoute: true, durableV2StreamFrames: streamFrames(cfg) })
+          engine.wecomSocket = wecomSocketPath
           return { journal, gate, runtime, engine, handles }
         } catch (error) { gate.stop(); throw error }
       } })
     // One configuration writer for the console and the chat /model command.
+    const wecomAttach = require('../src/wecomattach').createWecomAttach({
+      configPath: cfg._path, stateDir, canAttach: () => service.serving && !service.inMaintenance,
+      writeConfig: mutate => configControl.writeConfig(mutate),
+      activateConnection: config => liveTransport.addWecom(config),
+      awaitConnected: () => liveTransport?.platform.get('wecom')?.ready(15000) || Promise.resolve(false) })
     configControl = require('../src/c2configcontrol').createC2ConfigControl({
       installation, getBindings: () => service.bindings, getHeld: () => service.held,
       assertWriterLock, store,
+      validateConnectionAddition: wecomAttach.validateConnectionAddition,
+      activateConnection: wecomAttach.activateConnection,
       activateRoute: route => service.addRoute(route), isFrozen: () => service.inMaintenance,
       log: message => process.stderr.write(`C2 multi-group · ${message}\n`) })
     if (!preflightOnly) {
@@ -480,11 +512,12 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
     process.on('SIGTERM', onSigterm)
     if (uiEnabled && !preflightOnly) {
       ui = require('../src/c2console').createC2Console({
-        configPath: cfg._path, stateDir, host: uiHost, activity, store,
+        configPath: cfg._path, stateDir, host: uiHost, activity, store, wecomAttach,
         getConfig: () => cfg, getBindings: () => service.bindings,
         getHeld: () => service.held, getCapacity: () => capacity.snapshot(),
         acquireCapacity: options => capacity.acquire(options),
         getConnHealth: () => liveTransport?.platform.connHealth?.() || {},
+        getWecomChats: () => liveTransport?.platform.get('wecom')?.listChats?.() || [],
         // Console injection enters through the same ingress as a group
         // message, posted and answered with that group's own adapter.
         getPlatform: chatId => liveTransport?.platform.forChat(chatId) || null,
@@ -500,6 +533,18 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
         ui.listen(uiPort, uiHost, () => { ui.server.off('error', reject); resolve() })
       })
       process.stderr.write(`SintBot console listening on port ${uiPort}\n`)
+    }
+    if (!preflightOnly) {
+      wecomToolDir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'sbot-wc-'))
+      fs.chmodSync(wecomToolDir, 0o700)
+      wecomSocketPath = path.join(wecomToolDir, 'tools.sock')
+      wecomTools = require('../src/wecomtools').createWecomToolServer({ socketPath: wecomSocketPath,
+        getConfig: () => cfg, getPlatform: chatId => {
+          const p = liveTransport?.platform
+          return p?.forChat(chatId) === p?.get('wecom') ? p?.get('wecom') : null
+        },
+        canSend: () => service.serving && !service.inMaintenance && assertWriterLock() === true })
+      await wecomTools.listen()
     }
     const started = await service.start({ preflightOnly })
     if (preflightOnly) {
@@ -541,17 +586,19 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
     ui?.close()
     const stopped = await service?.stop('startup-failed', 1)
     if (stopped && (!stopped.startupStopped || !stopped.platformStopped || !stopped.drained)) {
-      process.stderr.write('C2 multi-group startup cleanup was not confirmed; exiting with evidence preserved\n',
-        () => process.exit(1))
+      forceStartupExit = true
     }
     throw error
   } finally {
     if (!running) {
+      await wecomTools?.close()
+      if (wecomToolDir) { try { fs.rmdirSync(wecomToolDir) } catch {} }
       await activity?.close()
       updater?.close()
       if (onSigint) process.off('SIGINT', onSigint)
       if (onSigterm) process.off('SIGTERM', onSigterm)
       capacity.close(); lock.release()
+      if (forceStartupExit) process.stderr.write('C2 multi-group startup cleanup was not confirmed; exiting with evidence preserved\n', () => process.exit(1))
     }
   }
 }
@@ -577,19 +624,19 @@ function fail(message) {
   process.exitCode = 1
 }
 
-const HELP = `SintBot macOS Feishu multi-group candidate
+const HELP = `SintBot macOS project-group candidate
 Usage:
   sintbot init [--config <absolute path>] [--data-dir <absolute path>]
   sintbot start [--config <absolute path>] [--data-dir <absolute path>] [--preflight] [--ui] [--ui-host <address>] [--ui-port <port>] [--no-open]
   sintbot connect [--config <absolute path>] [--data-dir <absolute path>] [--workdir <absolute path>] [--name <project>] [--provider codex|claude] [--app-id <cli_…>] [--chat <oc_…>] [--basic] [--attach] [--no-open]
   sintbot incident seal --group <oc_…> [--config <absolute path>] [--data-dir <absolute path>] [--reason <text>]
+  sintbot wecom send-msg|send-file|send-image <text-or-relative-path>
   sintbot feishu <action> [arguments…] [--chat <oc_…>] [--config <path>]
   sintbot version
   sintbot help
 
-Supports explicit Feishu groups using Codex or Claude Code. Start runs in the foreground.
-start --ui with no configuration opens a local setup page that connects Feishu by scanning (the
-browser form takes the same inputs as connect); the service starts once setup has written and
+Supports explicit Feishu and WeCom groups using Codex or Claude Code. Start runs in the foreground.
+start --ui with no configuration opens local setup: scan with Feishu or enter WeCom bot credentials; the service starts once setup has written and
 initialized the configuration.
 connect scans a Feishu QR code to create the app, then creates a group (or binds --chat), the project
 folder under ~/Projects, the configuration and the journals, in that order; a failed check stops before
@@ -603,7 +650,9 @@ history · reply · edit · recall · download · react); sintbot feishu --help 
 A conversation in the console needs no Feishu: the setup page offers it, and the console's Chat page adds more.
 connect --attach adds Feishu to such an installation later: stop the service, run it, start again; the
 conversations, their journals and the configuration stay, and a backup of the configuration is kept.
-Canvas, scheduled tasks, terminal chat and other platforms are unavailable.
+WeCom can also be added from console Settings without replacing existing Feishu groups.
+wecom sends messages and project files through the running service, from its own group task context.
+Canvas, scheduled tasks, terminal chat and other chat platforms are unavailable.
 A group whose last result cannot be proven is held alone; the other groups keep serving.
 Restart first: a journal that can recover reopens on its own. If the group is still held,
 stop the service, run incident seal for that group, then start again.
@@ -630,7 +679,7 @@ async function main(argv = process.argv.slice(2)) {
     process.exitCode = outcome === 'done' ? 0 : 1
     return
   }
-  if (!['init', 'start', 'connect', 'incident', 'feishu'].includes(sub)) {
+  if (!['init', 'start', 'connect', 'incident', 'feishu', 'wecom'].includes(sub)) {
     throw new Error(`${sub} is unavailable in this release; use sintbot help`)
   }
   if (process.platform !== 'darwin') throw new Error('this release supports macOS only')
@@ -638,6 +687,10 @@ async function main(argv = process.argv.slice(2)) {
     // Operator-only onboarding; deliberately not an action of the feishu skill,
     // which the agent may run from a group.
     process.exitCode = await require('../src/connect').runConnect(rest)
+    return
+  }
+  if (sub === 'wecom') {
+    await require('../src/wecomtools').runWecomAction(rest)
     return
   }
   if (sub === 'feishu') {

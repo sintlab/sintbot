@@ -35,7 +35,7 @@ function sessionIdentity(provider) {
 // It never moves a journal, settles a receipt or reconnects the platform.
 function createC2ConfigControl({ installation, getBindings, getHeld = () => new Map(),
   assertWriterLock, store = null, activateRoute = null, probeRunner = assertRunnerExecutable,
-  isFrozen = () => false, log = () => {} } = {}) {
+  isFrozen = () => false, validateConnectionAddition = null, activateConnection = null, log = () => {} } = {}) {
   if (!installation?.cfg?._path || typeof getBindings !== 'function' ||
       typeof getHeld !== 'function' || typeof isFrozen !== 'function' ||
       typeof assertWriterLock !== 'function' ||
@@ -130,7 +130,13 @@ function createC2ConfigControl({ installation, getBindings, getHeld = () => new 
     if (!isDeepStrictEqual(connectionOnly(cfg.feishu), connectionOnly(next.cfg.feishu))) {
       throw new Error('Connection settings require a service restart')
     }
-    for (const key of ['wecom', 'slack', 'proxy', 'projectsRoots', 'browser']) {
+    let connectionAdded = false
+    if (!isDeepStrictEqual(cfg.wecom, next.cfg.wecom)) {
+      if (typeof validateConnectionAddition !== 'function' || typeof activateConnection !== 'function' ||
+          validateConnectionAddition(cfg, next.cfg) !== true) throw new Error('Connection settings require a service restart')
+      connectionAdded = true
+    }
+    for (const key of ['slack', 'proxy', 'projectsRoots', 'browser']) {
       if (!isDeepStrictEqual(cfg[key], next.cfg[key])) throw new Error('Connection and filesystem settings require a service restart')
     }
     if (cfg.agent.maxConcurrent !== next.cfg.agent.maxConcurrent) {
@@ -204,7 +210,7 @@ function createC2ConfigControl({ installation, getBindings, getHeld = () => new 
           `「${name}」有任务进行中或记录未结账，等它结束后再改它用的模型、后端或端点`)
       }
     }
-    prepared = { raw: JSON.stringify(raw), next, resets, activations, added }
+    prepared = { raw: JSON.stringify(raw), next, resets, activations, added, connectionAdded }
     return true
   }
 
@@ -250,7 +256,7 @@ function createC2ConfigControl({ installation, getBindings, getHeld = () => new 
     if (assertWriterLock() !== true || !prepared || prepared.raw !== JSON.stringify(raw)) {
       throw new Error('Configuration was not validated against the current service')
     }
-    const { next, activations, added, resets } = prepared
+    const { next, activations, added, resets, connectionAdded } = prepared
     const global = GLOBAL_TASK_KEYS.some(key => !isDeepStrictEqual(cfg[key], next.cfg[key]))
     // Every engine copies the model library at construction and reads it
     // when a turn starts: a library edit must reach all of them, including
@@ -274,11 +280,13 @@ function createC2ConfigControl({ installation, getBindings, getHeld = () => new 
     }
     for (const route of added) routes.push(route)
     routes.sort((a, b) => a.chatId < b.chatId ? -1 : a.chatId > b.chatId ? 1 : 0)
+    const connectionReady = connectionAdded ? Promise.resolve().then(() => activateConnection(cfg)) : Promise.resolve()
+    connectionReady.catch(error => log(`connection activation failed: ${error?.message || String(error)}`))
     for (const route of [...routes.filter(item => activations.includes(item.chatId)),
       ...added.filter(item => !item.paused)]) {
       // Opening runs the group's normal recovery gate. Until it finishes the
       // service ignores that group's messages instead of admitting receipts.
-      Promise.resolve().then(() => activateRoute(route)).catch(error => {
+      connectionReady.then(() => activateRoute(route)).catch(error => {
         log(`group ${route.chatId}: online activation failed: ${error?.message || String(error)}`)
       })
     }

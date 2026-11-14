@@ -595,6 +595,14 @@ async function connectFlow(argv, d, abort) {
 // checks as the scan flow, and writes the same two things: the configuration
 // and the journals. Nothing leaves this Mac.
 async function runLocalSetup(input = {}, deps = {}) {
+  return runConversationSetup(input, deps, 'local')
+}
+
+async function runWecomSetup(input = {}, deps = {}) {
+  return runConversationSetup(input, deps, 'wecom')
+}
+
+async function runConversationSetup(input = {}, deps = {}, platform = 'local') {
   const d = defaultDeps(deps)
   const { fs, stderr, stdout } = d
   const abort = new AbortController()
@@ -641,8 +649,15 @@ async function runLocalSetup(input = {}, deps = {}) {
     const provider = input.provider === undefined ? available[0] : input.provider
     if (!runners[provider]) throw new Error(`${provider} did not answer --version; install and sign in to it first`)
 
-    const chatId = (d.newLocalChatId || newLocalChatId)()
-    const built = core.connectConfig({ platform: 'local', chatId, name: input.title || '本机对话',
+    const chatId = platform === 'wecom'
+      ? await (deps.discoverWecomGroup || require('./wecomsetuptransport').discoverWecomGroup)({
+          botId: input.botId, secret: input.secret, signal: abort.signal,
+          inboxDir: path.join(stateDir, 'wecom-inbox'),
+          onNotice: say })
+      : (d.newLocalChatId || newLocalChatId)()
+    if (interrupted()) return EXIT_INTERRUPTED
+    const built = core.connectConfig({ platform, chatId,
+      ...(platform === 'wecom' ? { botId: input.botId, secret: input.secret } : {}), name: input.title || '本机对话',
       workdir, home: d.home, provider, runners })
     if (!built.ok) throw new Error(built.error)
     const catalog = d.modelCatalog || connectModelCatalog()
@@ -690,7 +705,7 @@ async function runLocalSetup(input = {}, deps = {}) {
 
     try {
       d.initializeInstallation(configPath, { dataDir: stateDir })
-      plan = core.connectPlan('init', { observed: { platform: 'local' } })
+      plan = core.connectPlan('init', { observed: { platform } })
     } catch (error) { plan = decide('init', { code: LOCAL_FAILURE, msg: error?.message || String(error) }) }
     if (plan.verdict === 'stop') return 1
     stdout.write(`${plan.notice}\n`)
@@ -737,4 +752,4 @@ async function scannerName(client, openId, sdkName, basic, d) {
   return name ? core.connectManifest(basic, name, d.version).appPreset.name : ''
 }
 
-module.exports = { runConnect, runLocalSetup, CONNECT_OPTIONS, sdkAddons, qrPage, failureInput, probeRunners, EXIT_INTERRUPTED, connectModelCatalog, applyInitialGroupDefaults }
+module.exports = { runConnect, runLocalSetup, runWecomSetup, CONNECT_OPTIONS, sdkAddons, qrPage, failureInput, probeRunners, EXIT_INTERRUPTED, connectModelCatalog, applyInitialGroupDefaults }

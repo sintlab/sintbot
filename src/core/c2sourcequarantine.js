@@ -33,7 +33,11 @@ function createC2V2SourceQuarantine(value, { required = false } = {}) {
 // journal had already settled, so the group's new journal never runs one of
 // those messages again. A malformed seal stops startup: an unreadable fence
 // cannot be skipped.
-const CHAT_ID = /^oc_[A-Za-z0-9_-]{1,124}$/
+const CHAT_ID = /^(?:oc_|wr)[A-Za-z0-9_-]{1,124}$/
+function validIncidentSourceId(chatId, id) {
+  return typeof id === 'string' && (String(chatId).startsWith('wr')
+    ? /^[^\x00-\x20]{1,512}$/.test(id) : FEISHU_MESSAGE_ID.test(id))
+}
 const RECEIPT_ID = /^[0-9a-f]{32}$/
 function loadC2IncidentQuarantine(stateDir, { fs = require('node:fs'), path = require('node:path') } = {}) {
   if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir)) {
@@ -60,7 +64,7 @@ function loadC2IncidentQuarantine(stateDir, { fs = require('node:fs'), path = re
     try { record = JSON.parse(fs.readFileSync(file, 'utf8')) } catch { fail(entry.name) }
     if (record?.schema !== 'sbot-c2-incident-seal-v1' || !CHAT_ID.test(record.chatId || '') ||
         !Array.isArray(record.pending) ||
-        record.pending.some(item => !FEISHU_MESSAGE_ID.test(item?.sourceId || '')) ||
+        record.pending.some(item => !validIncidentSourceId(record.chatId, item?.sourceId)) ||
         record.completedReceiptIds !== undefined && (!Array.isArray(record.completedReceiptIds) ||
           record.completedReceiptIds.some(id => typeof id !== 'string' || !RECEIPT_ID.test(id)))) fail(entry.name)
     const ids = byChat.get(record.chatId) || new Set()
@@ -82,4 +86,4 @@ function loadC2IncidentQuarantine(stateDir, { fs = require('node:fs'), path = re
     rejects: message => !!byChat.get(message?.chatId)?.has(message?.msgId) || settledBefore(message) })
 }
 
-module.exports = { createC2V2SourceQuarantine, loadC2IncidentQuarantine }
+module.exports = { validIncidentSourceId, createC2V2SourceQuarantine, loadC2IncidentQuarantine }

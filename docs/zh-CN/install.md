@@ -1,12 +1,14 @@
-# 安装 SintBot 1.4.21
+# 安装 SintBot 1.4.22
 
 [English](../install.md) · 简体中文
 
-准备一台 Mac、Node.js 22 及以上，以及保存在本机的项目。执行器至少装好并登录一个：Codex，或 Claude Code。本版连接中国区飞书的 1–32 个群，每个群绑定一个本地项目，以前台方式运行。
+准备一台 Mac、Node.js 22 及以上，以及保存在本机的项目。执行器至少装好并登录一个：Codex，或 Claude Code。本版支持共 1–32 个项目对话，可接中国区飞书群和企业微信群，每个群绑定一个本地项目，以前台方式运行。
 
 ## 桌面 App
 
 Apple silicon Mac 可[下载 SintBot](https://github.com/sintlab/sintbot-desktop/releases/latest)，拖到「应用程序」后打开。App 自带 Node.js；选择项目和执行器后，可直接本机对话或扫码接入飞书。关窗口或退出 App 后服务继续运行；停止后跨登录保持停止，直到点击启动。「移除后台服务」保留配置与历史。
+
+企业微信请查看独立的[接入与使用指南](./platforms/wecom.md)。
 
 ## 1. 一行安装
 
@@ -14,7 +16,7 @@ Apple silicon Mac 可[下载 SintBot](https://github.com/sintlab/sintbot-desktop
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-安装器会自动检查环境，把 `sintbot@1.4.21` 装到 `~/.local/share/sintbot`，并验证程序入口、内置核心和飞书模块。看到 `Installed and verified SintBot 1.4.21` 就可以继续。不需要 sudo。
+安装器会自动检查环境，把 `sintbot@1.4.22` 装到 `~/.local/share/sintbot`，并验证程序入口、内置核心和飞书模块。看到 `Installed and verified SintBot 1.4.22` 就可以继续。不需要 sudo。
 
 可选预览：在命令末尾加 `-s -- --dry-run`。要自定义安装位置，设置 `SINTBOT_INSTALL_DIR` 环境变量，并同步修改后面的可执行文件路径。
 
@@ -208,3 +210,7 @@ Codex 和 Claude Code 的忙时跟进默认开启；`steer:false` 改为排队�
 封存会把原日志原样留在数据目录的 `incidents/` 下，并给这个群换一份新日志；封存前没处理完的消息不会再处理。再次启动服务，这个群就重新开放。由后台服务运行时（例如桌面版），控制台概览页「需要处理」卡上的「封存并继续」做同样的封存，服务随后自动重启；其他群有任务时要等它们结束。所有群都暂停时服务照常启动，控制台可以打开。有群会保持暂停时，预检会失败。不要通过删除日志或重复发送来绕过暂停。一个飞书应用同一时间只运行一个连接进程。本版不自动注册后台服务。
 
 [带图示的官网指南](https://sintbot.com/zh/guide/install/) · [AI 辅助安装](./AI-ASSISTED-INSTALL.md)
+
+## 接入企业微信
+
+首次接入页选择企业微信；已有安装从控制台设置添加。按照[企业微信接入指南](./platforms/wecom.md)创建机器人、绑定群并发送第一条任务。

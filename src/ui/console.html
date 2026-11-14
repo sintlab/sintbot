@@ -4148,7 +4148,7 @@ function renderSettings(){
       <div class="hint" style="margin-top:10px">执行权限已改<b>按群设</b> —— 见「群·项目」每张卡(缺省 <b>dontAsk 只读 · fail-closed</b>)。</div>
     </div>
     ${botCard}
-    ${!S.runtimeCapabilities?fxSlackCard(S.slack||null)+fxWecomCard(S.wecom||null):''}
+    ${!S.runtimeCapabilities?fxSlackCard(S.slack||null)+fxWecomCard(S.wecom||null):fxWecomAttachCard()}
     ${aboutCard}
     ${updateCard}
   </div>`;
@@ -4191,7 +4191,7 @@ function renderSettings(){
     catch(e){toast(e.message,'err');}};
   // 只开着控制台的守护进程(还没接平台):第一次接上平台时说一句接下来会发生什么(服务托管的会自己重启连上)
   {const pl=S.platforms||{};if(S.setupMode&&(pl.feishu||pl.slack||pl.wecom)&&!window._sbRestartToast){window._sbRestartToast=1;toast(S.setupMode.supervised?'已接上聊天平台 —— 后台服务几秒后自动重启并连上':'已接上聊天平台 —— 在终端里重启 sintbot start --ui 连上','ok');}}
-  bindWecomCard();
+  bindWecomCard(); bindWecomAttachCard();
   bindFxFolds();
   const lo=$('#logoutBtn');if(lo)lo.onclick=async()=>{try{await api('/api/logout','POST',{});}catch{}dropToken();TOKEN='';location.reload();};
   const la=$('#logoutAllBtn');if(la)la.onclick=async()=>{try{const r=await api('/api/logout/all','POST',{});toast('已退出 '+(r.n||0)+' 个登录','ok');}catch(e){toast(e.message,'err');return;}dropToken();TOKEN='';setTimeout(()=>location.reload(),600);};
@@ -4329,6 +4329,24 @@ function fxWecomIdent(we){
       <div class="fx-ident-hint" id="wConnLine">${esc(wecomConnText(c))}</div>
       <div class="fx-ident-hint">${src}</div>
     </div><div class="fx-ident-act"><button class="btn" id="wIdentRefresh" title="扫最近几个群的历史,被 @ 最多的名字就是它">刷新身份</button></div></div>`;
+}
+function fxWecomAttachCard(){
+ if(S.platforms&&S.platforms.wecom)return `<div class="card"><h3>企业微信</h3><p class="hint">已添加连接。请在绑定群里 @机器人 发送任务。</p><p class="hint">${esc(wecomConnText(S.conn&&S.conn.wecom))}</p><button class="btn" id="waRetryConnection">刷新连接状态</button></div>`;
+ return `<div class="card" id="wecomAttachCard"><h3>添加企业微信</h3><p class="hint">在企业微信工作台创建智能机器人，选择 API 模式和长连接。添加后保留现有飞书和项目。</p><div class="field"><label for="waId">Bot ID</label><input id="waId" autocomplete="off"></div><div class="field"><label for="waSecret">Secret</label><input id="waSecret" type="password" autocomplete="off"></div><div class="field"><label for="waWorkdir">项目目录</label><input id="waWorkdir" placeholder="选择已有项目的完整目录"></div><div class="field"><label for="waProvider">执行器</label><select id="waProvider">${(S.providers||[]).filter(p=>!p.hidden&&(S.wecomAttachProviders||[]).includes(p.name)&&['codex','claude'].includes(p.runner||'claude')).map(({name})=>`<option value="${esc(name)}"${name===S.defaultProvider?' selected':''}>${esc(name)}</option>`).join('')}</select></div><div class="inline"><button class="btn primary" id="waStart">连接并绑定项目</button><button class="btn" id="waCancel">取消接入</button></div><p class="hint" id="waStatus" role="status">密钥只保存在这台 Mac。连接后，在目标群里 @机器人 发送“连接”。</p></div>`;
+}
+function bindWecomAttachCard(){
+ if($('#waRetryConnection'))$('#waRetryConnection').onclick=async()=>{try{await api('/api/wecom/attach/retry','POST',{});S=await api('/api/state');renderAll();toast('企业微信已连接','ok')}catch(e){toast(e.message,'err')}};
+ if(!$('#waStart'))return;
+ $('#waCancel').onclick=async()=>{try{await api('/api/wecom/attach/cancel','POST',{});}catch(e){toast(e.message,'err')}};
+ $('#waStart').onclick=async()=>{
+  const button=$('#waStart'), status=$('#waStatus');button.disabled=true;
+  try{
+   let job=await api('/api/wecom/attach','POST',{botId:$('#waId').value.trim(),secret:$('#waSecret').value,workdir:$('#waWorkdir').value.trim(),provider:$('#waProvider').value});
+   $('#waSecret').value='';status.textContent=job.notice;
+   for(let i=0;i<100&&job.phase==='running';i++){await new Promise(r=>setTimeout(r,2000));job=await api('/api/wecom/attach');status.textContent=job.notice;}
+   if(job.phase==='done'){S=await api('/api/state');renderAll();toast('企业微信已添加','ok')}
+  }catch(e){status.textContent=e.message;}finally{button.disabled=false;}
+ };
 }
 function fxWecomCard(we){
   const on=!!(we&&(we.botId||we.botIdRef)&&we.secretStatus!=='none');
@@ -4835,6 +4853,22 @@ updateThemeBtn();
 /* I18N_DICT_BEGIN —— 合并翻译片段时整块替换这两个数组,不要改此标记之外的代码
    ⚠ 正则一律 ^…$ 整串、不加 g 标志;更具体的条目必须排在泛化条之前。 */
 const I18N_EN=[
+  ["执行器","Executor"],
+  ["添加企业微信", "Add WeCom"],
+  ["连接并绑定项目", "Connect and bind project"],
+  ["取消接入", "Cancel connection"],
+  ["刷新连接状态", "Refresh connection status"],
+  ["在企业微信工作台创建智能机器人，选择 API 模式和长连接。添加后保留现有飞书和项目。", "Create a smart bot in WeCom Workbench using API mode and a long connection. Existing Feishu connections and projects are preserved."],
+  ["选择已有项目的完整目录", "Enter the full path of an existing project"],
+  ["密钥只保存在这台 Mac。连接后，在目标群里 @机器人 发送“连接”。", "The secret stays on this Mac. After connecting, mention the bot in the target group with “connect”."],
+  ["已添加连接。请在绑定群里 @机器人 发送任务。", "Connection added. Mention the bot in the bound group to send a task."],
+  ["企业微信已添加", "WeCom added"],
+  ["企业微信已连接", "WeCom connected"],
+  ["企业微信接入正在进行", "WeCom connection is in progress"],
+  ["配置已保存，企业微信尚未鉴权成功；请在设置中刷新连接状态，勿重复添加", "Configuration saved, but WeCom has not authenticated. Refresh connection status in Settings instead of adding it again."],
+  ["企业微信仍未连接，请检查网络、机器人凭据或是否被其他实例占用", "WeCom is still disconnected. Check the network, credentials and whether another instance owns the bot."],
+  ["请将机器人添加到目标企业微信群，并在群里 @ 机器人发送“连接”。", "Add the bot to your target WeCom group, then mention it with “connect”."],
+
   /* 本机对话 */
   ["不再显示", "Don't show again"],
   ["在「对话」里交代第一件事", "Ask for your first task in Chat"],

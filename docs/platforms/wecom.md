@@ -10,7 +10,7 @@ Before you start, install WeCom on your phone and join or create an organization
 
 On first launch, select a project and executor, choose **WeCom** under **Chat platform**, and click **Scan to create bot**. Scan the code with WeCom on your phone and confirm. The bot is created automatically and is named after you by default. Its Bot ID and Secret are saved on this Mac automatically; you do not need to copy them.
 
-For an existing installation, open **Settings → Add WeCom** in the console. The flow is the same. Existing Feishu connections, projects and history are preserved.
+For an existing installation, open **Settings → WeCom** in the console, choose the project folder and executor, and select **Scan to create bot**. The flow is the same; once connected, the card shows the connection status and bound projects, with the Bot ID under Advanced. Existing Feishu connections, projects and history are preserved.
 
 Use one SintBot instance per bot. Create a separate bot for testing so that it does not replace an existing connection. Credentials stay on this Mac; never send them to a group.
 

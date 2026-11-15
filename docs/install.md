@@ -1,4 +1,4 @@
-# Install SintBot 1.4.22
+# Install SintBot 1.4.23
 
 English · [简体中文](./zh-CN/install.md)
 
@@ -16,7 +16,7 @@ For WeCom, follow the separate [connection and usage guide](./platforms/wecom.md
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-The installer checks the environment, installs `sintbot@1.4.22` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.22`. No sudo is needed.
+The installer checks the environment, installs `sintbot@1.4.23` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.23`. No sudo is needed.
 
 To preview, append `-s -- --dry-run`. To choose another location, set `SINTBOT_INSTALL_DIR` and adjust the executable paths below.
 

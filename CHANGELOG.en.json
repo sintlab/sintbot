@@ -1,5 +1,24 @@
 [
   {
+    "version": "1.4.23",
+    "date": "2026-11-14",
+    "name": "Smoother WeCom settings",
+    "items": [
+      {
+        "t": "WeCom card in Settings",
+        "d": "The WeCom card now sits below Feishu and matches its layout: connection status, bot name and bound projects up front, with the Bot ID, connection refresh and manual entry under Advanced."
+      },
+      {
+        "t": "Choose the project folder",
+        "d": "When adding WeCom you can browse, pick or create the project folder. A missing folder or credential is flagged at once, and the form is locked while a scan runs."
+      },
+      {
+        "t": "Consistent setup wording",
+        "d": "With WeCom selected, the setup steps, finished message and local-chat note describe scanning to create the bot and sending one message to bind the project."
+      }
+    ]
+  },
+  {
     "version": "1.4.22",
     "date": "2026-11-14",
     "name": "Connect WeCom by scanning",

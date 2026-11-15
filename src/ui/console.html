@@ -591,7 +591,7 @@ label.f{display:block;font-size:12px;line-height:18px;font-weight:500;color:var(
 /* 卡内分区小标题(凭证 / 身份 / 访问地址) */
 .fx-sub{font-size:12px;line-height:18px;font-weight:600;color:var(--dim);margin:16px 0 8px;display:flex;align-items:center;gap:10px}
 /* 设置 → 添加企业微信:扫码二维码与手动折叠区 */
-.wa-actions{flex-wrap:wrap;gap:8px;margin-bottom:8px}.wa-qr{display:flex;justify-content:flex-start;margin:12px 0 4px}.wa-qr svg{display:block;width:min(200px,100%);height:auto;aspect-ratio:1;background:#fff;border:8px solid #fff;border-radius:8px;shape-rendering:crispEdges}.wa-manual{margin:12px 0 0}#wecomAttachCard .hint{overflow-wrap:anywhere}.wa-off{display:none!important}
+.wa-actions{flex-wrap:wrap;gap:8px;margin-bottom:8px}.wa-qr{display:flex;justify-content:flex-start;margin:12px 0 4px}.wa-qr svg{display:block;width:min(200px,100%);height:auto;aspect-ratio:1;background:#fff;border:8px solid #fff;border-radius:8px;shape-rendering:crispEdges}#wecomAttachCard .hint{overflow-wrap:anywhere}.wa-off{display:none!important}
 .fx-sub::after{content:"";flex:1;height:1px;background:var(--line)}
 /* 预检结果清单 */
 .fx-check{border:1px solid var(--line);border-radius:8px;background:var(--inset-bg);padding:4px 10px;margin:8px 0 4px}
@@ -4134,6 +4134,7 @@ function renderSettings(){
   </div>`;
   $('#settings').innerHTML=`<div class="stoc" id="setToc" role="navigation" aria-label="本页内容"></div><div class="grid cols2 stagger">
     ${fxFeishuCard(fe)}
+    ${S.runtimeCapabilities?fxWecomAttachCard():''}
     ${fxFeishuAccessCard(fe)}
     ${netCard}
     <div class="card"><div class="lbl">运行限制</div>
@@ -4150,7 +4151,7 @@ function renderSettings(){
       <div class="hint" style="margin-top:10px">执行权限已改<b>按群设</b> —— 见「群·项目」每张卡(缺省 <b>dontAsk 只读 · fail-closed</b>)。</div>
     </div>
     ${botCard}
-    ${!S.runtimeCapabilities?fxSlackCard(S.slack||null)+fxWecomCard(S.wecom||null):fxWecomAttachCard()}
+    ${!S.runtimeCapabilities?fxSlackCard(S.slack||null)+fxWecomCard(S.wecom||null):''}
     ${aboutCard}
     ${updateCard}
   </div>`;
@@ -4336,15 +4337,58 @@ function fxWecomIdent(we){
    保存配置、激活连接);这里只轮询 /api/wecom/attach。任务状态放在 WA 里,设置页重画时照样显示二维码与进度;
    密钥只在提交那一下经过页面,任务状态里没有密钥和扫码会话。 */
 const WA={job:null,polling:false,loaded:false};
+// 企微连接状态 → 卡头状态胶囊(与飞书卡同一套 fx-status);接入任务进行中优先显示「接入中」
+function waStatusPill(){
+ const on=!!(S.platforms&&S.platforms.wecom),c=connDict(S.conn).wecom,st=on?connStatus(c):'',running=!!(WA.job&&WA.job.phase==='running');
+ const txt=running?'接入中':!on?'尚未接入':st==='ok'?'已连接':st==='warn'?(c?'连接中':'等待连接'):'连接中断';
+ const dot=running?'warn':!on?'skip':st;
+ return `<span class="fx-status ${on&&st==='ok'?'on':''}" id="waPill"><span class="dot ${dot}"></span>${txt}</span>`;
+}
 function fxWecomAttachCard(){
- if(S.platforms&&S.platforms.wecom)return `<div class="card"><h3>企业微信</h3><p class="hint">已添加连接。请在企业微信里给机器人发送任务。</p><p class="hint">${esc(wecomConnText(S.conn&&S.conn.wecom))}</p><button class="btn" id="waRetryConnection">刷新连接状态</button></div>`;
- return `<div class="card" id="wecomAttachCard"><h3>添加企业微信</h3><p class="hint">用手机企业微信扫码，按提示创建机器人。添加后保留现有飞书和项目。</p><div class="field"><label for="waWorkdir">项目目录</label><input id="waWorkdir" placeholder="选择已有项目的完整目录"></div><div class="field"><label for="waProvider">执行器</label><select id="waProvider">${(S.providers||[]).filter(p=>!p.hidden&&(S.wecomAttachProviders||[]).includes(p.name)&&['codex','claude'].includes(p.runner||'claude')).map(({name})=>`<option value="${esc(name)}"${name===S.defaultProvider?' selected':''}>${esc(name)}</option>`).join('')}</select></div><div class="inline wa-actions"><button class="btn primary" id="waScan">扫码创建机器人</button><button class="btn wa-off" id="waCancel">取消接入</button></div><div class="wa-qr wa-off" id="waQr" aria-label="企业微信二维码"></div><p class="hint" id="waStatus" role="status" aria-live="polite">扫码后在企业微信里给机器人发一句话（单聊，或在群里 @它）即可完成接入。</p><details class="fx-guide wa-manual" id="waManual"><summary><span class="caret">${IC.chevronRight}</span><span>已有机器人？手动填写 Bot ID 和 Secret</span></summary><div class="fx-body"><p class="hint" style="margin-top:8px">在企业微信工作台创建智能机器人，选择 API 模式和长连接。</p><div class="field"><label for="waId">Bot ID</label><input id="waId" autocomplete="off" spellcheck="false"></div><div class="field"><label for="waSecret">Secret</label><input id="waSecret" type="password" autocomplete="off" spellcheck="false"></div><button class="btn" id="waStart">连接并绑定项目</button><p class="hint" style="margin-top:8px">密钥只保存在这台 Mac。连接后，在企业微信里给机器人发一句话（单聊，或在群里 @它）。</p></div></details></div>`;
+ const head=`<div class="feishu-heading"><div class="lbl">${platLogo('wecom')}企业微信</div>${waStatusPill()}</div>`;
+ const guide=(label,ext)=>`<a class="btn" data-guide="install/#wecom" href="${guideBase()}install/#wecom" target="_blank" rel="noopener">${label}${ext?' '+IC.ext:''}</a>`;
+ // 已接入:与飞书卡同一结构 —— 三行要点 + 主操作,机器人信息与连接细节收进「高级」
+ if(S.platforms&&S.platforms.wecom){
+  const we=S.wecom||{},c=connDict(S.conn).wecom,bound=(S.groups||[]).filter(g=>g.platform==='wecom');
+  const name=we.botName||(c&&c.botNameLearned)||'';
+  return `<div class="card feishu-setup" id="wecomStatusCard" style="grid-column:1/-1">${head}
+   <div class="kv"><span class="kk">机器人名称</span><span class="vv">${esc(name||'企业微信智能机器人')}</span></div>
+   <div class="kv"><span class="kk">已绑定项目</span><span class="vv">${bound.length}</span></div>
+   <div class="kv"><span class="kk">消息响应</span><span class="vv">单聊直接回复，群里回复 @ 机器人的消息</span></div>
+   <div class="feishu-actions"><button class="btn primary" data-gotab="groups">管理项目</button><a class="btn" data-guide="usage/" href="${guideBase()}usage/" target="_blank" rel="noopener">查看使用指南</a></div>
+   <details class="feishu-details"><summary>高级：机器人信息与连接</summary>
+    <div class="kv"><span class="kk">Bot ID</span><span class="vv">${esc(we.botId||(we.botIdRef?'env:'+we.botIdRef:'未配置'))}</span></div>
+    <div class="kv"><span class="kk">机器人凭据</span><span class="vv">已设置，不显示密钥</span></div>
+    <div class="kv"><span class="kk">连接</span><span class="vv" id="wConnLine">${esc(wecomConnText(c))}</span></div>
+    <p class="hint">再绑一个项目：在企业微信建群，把机器人加进群并 @它一次，再到「群 · 项目 → 配置群项目」选这个群。每个机器人只由一台 SintBot 连接；凭据只保存在这台 Mac。</p>
+    <div class="feishu-actions"><button class="btn" id="waRetryConnection">刷新连接状态</button><a class="btn" href="https://work.weixin.qq.com/wework_admin/frame" target="_blank" rel="noopener">打开企业微信管理后台 ${IC.ext}</a>${guide('查看完整安装指南',true)}</div>
+   </details></div>`;
+ }
+ // 未接入:表单 + 扫码为主操作,手动填写收进「高级」
+ const provs=(S.providers||[]).filter(p=>!p.hidden&&(S.wecomAttachProviders||[]).includes(p.name)&&['codex','claude'].includes(p.runner||'claude'));
+ const root=(S.projectsRoots&&S.projectsRoots[0])||'';
+ return `<div class="card feishu-setup" id="wecomAttachCard" style="grid-column:1/-1">${head}
+  <p class="hint">用手机企业微信扫码创建机器人，再给它发一句话就绑定项目。现有飞书和项目都保留。</p>
+  <div class="field" style="margin-top:12px"><label for="waWorkdir">项目目录</label><div class="feishu-actions" style="margin:0"><input id="waWorkdir" placeholder="${esc(root?root.replace(/\/+$/,'')+'/my-project':'选择已有项目的完整目录')}" spellcheck="false" autocomplete="off"><button class="btn" id="waBrowse" type="button">${IC.folder} 选择…</button></div></div>
+  <div class="field" style="margin-bottom:0"><label for="waProvider">执行器</label><select id="waProvider">${provs.map(({name})=>`<option value="${esc(name)}"${name===S.defaultProvider?' selected':''}>${esc(name)}</option>`).join('')}</select>${provs.length?'':'<div class="hint" style="margin-top:5px">没有可用的执行器：先在「模型 · 库」里登录 Codex 或 Claude Code。</div>'}</div>
+  <div class="feishu-actions"><button class="btn primary" id="waScan">扫码创建机器人</button><button class="btn wa-off" id="waCancel">取消接入</button>${guide('查看扫码接入指南',false)}</div>
+  <div class="wa-qr wa-off" id="waQr" aria-label="企业微信二维码"></div>
+  <p class="hint" id="waStatus" role="status" aria-live="polite" style="margin-top:8px">扫码后在企业微信里给机器人发一句话（单聊，或在群里 @它）即可完成接入。</p>
+  <details class="feishu-details" id="waManual"><summary>高级：手动填写 Bot ID 和 Secret</summary>
+   <p class="hint">已有机器人时使用。在企业微信工作台创建智能机器人，选择 API 模式和长连接。</p>
+   <div class="field" style="margin-top:10px"><label for="waId">Bot ID</label><input id="waId" autocomplete="off" spellcheck="false"></div>
+   <div class="field"><label for="waSecret">Secret</label><input id="waSecret" type="password" autocomplete="off" spellcheck="false"></div>
+   <div class="feishu-actions" style="margin-top:0"><button class="btn" id="waStart">连接并绑定项目</button></div>
+   <p class="hint">密钥只保存在这台 Mac。连接后，在企业微信里给机器人发一句话（单聊，或在群里 @它）。</p>
+  </details></div>`;
 }
 function waPaint(){
  const card=$('#wecomAttachCard');if(!card)return;const j=WA.job,running=!!(j&&j.phase==='running');
  const qr=$('#waQr');qr.innerHTML=running&&j.qr?j.qr:'';qr.classList.toggle('wa-off',!(running&&j.qr));
  if(j&&j.notice)$('#waStatus').textContent=j.notice;
  $('#waCancel').classList.toggle('wa-off',!running);$('#waScan').disabled=running;$('#waStart').disabled=running;
+ for(const id of ['waWorkdir','waProvider','waBrowse','waId','waSecret'])if($('#'+id))$('#'+id).disabled=running;
+ const pill=$('#waPill');if(pill)pill.outerHTML=waStatusPill();
 }
 async function waPoll(){
  if(WA.polling)return;WA.polling=true;
@@ -4361,8 +4405,15 @@ function bindWecomAttachCard(){
  if(!$('#waScan'))return;
  const common=()=>({workdir:$('#waWorkdir').value.trim(),provider:$('#waProvider').value});
  $('#waCancel').onclick=async()=>{try{await api('/api/wecom/attach/cancel','POST',{});}catch(e){toast(e.message,'err')}};
- $('#waScan').onclick=()=>waRun({...common(),scan:true});
- $('#waStart').onclick=()=>{const body={...common(),botId:$('#waId').value.trim(),secret:$('#waSecret').value};$('#waSecret').value='';waRun(body);};
+ const ready=()=>{const c=common();
+  if(!c.workdir||!c.workdir.startsWith('/')){$('#waStatus').textContent='请选择已有项目目录';$('#waWorkdir').focus();return null;}
+  if(!c.provider){$('#waStatus').textContent='没有可用的执行器';return null;}
+  return c;};
+ $('#waBrowse').onclick=()=>openFsPicker(p=>{if(p)$('#waWorkdir').value=p;});
+ $('#waScan').onclick=()=>{const c=ready();if(c)waRun({...c,scan:true});};
+ $('#waStart').onclick=()=>{const c=ready();if(!c)return;const botId=$('#waId').value.trim(),secret=$('#waSecret').value;
+  if(!botId||!secret){$('#waStatus').textContent='请填写机器人 Bot ID 和 Secret';return;}
+  $('#waSecret').value='';waRun({...c,botId,secret});};
  // 页面刷新后接上正在跑的接入任务(只查一次)
  if(!WA.loaded){WA.loaded=true;api('/api/wecom/attach').then(j=>{if(j&&j.phase==='running'){WA.job=j;waPaint();void waPoll();}}).catch(()=>{});}
  waPaint();
@@ -4792,6 +4843,7 @@ function updateConnLive(){
   if(!S)return;
   const d=connDict(S.conn);
   // 设置页企微卡的「身份与连接」条先同步(就地改文案,不重渲染表单 —— 用户可能正在填);放在最前:下面概览那段遇到行增减会整卡重画后 return
+  {const wp=$('#waPill'); if(wp)wp.outerHTML=waStatusPill();}
   {const wl=$('#wConnLine'); if(wl){const c=d.wecom; wl.textContent=wecomConnText(c); const ws=$('#wConnSt'); if(ws){const st=connStatus(c); ws.className='fx-ident-st '+(st==='ok'?'on':(st==='fail'?'off':'')); ws.textContent=c?(c.state==='connected'?'长连接在线':connDetail(c)):'未连接';}}}
   if(!$('#overview').innerHTML)return;
   for(const [k,label] of Object.entries(CONN_LABEL)){
@@ -4874,6 +4926,24 @@ updateThemeBtn();
 const I18N_EN=[
   ["执行器","Executor"],
   ["添加企业微信", "Add WeCom"],
+  ["机器人名称", "Bot name"],
+  ["企业微信智能机器人", "WeCom smart bot"],
+  ["单聊直接回复，群里回复 @ 机器人的消息", "Replies in direct chats, and to @mentions in groups"],
+  ["高级：机器人信息与连接", "Advanced: bot details and connection"],
+  ["机器人凭据", "Bot credentials"],
+  ["再绑一个项目：在企业微信建群，把机器人加进群并 @它一次，再到「群 · 项目 → 配置群项目」选这个群。每个机器人只由一台 SintBot 连接；凭据只保存在这台 Mac。", "To bind another project, create a WeCom group, add the bot and @mention it once, then pick that group in Groups · Projects → Set up a group project. Each bot connects to one SintBot; its credentials stay on this Mac."],
+  ["打开企业微信管理后台", "Open WeCom admin console"],
+  ["高级：手动填写 Bot ID 和 Secret", "Advanced: enter Bot ID and Secret"],
+  ["已有机器人时使用。在企业微信工作台创建智能机器人，选择 API 模式和长连接。", "For an existing bot. In WeCom Workbench, create a smart bot in API mode and select long connection."],
+  ["接入中", "Connecting"],
+  ["连接中断", "Disconnected"],
+  ["已绑定项目", "Bound projects"],
+  ["连接", "Connection"],
+  ["管理项目", "Manage projects"],
+  ["选择…", "Choose…"],
+  ["用手机企业微信扫码创建机器人，再给它发一句话就绑定项目。现有飞书和项目都保留。", "Scan with WeCom on your phone to create the bot, then send it one message to bind the project. Existing Feishu connections and projects are kept."],
+  ["没有可用的执行器：先在「模型 · 库」里登录 Codex 或 Claude Code。", "No executor is available. Sign in to Codex or Claude Code under Models · Library first."],
+  ["没有可用的执行器", "No executor is available."],
   ["连接并绑定项目", "Connect and bind project"],
   ["取消接入", "Cancel connection"],
   ["刷新连接状态", "Refresh connection status"],

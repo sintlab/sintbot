@@ -9,6 +9,7 @@
   <a href="https://github.com/sintlab/sintbot/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/sintlab/sintbot/test.yml?branch=main&style=flat-square&label=tests" alt="测试"></a>
   <img src="https://img.shields.io/node/v/sintbot?style=flat-square" alt="Node 版本">
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Shield-blue?style=flat-square" alt="PolyForm Shield 许可"></a>
+  <img src="https://img.shields.io/badge/%E5%85%8D%E8%B4%B9-%E5%BC%80%E6%BA%90-2f8f5b?style=flat-square" alt="免费开源">
 </p>
 
 <p align="center">
@@ -20,11 +21,11 @@
 
 ---
 
-SintBot 是跑在你自己 Mac 上的个人 AI 助理。在飞书、企业微信或 Slack 里交代一句,它就在你的电脑上把事做完:读代码、改代码、做设计、跑脚本,再把结果回到聊天里。一个人用,它是只有你和它的群里的助理;拉进团队的项目群,它是群里谁都能派活的同事。两种用法都是一个群绑一个项目目录,全程在你自己的机器上。
+SintBot 是跑在你自己 Mac 上的免费开源个人 AI 助理。在飞书、企业微信或 Slack 里交代一句,它就在你的电脑上把事做完:读代码、改代码、做设计、跑脚本,再把结果回到聊天里。一个人用,它是只有你和它的群里的助理;拉进团队的项目群,它是群里谁都能派活的同事。两种用法都是一个群绑一个项目目录,全程在你自己的机器上。
 
 SintBot 通过 **Claude Code** 或 **Codex** 执行项目任务，接入工具、MCP、skills 和项目说明。执行器与模型按群选择：Claude Code 可使用 Claude，也可接 GLM、MiniMax、DeepSeek 等兼容服务；Codex 对应 GPT 模型。
 
-SintBot 按 [PolyForm Shield 1.0.0 许可](./LICENSE) 分发。
+SintBot 免费开源，按 [PolyForm Shield 1.0.0 许可](./LICENSE) 分发。
 
 ## 怎么跑
 

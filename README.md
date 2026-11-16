@@ -9,6 +9,7 @@
   <a href="https://github.com/sintlab/sintbot/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/sintlab/sintbot/test.yml?branch=main&style=flat-square&label=tests" alt="tests"></a>
   <img src="https://img.shields.io/node/v/sintbot?style=flat-square" alt="node version">
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Shield-blue?style=flat-square" alt="PolyForm Shield license"></a>
+  <img src="https://img.shields.io/badge/free-open%20source-2f8f5b?style=flat-square" alt="free and open source">
 </p>
 
 <p align="center">
@@ -20,11 +21,11 @@
 
 ---
 
-SintBot is a personal AI agent that runs on your own Mac. You message it in Slack, Feishu or WeCom, and it does the work on your computer: it reads and changes code, designs, runs scripts and reports back. On your own, it is your assistant in a direct message. In a team's channel or project group, it is a teammate anyone there can hand work to. Either way a conversation is bound to a project directory, and everything runs on your own machine.
+SintBot is a free, open-source personal AI agent that runs on your own Mac. You message it in Slack, Feishu or WeCom, and it does the work on your computer: it reads and changes code, designs, runs scripts and reports back. On your own, it is your assistant in a direct message. In a team's channel or project group, it is a teammate anyone there can hand work to. Either way a conversation is bound to a project directory, and everything runs on your own machine.
 
 SintBot uses **Claude Code** and **Codex** as agent runners, with tools, MCP servers, skills and project instructions. Each group chooses its runner and model: Claude through Claude Code, GPT through Codex, or GLM, MiniMax, DeepSeek and other compatible endpoints through Claude Code.
 
-SintBot is distributed under the [PolyForm Shield License 1.0.0](./LICENSE).
+SintBot is free and open source, distributed under the [PolyForm Shield License 1.0.0](./LICENSE).
 
 ## How it works
 

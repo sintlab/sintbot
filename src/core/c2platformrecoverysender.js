@@ -3,6 +3,7 @@
 const { chatPlatform } = require('../config')
 const { isLocalChatId, isLocalMessageId } = require('../platform/local')
 const { isWecomChatId, isWecomMessageId } = require('../platform/wecom')
+const { isSlackChatId, isSlackMessageId, slackMessageRef, slackChannelOf } = require('../platform/slack')
 
 const RECEIPT_ID = /^[0-9a-f]{32}$/
 const FEISHU_CHAT_ID = /^oc_[A-Za-z0-9_-]{1,124}$/
@@ -170,6 +171,52 @@ function createWecomRecoverySender({ cfg, platform } = {}) {
   return Object.freeze({ resolveTarget, send })
 }
 
+// The same single-attempt notice for a Slack channel or direct message. Both
+// identities of a receipt decode back to the channel and the source message,
+// so the notice is one reply through the adapter's own single-attempt path:
+// in the thread of the source message in a channel, in the conversation itself
+// in a direct message. Sending needs no socket. Anything but a confirmed
+// message reports null (unknown), which is never retried.
+function createSlackRecoverySender({ cfg, platform } = {}) {
+  const adapter = platform?.get?.('slack')
+  if (!cfg?.groups || typeof adapter?.replyOnce !== 'function' || typeof platform?.forChat !== 'function') {
+    throw new TypeError('C2 Slack recovery needs active conversation routing')
+  }
+  function validReceipt(receipt) {
+    if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt) ||
+        !RECEIPT_ID.test(receipt.id || '') || receipt.source !== 'message' ||
+        !isSlackMessageId(receipt.sourceId) || !isSlackChatId(receipt.chatId) ||
+        slackMessageRef(receipt.sourceId).channel !== slackChannelOf(receipt.chatId)) {
+      throw new TypeError('C2 Slack recovery receipt identity invalid')
+    }
+    if (!cfg.groups[receipt.chatId] || chatPlatform(cfg, receipt.chatId) !== 'slack' ||
+        platform.get('slack') !== adapter || platform.forChat(receipt.chatId) !== adapter) {
+      throw new Error('C2 Slack recovery conversation route is unavailable')
+    }
+  }
+  function resolveTarget(receipt) {
+    validReceipt(receipt)
+    return Object.freeze({ receiptId: receipt.id, chatId: receipt.chatId, sourceId: receipt.sourceId,
+      replyCtx: Object.freeze({ chatId: receipt.chatId, messageId: receipt.sourceId }) })
+  }
+  async function send(receipt, target) {
+    validReceipt(receipt)
+    if (!target || typeof target !== 'object' || Array.isArray(target) ||
+        target.receiptId !== receipt.id || target.chatId !== receipt.chatId ||
+        target.sourceId !== receipt.sourceId ||
+        target.replyCtx?.chatId !== receipt.chatId ||
+        target.replyCtx?.messageId !== receipt.sourceId) {
+      throw new Error('C2 Slack recovery target differs from durable receipt')
+    }
+    try {
+      const response = await adapter.replyOnce({ chatId: receipt.chatId, messageId: receipt.sourceId }, NOTICE_TEXT, { notice: true })
+      const id = response?.code === 0 ? response.data?.message_id : null
+      return isSlackMessageId(id) ? id : null
+    } catch { return null }
+  }
+  return Object.freeze({ resolveTarget, send })
+}
+
 // One sender for a service that carries several platforms: each receipt goes
 // to the sender of the platform its conversation is configured for. A receipt
 // whose platform has no sender here is refused, never rerouted.
@@ -192,4 +239,4 @@ function createRoutedRecoverySender({ cfg, senders } = {}) {
   })
 }
 
-module.exports = { createWecomRecoverySender, createFeishuRecoverySender, createLocalRecoverySender, createRoutedRecoverySender }
+module.exports = { createWecomRecoverySender, createSlackRecoverySender, createFeishuRecoverySender, createLocalRecoverySender, createRoutedRecoverySender }

@@ -18,6 +18,9 @@ const GROUP_ID = /^(?:oc_|wr)[A-Za-z0-9_-]{1,124}$/
 // A conversation held in the console (src/platform/local.js). Its identity is
 // a reserved subset of the group shape, so every journal rule applies as is.
 const { isLocalChatId } = require('./platform/local')
+// A Slack conversation (src/platform/slack.js) likewise takes a reserved
+// subset of the group shape: `oc_slack_<channel id>`.
+const { isSlackChatId } = require('./platform/slack')
 const MANIFEST = 'c2-groups.json'
 const SUPPORTED_RUNNERS = Object.freeze(['codex', 'claude'])
 
@@ -92,7 +95,9 @@ function resolveInstallation(cfg, configFile, stateDir, { allowAddedGroups = fal
   if (path.resolve(cfg._path || '') !== path.resolve(configFile) ||
       needsFeishu && !configured.feishu ||
       groups.some(([, group]) => group?.platform === 'wecom') && !configured.wecom ||
-      configured.slack || cfg.slack ||
+      groups.some(([, group]) => group?.platform === 'slack') && !configured.slack ||
+      // Slack credentials are both tokens or nothing: half a block never connects.
+      !!cfg.slack && !configured.slack ||
       (cfg._groupPlatform?.inferred || []).length || cfg.alerts?.chatId) {
     throw new Error('This release accepts explicit supported message routes without synthetic sources')
   }
@@ -127,9 +132,11 @@ function resolveInstallation(cfg, configFile, stateDir, { allowAddedGroups = fal
   const routes = groups.map(([chatId, group]) => {
     // The reserved local prefix and the local platform always go together:
     // a Feishu group can never take a local identity, nor the reverse.
-    if (!GROUP_ID.test(chatId) || !group || !['feishu', 'local', 'wecom'].includes(group.platform) ||
+    if (!GROUP_ID.test(chatId) || !group || !['feishu', 'local', 'wecom', 'slack'].includes(group.platform) ||
         (group.platform === 'local') !== isLocalChatId(chatId) ||
         (group.platform === 'wecom') !== /^wr/.test(chatId) ||
+        (group.platform === 'slack') !== isSlackChatId(chatId) ||
+        group.platform !== 'slack' && /^oc_slack_/.test(chatId) ||
         group.platform !== 'local' && /^oc_local_/.test(chatId)) {
       throw new Error('Every configured group must have an explicit matching platform identity')
     }

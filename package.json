@@ -1,8 +1,8 @@
 {
   "name": "sintbot",
-  "version": "1.4.23",
+  "version": "1.4.24",
   "private": false,
-  "description": "A personal AI agent on your Mac: local conversations, Feishu groups and WeCom chats with Codex or Claude Code.",
+  "description": "A personal AI agent on your Mac: local conversations, Slack, Feishu groups and WeCom chats with Codex or Claude Code.",
   "bin": {
     "sbot": "bin/sintbot-v2.js",
     "sintbot": "bin/sintbot-v2.js"
@@ -165,7 +165,15 @@
     "src/wecomtools.js",
     "src/platform/wecommedia.js",
     "docs/platforms/wecom.md",
-    "docs/zh-CN/platforms/wecom.md"
+    "docs/zh-CN/platforms/wecom.md",
+    "src/slackattach.js",
+    "src/slacknotices.js",
+    "src/slackpresence.js",
+    "src/slacksetuptransport.js",
+    "src/slackverify.js",
+    "docs/platforms/slack.md",
+    "docs/zh-CN/platforms/slack.md",
+    "docs/slack-app-manifest.yaml"
   ],
   "scripts": {
     "start": "node bin/sintbot-v2.js start"

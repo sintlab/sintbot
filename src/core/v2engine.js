@@ -30,8 +30,10 @@ const { GROUP_COMMANDS, RUNTIME_ENTRY, runtimeCommand } = require('../runtimefac
 // conversations (src/platform/local.js) and WeCom groups and direct chats
 // (src/platform/wecom.js), which share every durable rule. Local and WeCom are
 // plain-reply platforms: their message IDs are reserved `om_local_` /
-// `om_wecom_` shapes of the same source ID the journal validates.
-const DURABLE_PLATFORMS = ['feishu', 'local', 'wecom']
+// `om_wecom_` shapes of the same source ID the journal validates. Slack
+// channels and direct messages (src/platform/slack.js) are a plain-reply
+// platform too, with `oc_slack_` / `om_slack_` identities.
+const DURABLE_PLATFORMS = ['feishu', 'local', 'wecom', 'slack']
 const NO_REPLY = 'NO_REPLY'
 const SYSTEM_APPENDIX = systemAppendix(NO_REPLY)
 const V2_NORMAL_ROUTE_MISSING = Object.freeze(['complete durable v2 authority'])
@@ -39,6 +41,10 @@ const V2_NORMAL_ROUTE_MISSING = Object.freeze(['complete durable v2 authority'])
 // the Codex read-only sandbox, 3 the fail-closed default. 0 is full access
 // and 2 an allow-listed tool set, which may still change files.
 const READ_ONLY_TIERS = Object.freeze([1, 3])
+// The third argument of replyOnce marks a sentence the engine itself wrote (a
+// queue, stop or refusal notice). A platform whose users type commands with
+// another prefix rewrites the commands named in it; an answer is never marked.
+const ENGINE_NOTICE = Object.freeze({ notice: true })
 const DURABLE_V2_COMMANDS = new Set(GROUP_COMMANDS.filter(cmd => !['/skip', '/stop'].includes(cmd)))
 function fmtWan(n) {
   n = Number(n) || 0
@@ -1076,7 +1082,7 @@ async runDurableV2Message(msg, platform) {
         effectId: notice.effectId, receiptId: queued.receiptId, chatId: msg.chatId,
         payloadHandles: this.durableV2Payloads,
         assertWriterLock: this.durableV2AssertWriterLock,
-        perform: ({ target }) => platform.replyOnce(target, T.queued(notice.visibleQueue)),
+        perform: ({ target }) => platform.replyOnce(target, T.queued(notice.visibleQueue), ENGINE_NOTICE),
         confirm: response => response?.code === 0 &&
           /^om_[A-Za-z0-9_-]{1,124}$/.test(response?.data?.message_id || ''),
       })
@@ -1234,7 +1240,7 @@ async _runDurableV2Steer(rt, receiptId) {
         const notice = authority.prepareQueueNotice({ receiptId, chatId, payloadHandles: this.durableV2Payloads })
         await authority.executeQueueNotice({ ...notice, payloadHandles: this.durableV2Payloads,
           assertWriterLock: this.durableV2AssertWriterLock,
-          perform: ({ target }) => job.platform.replyOnce(target, T.queued(notice.visibleQueue)),
+          perform: ({ target }) => job.platform.replyOnce(target, T.queued(notice.visibleQueue), ENGINE_NOTICE),
           confirm: response => response?.code === 0 && /^om_[A-Za-z0-9_-]{1,124}$/.test(response?.data?.message_id || '') })
       }
       return { receiptId, queued: true, staged: true, accepted: false }
@@ -1556,7 +1562,7 @@ async _drainDurableV2NormalChain(initial) {
           await authority.executeStopAck({ effectId: cancelled.effectId,
             controlReceiptId: stop.controlReceiptId, chatId: identity.chatId,
             target: stop.target,
-            perform: target => stop.platform.replyOnce(target.replyCtx, text),
+            perform: target => stop.platform.replyOnce(target.replyCtx, text, ENGINE_NOTICE),
             confirm: response => response?.code === 0 &&
               /^om_[A-Za-z0-9_-]{1,124}$/.test(response?.data?.message_id || ''),
             assertWriterLock: this.durableV2AssertWriterLock })
@@ -2624,6 +2630,8 @@ classifyDurableV2UnresolvedTurn({ chatId, receiptId, turnToken, effectId,
         permissionTier: policy.tier, tz: this.tz, publicUrl: '', uiUrl: '', lanUrl: '' }),
       ...manifestContext({ restrictedV2: true, brand, isCodex: provider.runner === 'codex',
         groupCommands: GROUP_COMMANDS, groupTools, wecomTools,
+        ...(platform.commandPrefix ? { commandPrefix: platform.commandPrefix } : {}),
+        ...(!groupTools && platform.features?.mediaMarker === 'path' ? { mediaByPath: true } : {}),
         consoleEnabled: this.durableV2ConsoleEnabled === true,
         pmem: this.projectMemory ? this.projectMemory(group.workdir,
           { full: policy.full, isCodex: provider.runner === 'codex' }) : null,

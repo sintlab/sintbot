@@ -10,7 +10,7 @@ const { taskId } = require('./core/enginecheckpoint')
 
 // A host facade over existing v2 authorities, not a second execution engine.
 // The allowlist applies after the existing console's authentication boundary.
-const READ_PATHS = ['/api/wecom/chats', '/api/wecom/attach', '/api/state', '/api/events', '/api/inbox', '/api/activity', '/api/activity/detail',
+const READ_PATHS = ['/api/wecom/chats', '/api/wecom/attach', '/api/slack/channels', '/api/slack/attach', '/api/slack/manifest', '/api/state', '/api/events', '/api/inbox', '/api/activity', '/api/activity/detail',
   '/api/changelog', '/api/changelog-en', '/api/codex/models', '/api/usage',
   '/api/plugins', '/api/design/styles', '/api/design/icons', '/api/fs/listdir',
   '/api/feishu/admin-candidates', '/api/feishu/org-users', '/api/feishu/resolve-contact',
@@ -22,11 +22,15 @@ const READ_PATHS = ['/api/wecom/chats', '/api/wecom/attach', '/api/state', '/api
   // without credentials (see serverbase).
   '/api/shell/activity',
   START_PATH, CALLBACK_PATH]
-const WRITE_PATHS = ['/api/wecom/attach', '/api/wecom/attach/cancel', '/api/wecom/attach/retry', '/api/login', '/api/logout', '/api/logout/all',
+const WRITE_PATHS = ['/api/wecom/attach', '/api/wecom/attach/cancel', '/api/wecom/attach/retry',
+  '/api/slack/attach', '/api/slack/attach/cancel', '/api/slack/attach/retry', '/api/slack/verify', '/api/login', '/api/logout', '/api/logout/all',
   '/api/ui/network', '/api/ui/public-url', '/api/ui/update-settings', '/api/feishu/admins',
   '/api/groups', '/api/groups/provider', '/api/groups/brain', '/api/fs/mkdir',
   '/api/groups/order', '/api/groups/policy', '/api/groups/redact',
   '/api/groups/codex-steer', '/api/groups/steer', '/api/groups/pause', '/api/groups/stop',
+  // Create a Feishu group: one platform call that writes no config and touches
+  // no journal; binding the new group is the ordinary /api/groups write.
+  '/api/feishu/chats/create',
   // A fresh session only for an idle, settled group (same rule as /new).
   '/api/groups/new', '/api/groups/interrupt',
   '/api/agent', '/api/provider-settings', '/api/codex/verify', '/api/usage/refresh',
@@ -396,7 +400,8 @@ function createC2Console(options = {}) {
   // The process-wide model list (also used by /model), when the service has one.
   facade.modelCatalog = typeof options.modelCatalog === 'function' ? options.modelCatalog : null
   const ui = createUiServer({
-    getWecomChats: options.getWecomChats, wecomAttach: options.wecomAttach, configPath, host, log, getConnHealth, updater: options.updater || null,
+    getWecomChats: options.getWecomChats, wecomAttach: options.wecomAttach,
+    getSlackChats: options.getSlackChats, slackAttach: options.slackAttach, configPath, host, log, getConnHealth, updater: options.updater || null,
     onHostChange: options.onHostChange,
     getLiveState: facade.getLiveState, control: facade.control, runtimePolicy: facade,
     issuesPath: path.join(stateDir, 'issues.jsonl'),

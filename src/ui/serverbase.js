@@ -221,10 +221,10 @@ function authConfiguredFrom(getAuth, loopbackBind) {
 // ⚠ 命令前缀按平台传:Slack 把 `/` 开头的输入当成它自己的斜杠命令吃掉(真机验过),写死 `/help`
 //   等于第一句话就教错用法。
 function bindNoticeText(workdir, platform = 'feishu', cmd = '/help') {
-  return `✅ 本群已绑定项目「${path.basename(String(workdir || '')) || '(未命名)'}」\n${platform === 'wecom' ? '@我 派单(只有 @ 我的消息我才收得到)' : '直接发消息或 @我 派单'};${cmd} 查看命令`
+  return `✅ 本群已绑定项目「${path.basename(String(workdir || '')) || '(未命名)'}」\n${platform === 'wecom' ? '@我 派单(只有 @ 我的消息我才收得到)' : platform === 'slack' ? '在频道里 @我 派单(不 @ 我的消息不处理)' : '直接发消息或 @我 派单'};${cmd} 查看命令`
 }
 
-function createUiServer({ configPath, getLiveState = null, getConnHealth = null, onConfigChange = null, onHostChange = null, control = null, updater = null, host = '127.0.0.1', log = () => {}, issuesPath = null, sessionsPath = null, auditPath = null, ledgerPath = null, inboxDismissPath = null, fetchImpl = null, cdpImpl = null, onTakeoverClaim = null, onTakeoverExpire = null, onTakeoverEnd = null, takeoverNow = null, wecomExec = null, verifyFile = null, setupMode = null, cronRecoveryEnabled = false, runtimePolicy = null, cronTools = null, wecomAttach = null, getWecomChats = null } = {}) {
+function createUiServer({ configPath, getLiveState = null, getConnHealth = null, onConfigChange = null, onHostChange = null, control = null, updater = null, host = '127.0.0.1', log = () => {}, issuesPath = null, sessionsPath = null, auditPath = null, ledgerPath = null, inboxDismissPath = null, fetchImpl = null, cdpImpl = null, onTakeoverClaim = null, onTakeoverExpire = null, onTakeoverEnd = null, takeoverNow = null, wecomExec = null, verifyFile = null, setupMode = null, cronRecoveryEnabled = false, runtimePolicy = null, cronTools = null, wecomAttach = null, getWecomChats = null, slackAttach = null, getSlackChats = null } = {}) {
   // Legacy scheduling rules are injected by its compatibility wrapper only.
   // The durable console cannot acquire those rules through this base module.
   const unsupportedCron = () => { throw new Error('当前控制台未接入定时任务') }
@@ -717,6 +717,10 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       onlyWhenMentioned: !!raw.slack.onlyWhenMentioned,
       replyInThread: raw.slack.replyInThread !== false,
       commandAlias: raw.slack.commandAlias || '!',
+      // Identity facts recorded when the connection was added (display only).
+      appId: /^A[A-Z0-9]{8,19}$/.test(raw.slack.appId || '') ? raw.slack.appId : '',
+      team: typeof raw.slack.team === 'string' ? raw.slack.team : '',
+      teamId: /^[TE][A-Z0-9]{2,19}$/.test(raw.slack.teamId || '') ? raw.slack.teamId : '',
     } : null
     const state = {
       configPath: cfg._path,
@@ -886,6 +890,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
     secureFor: (req) => String(req.headers['x-forwarded-proto'] || '') === 'https',
   })
   let wecomJob = { phase: 'idle', notice: '' }, wecomAbort = null
+  let slackJob = { phase: 'idle', notice: '' }, slackAbort = null
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost')
     const p = url.pathname
@@ -937,6 +942,61 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
             wecomJob = { phase: 'done', notice: '企业微信已添加，请在企业微信里发送任务。', chatId: result.chatId }
           }, error => { wecomJob = { phase: 'failed', notice: error?.message || '企业微信接入失败' } })
         return sendJSON(res, 200, wecomJob)
+      }
+      // ── Slack on the release service ───────────────────────────────────────
+      // Slack has no scan-to-create flow: the person creates their own app from
+      // a prefilled manifest link, pastes two tokens, then sends one message.
+      // The core owns the manifest and every verdict; tokens are checked here
+      // and never stored outside the attach call or sent back.
+      if (p === '/api/slack/manifest' && req.method === 'GET' && runtimePolicy) {
+        const manifest = require('../agent/privatecore').connectSlackManifest(url.searchParams.get('name') || '')
+        return sendJSON(res, 200, { name: manifest.name, createUrl: manifest.createUrl, hint: manifest.hint, scopes: manifest.scopes })
+      }
+      if (p === '/api/slack/verify' && req.method === 'POST' && runtimePolicy) {
+        const input = await body(req)
+        const slackVerify = require('../slackverify')
+        if (typeof input?.botToken === 'string' && input.botToken.trim()) {
+          const app = await slackVerify.verifySlackAppToken(input.appToken)
+          if (!app.ok) return sendJSON(res, 200, { step: 'app', ok: false, notice: app.notice })
+          const bot = await slackVerify.verifySlackBotToken(input.botToken, { appId: app.appId })
+          return sendJSON(res, 200, { step: 'bot', ok: bot.ok, verdict: bot.verdict, notice: bot.notice,
+            ...(bot.ok && bot.identity ? { team: bot.identity.team, open: slackVerify.slackOpenLinks(bot.identity) } : {}) })
+        }
+        const app = await slackVerify.verifySlackAppToken(input?.appToken)
+        return sendJSON(res, 200, { step: 'app', ok: app.ok, notice: app.notice, ...(app.ok ? { appId: app.appId, links: app.links } : {}) })
+      }
+      if (p === '/api/slack/channels' && req.method === 'GET' && runtimePolicy) {
+        try {
+          const chats = await getSlackChats?.() || []
+          return sendJSON(res, 200, { channels: chats.map(chat => ({ id: chat.chatId, name: chat.name, isPrivate: chat.isPrivate === true })),
+            hint: '这里只列出机器人已加入的频道。先在 Slack 的目标频道里发 /invite @机器人名，再刷新。' })
+        } catch (error) {
+          return sendJSON(res, 502, { error: error?.code === 'missing_scope' ? '应用缺少列出频道的权限（channels:read / groups:read），补上后需重新安装' : '读取 Slack 频道失败，请检查网络或代理后重试' })
+        }
+      }
+      if (p === '/api/slack/attach' && req.method === 'GET') return sendJSON(res, 200, slackJob)
+      if (p === '/api/slack/attach/retry' && req.method === 'POST') {
+        if (!slackAttach) return sendJSON(res, 409, { error: 'Slack 接入不可用' })
+        return sendJSON(res, 200, await slackAttach.retry())
+      }
+      if (p === '/api/slack/attach/cancel' && req.method === 'POST') {
+        slackAbort?.abort(); return sendJSON(res, 200, { ok: true })
+      }
+      if (p === '/api/slack/attach' && req.method === 'POST') {
+        if (!slackAttach) return sendJSON(res, 409, { error: '当前服务不能添加 Slack 连接' })
+        if (slackJob.phase === 'running') return sendJSON(res, 409, { error: 'Slack 接入正在进行' })
+        const input = await body(req)
+        slackAbort = new AbortController()
+        // The job carries only what the page shows: a notice, the workspace
+        // name and the links that open the conversation with the bot.
+        const job = slackJob = { phase: 'running', notice: '正在验证两枚令牌…', step: 'verify', team: '', open: null }
+        void slackAttach.run({ appToken: input?.appToken, botToken: input?.botToken, workdir: input?.workdir, provider: input?.provider }, { signal: slackAbort.signal,
+          onNotice: notice => { job.notice = notice },
+          onIdentity: identity => { job.team = identity.team || ''; job.step = 'message'
+            job.open = require('../slackverify').slackOpenLinks(identity) } }).then(result => {
+            slackJob = { phase: 'done', notice: 'Slack 已添加，请在 Slack 里发送任务。', chatId: result.chatId }
+          }, error => { slackJob = { phase: 'failed', notice: error?.message || 'Slack 接入失败' } })
+        return sendJSON(res, 200, slackJob)
       }
       if (!cronTools && p.startsWith('/api/groups/cron/')) {
         return sendJSON(res, 409, { error: '当前控制台未接入定时任务', code: 'C2_CONSOLE_UNSUPPORTED' })
@@ -2763,7 +2823,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         else c.write(msg)
       } catch { sseClients.delete(c) } }
     },
-    close() { wecomAbort?.abort(); clearInterval(tick); for (const c of sseClients) { try { c.end() } catch {} } try { browserRoutes.close() } catch {} server.close(); if (typeof server.closeAllConnections === 'function') server.closeAllConnections(); if (updater) updater.close() },
+    close() { wecomAbort?.abort(); slackAbort?.abort(); clearInterval(tick); for (const c of sseClients) { try { c.end() } catch {} } try { browserRoutes.close() } catch {} server.close(); if (typeof server.closeAllConnections === 'function') server.closeAllConnections(); if (updater) updater.close() },
     _browserRoutes: browserRoutes, // 测试探 CDP 会话注册表用
   }
 }

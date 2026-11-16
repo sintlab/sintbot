@@ -20,7 +20,7 @@
 
 ---
 
-SintBot is a personal AI agent that runs on your own Mac. You message it in Feishu or Slack, and it does the work on your computer: it reads and changes code, designs, runs scripts and reports back. On your own, it is your assistant in a group of one. In a team's project group, it is a teammate anyone in the group can hand work to. Either way a group is bound to a project directory, and everything runs on your own machine.
+SintBot is a personal AI agent that runs on your own Mac. You message it in Slack, Feishu or WeCom, and it does the work on your computer: it reads and changes code, designs, runs scripts and reports back. On your own, it is your assistant in a direct message. In a team's channel or project group, it is a teammate anyone there can hand work to. Either way a conversation is bound to a project directory, and everything runs on your own machine.
 
 SintBot uses **Claude Code** and **Codex** as agent runners, with tools, MCP servers, skills and project instructions. Each group chooses its runner and model: Claude through Claude Code, GPT through Codex, or GLM, MiniMax, DeepSeek and other compatible endpoints through Claude Code.
 
@@ -45,19 +45,19 @@ curl -fsSL https://sintbot.com/install.sh | bash
 
 The script checks the environment, installs SintBot and verifies the result, without `sudo`. You can read [install.sh](./install.sh) before running it. Installation does not sign in to a model account, connect a group or start a service.
 
-**2. Connect your group and project.** Run `sintbot start --ui`; the browser opens the local setup page. Enter a project name and scan the QR code with Feishu under an enterprise or team identity: it creates the app, a project folder and a group, then writes the configuration. The [installation guide](https://sintbot.com/guide/install/) covers the options, the manual route and the startup steps.
+**2. Connect your chat and project.** Run `sintbot start --ui`; the browser opens the local setup page. Enter a project name and pick your chat platform. On **Slack**, create the app from a link that is already filled in, paste two tokens and send the bot one message. On **Feishu**, scan the QR code under an enterprise or team identity: it creates the app, a project folder and a group. On **WeCom**, scan to create the bot and send it one message. Setup then writes the configuration. The [installation guide](https://sintbot.com/guide/install/) covers the options, the manual route and the startup steps.
 
 Installing with an AI assistant? Use the [AI-assisted install and first-use guide](./docs/AI-ASSISTED-INSTALL.md).
 
-**3. @ the bot in your group.** Start with a read-only request: “Read the first line of this project's README and reply with that line.” Then try a concrete task, such as investigating a bug or reviewing a page. See the [usage guide](https://sintbot.com/guide/usage/) for examples.
+**3. Message the bot.** In a Slack direct message just write to it; in a channel or group, @mention it. Start with a read-only request: “Read the first line of this project's README and reply with that line.” Then try a concrete task, such as investigating a bug or reviewing a page. See the [usage guide](https://sintbot.com/guide/usage/) for examples.
 
 ### On your own
 
-You do not need a team to use SintBot. The scan in step 2 creates a group with only you and the bot in it, bound to one project folder. Leave the Mac on and message that group from your phone: the work happens on the Mac and the result comes back to the chat. Bind another group in the console for each further project.
+You do not need a team to use SintBot. On Slack, your direct message with the bot is bound to one project folder, in a workspace you can create yourself for free. Leave the Mac on and message the bot from your phone: the work happens on the Mac and the result comes back to the chat. Bind a channel in the console for each further project.
 
-Feishu only lets an enterprise or team identity create the app, so a personal Feishu account needs a team first; creating one is free.
+On Feishu, the scan in step 2 creates a group with only you and the bot in it. Feishu only lets an enterprise or team identity create the app, so a personal Feishu account needs a team first; creating one is free. On WeCom, a direct chat with the bot works the same way.
 
-On Slack it works the same way in a channel or in a direct message with the bot, in a workspace you can create yourself for free. The [installation guide](./docs/install.md) says which platforms the current package connects.
+The [installation guide](./docs/install.md) says which platforms the current package connects, and the [Slack guide](./docs/platforms/slack.md) walks through the Slack steps.
 
 ### Pick a model: no single provider required
 
@@ -74,7 +74,7 @@ Choose a model for each project and keep durable context in shared project notes
 
 | Area | What it does |
 |---|---|
-| **In the group** | Send tasks, reference images and files in Feishu, Slack or WeCom. Follow progress and receive results in the same project group. |
+| **In the chat** | Send tasks, reference images and files in Slack, Feishu or WeCom. Follow progress and receive results in the same conversation. |
 | **Commands** | Check status, switch models, stop work or start a fresh conversation from the group. See the [usage guide](https://sintbot.com/guide/usage/). |
 | **Permissions** | Set permissions per group: read-only, developer or full trust. Configure allowed tools, mask secrets in outgoing messages and choose how personal data is handled. |
 | **Scheduled tasks** | Cron, aliases such as `daily`, or plain “every day at 09:00”. A task can wake the agent, post a reminder or run a script, once or on a schedule. |

@@ -211,6 +211,7 @@ function collectSecretValues(cfg) {
   }
   if (cfg && cfg.feishu && typeof cfg.feishu.appSecret === 'string') out.push(cfg.feishu.appSecret)
   if (cfg && cfg.wecom && typeof cfg.wecom.secret === 'string') out.push(cfg.wecom.secret)
+  for (const key of ['botToken', 'appToken']) if (cfg && cfg.slack && typeof cfg.slack[key] === 'string') out.push(cfg.slack[key])
   return out
 }
 
@@ -259,6 +260,8 @@ function inferChatPlatform(chatId) {
   // A conversation held in the console itself (src/platform/local.js). Its
   // prefix is reserved, so it is told apart before the Feishu shape below.
   if (/^oc_local_/.test(id)) return 'local'
+  // A Slack conversation on the durable route (src/platform/slack.js): reserved prefix, told apart first.
+  if (/^oc_slack_[CDG][A-Z0-9]{2,39}$/.test(id)) return 'slack'
   if (/^oc_/.test(id)) return 'feishu'
   if (/^wr[A-Za-z0-9_-]{6,}$/.test(id)) return 'wecom'
   // Slack:频道 C… / 私有 G… / 私聊 D…,后接全大写字母数字。⚠ 企微单聊 userid 也可能长这样(「DAVID1234」),

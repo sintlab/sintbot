@@ -3,7 +3,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { createHash } = require('node:crypto')
 
-const EXPECTED_SHA256 = '8fc8c829281ed42949c5c79b34a0dd47664987f38f52129308b52fc362edac5f'
+const EXPECTED_SHA256 = 'a7ed0aae5a3a6cde65b16792ef201be46aee9e92cf17f9c3c2ec84f5ff832d23'
 let bytes
 try {
   bytes = fs.readFileSync(path.join(__dirname, 'privatecore.wasm'))
@@ -785,6 +785,20 @@ function connectManifest(basic, userName, version) {
   return value
 }
 
+// The Slack app manifest and its prefilled "create app" link. The core owns
+// the scopes and events; the host only opens the link.
+function connectSlackManifest(name = '') {
+  const value = coreJson('connect_manifest', { platform: 'slack', name: String(name || '') }, 'build the Slack app manifest')
+  if (!isObject(value) || value.platform !== 'slack' || !isObject(value.manifest) ||
+      typeof value.name !== 'string' || !value.name || typeof value.hint !== 'string' ||
+      typeof value.createUrl !== 'string' || !value.createUrl.startsWith('https://api.slack.com/apps?new_app=1&manifest_json=') ||
+      !Array.isArray(value.scopes) || !value.scopes.every(scope => typeof scope === 'string') ||
+      !Array.isArray(value.events) || typeof value.command !== 'string') {
+    throw new Error('SintBot binary core returned an invalid Slack app manifest')
+  }
+  return value
+}
+
 function connectPlan(step, { basic = false, status = null, code = null, msg = '', observed = {} } = {}) {
   const value = coreJson('connect_plan', { step, basic: !!basic, status, code, msg: String(msg || ''), observed: isObject(observed) ? observed : {} }, `decide the connect step ${step}`)
   if (!isObject(value) || !['ok', 'stop', 'wait', 'warn'].includes(value.verdict) || typeof value.notice !== 'string' ||
@@ -880,7 +894,7 @@ function followupCall(name, value) {
 function followupEnabled(group, runner) { return followupCall('followup_policy', { group, runner }) }
 function claudeFollowupStep(state, event) { return followupCall('claude_followup_step', { state, event }) }
 
-const entries = { followupEnabled, claudeFollowupStep, classifyError, routeBackend, sandboxTier, appErrorOverride, appNormalizeItem, appStreamTail, appNoticeAction, appDeltaNext, appLandedAction, appCompletionAction, appCompletionNoticeAction, manifestFeatures, manifestHeader, manifestContext, manifestSkills, manifestStyleBoard, manifestImagenAsset, manifestRuntime, manifestPolicy, systemAppendix, codexEffortRejection, wecomGatePrompt, imagenPrompt, turnPrompt, compactEvent, engineQueueStep, engineSlotsStep, engineTurnStep, engineSessionStep, engineHandoffStep, engineIntakeStep, engineLifecycleStep, engineTerminalStep, engineSteerStep, engineRecoveryStep, engineFailoverStep, parseResetFields, chooseResetEpoch, codexBuildPrompt, codexBuildArgs, appUsageFromTotal, settleUsage, appBuildRequest, claudeBaseSkillAllows, claudeBuildArgs, claudePluginAllowRules, claudeNormalizeEvent, codexNormalizeEvent, codexParseError, connectManifest, connectPlan, connectConfig, qrMatrix, usageParse, envConflicts, idleCompactPlan, idleCompactSettle }
+const entries = { followupEnabled, claudeFollowupStep, classifyError, routeBackend, sandboxTier, appErrorOverride, appNormalizeItem, appStreamTail, appNoticeAction, appDeltaNext, appLandedAction, appCompletionAction, appCompletionNoticeAction, manifestFeatures, manifestHeader, manifestContext, manifestSkills, manifestStyleBoard, manifestImagenAsset, manifestRuntime, manifestPolicy, systemAppendix, codexEffortRejection, wecomGatePrompt, imagenPrompt, turnPrompt, compactEvent, engineQueueStep, engineSlotsStep, engineTurnStep, engineSessionStep, engineHandoffStep, engineIntakeStep, engineLifecycleStep, engineTerminalStep, engineSteerStep, engineRecoveryStep, engineFailoverStep, parseResetFields, chooseResetEpoch, codexBuildPrompt, codexBuildArgs, appUsageFromTotal, settleUsage, appBuildRequest, claudeBaseSkillAllows, claudeBuildArgs, claudePluginAllowRules, claudeNormalizeEvent, codexNormalizeEvent, codexParseError, connectManifest, connectSlackManifest, connectPlan, connectConfig, qrMatrix, usageParse, envConflicts, idleCompactPlan, idleCompactSettle }
 for (const name of Object.keys(entries)) entries[name] = guarded(entries[name])
 
 module.exports = { ...entries, engineStep, resetBinaryCore, HUMAN_BY_KIND: HUMAN }

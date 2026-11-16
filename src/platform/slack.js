@@ -22,10 +22,11 @@
 //   否则就是 v0.11.48 那次飞书事故的形状(引擎以为答案送达,群里一个字都没有)。
 //   `call()` 是本文件唯一的出站入口,那一层已经写死。
 //
-// 实测口径见 docs/SLACK.md(861 行);本文件注释里的 §x 全部指它。
+// 实测口径见 docs/SLACK.md;本文件注释里的 §x 全部指它。
 
 const fs = require('node:fs')
 const path = require('node:path')
+const crypto = require('node:crypto')
 const WebSocket = require('ws')
 const { createWatchdog } = require('./wswatchdog')
 const { getProxyFetch, getProxyAgent, proxyWarning } = require('../core/proxy') // 出网代理:Node 的 fetch 与 ws 都不读 http_proxy(见该模块头注)
@@ -346,7 +347,8 @@ function localizeCommands(text, { commands = [], alias = '!' } = {}) {
   if (!alias || alias === '/' || !commands.length) return s
   const names = commands.map((c) => c.replace(/^\//, '')).filter(Boolean)
   if (!names.length) return s
-  const re = new RegExp('(^|[\\s(（「『"\'*_\\[·、,,。;;])\\/(' + names.join('|') + ')\\b', 'g')
+  // 「：」也算前导:引擎文案写「调深度：/model high」「例：/issue …」(11-16 真机发现漏改)
+  const re = new RegExp('(^|[\\s(（「『"\'*_\\[·、,,。;;：])\\/(' + names.join('|') + ')\\b', 'g')
   // 用代码围栏/行内代码切段,奇数段是代码 —— 原样保留
   return s.split(/(```[\s\S]*?```|`[^`\n]*`)/g)
     .map((seg, i) => (i % 2 ? seg : seg.replace(re, (m, pre, cmd) => pre + alias + cmd)))
@@ -454,7 +456,7 @@ function encodeParams(body) {
 
 function createSlackApi(token, { log = () => {}, fetchImpl = null, sleepImpl = sleep, timeoutMs = 15_000, retryCapMs = 10_000 } = {}) {
   const doFetch = fetchImpl || netFetch
-  return async function call(method, body = {}, { retries = 2, tokenOverride = null, onHeaders = null } = {}) {
+  return async function call(method, body = {}, { retries = 2, tokenOverride = null, onHeaders = null, retry429 = null } = {}) {
     let attempt = 0
     let waited = 0
     for (;;) {
@@ -479,7 +481,9 @@ function createSlackApi(token, { log = () => {}, fetchImpl = null, sleepImpl = s
       if (res.status === 429) {
         // ⚠ 超限后继续硬发,官方警告 app 有被永久停用的风险 ⇒ 严格按 Retry-After 等
         const after = Math.max(1, Number(res.headers && res.headers.get && res.headers.get('retry-after')) || 1) * 1000
-        if (attempt++ < retries && waited + after <= retryCapMs) { waited += after; log(`slack ${method}: 429,等 ${after / 1000}s 重试`); await sleepImpl(after); continue }
+        // retry429: a 429 means the request was refused before it was processed, so a
+        // single-attempt send (retries: 0) may still wait it out without risking a duplicate.
+        if (attempt++ < (retry429 == null ? retries : retry429) && waited + after <= retryCapMs) { waited += after; log(`slack ${method}: 429,等 ${after / 1000}s 重试`); await sleepImpl(after); continue }
         throw new SlackError('ratelimited', method, { retryAfterMs: after })
       }
       if (res.status >= 500) {
@@ -675,8 +679,88 @@ async function fetchSlackChannels(botToken, { fetchImpl = null, maxPages = 10 } 
 /** 一次性发一条文本(控制台绑群回执用;与 feishu.js 的 sendChatText 平级)。 */
 async function sendSlackText(botToken, channel, text, { fetchImpl = null } = {}) {
   const call = createSlackApi(botToken, { fetchImpl })
-  const r = await call('chat.postMessage', messagePayload(channel, text), { retries: 1 })
+  // 控制台传的是会话标识 oc_slack_<频道>;Slack 只认频道 ID(11-16 真机:绑定通知报 channel_not_found)
+  const r = await call('chat.postMessage', messagePayload(slackChannelOf(channel) || channel, text), { retries: 1 })
   return (r && r.ts) || null
+}
+
+// ── Durable identities ─────────────────────────────────────────────────────────
+//
+// The durable route keys every receipt by (conversation, source message) and
+// validates both shapes. Slack names a conversation `C…` / `G…` / `D…` and a
+// message by its `ts` ("1730000000.123456", unique only inside its
+// conversation). The adapter maps them at its boundary into shapes the durable
+// path already accepts and that cannot collide with a Feishu, WeCom or local
+// identity:
+//   - conversation: `oc_slack_<channel id>` (a Feishu group id is `oc_` plus
+//     hex, so it never contains `slack_`);
+//   - message: `om_slack_<channel id>_<seconds>_<microseconds>`, the `ts` with
+//     its dot replaced. Both decode back exactly, so a recovery notice after a
+//     restart still lands in the right conversation and thread;
+//   - a control without a platform message (the `/sint` slash command, the
+//     native Stop button): `om_slack_<channel id>_x<24 hex>`, a keyed hash of
+//     the platform's own id for that click, so a redelivery maps to the same
+//     receipt.
+// The first letter of the channel id tells a direct message (`D`) from a
+// channel or a group DM.
+const SLACK_CHANNEL = /^[CDG][A-Z0-9]{2,39}$/
+const SLACK_TS = /^(\d{1,12})\.(\d{1,9})$/
+const SLACK_CHAT_ID = /^oc_slack_([CDG][A-Z0-9]{2,39})$/
+const SLACK_MESSAGE_ID = /^om_slack_([CDG][A-Z0-9]{2,39})_(?:(\d{1,12})_(\d{1,9})|x([0-9a-f]{24}))$/
+const isSlackChatId = (value) => typeof value === 'string' && SLACK_CHAT_ID.test(value)
+const isSlackMessageId = (value) => typeof value === 'string' && SLACK_MESSAGE_ID.test(value)
+const isSlackDmChatId = (value) => isSlackChatId(value) && value.charAt(9) === 'D'
+function slackChatId(channel) {
+  return typeof channel === 'string' && SLACK_CHANNEL.test(channel) ? 'oc_slack_' + channel : null
+}
+function slackChannelOf(chatId) {
+  const m = typeof chatId === 'string' ? SLACK_CHAT_ID.exec(chatId) : null
+  return m ? m[1] : null
+}
+function slackMessageId(channel, ts) {
+  if (typeof channel !== 'string' || !SLACK_CHANNEL.test(channel)) return null
+  const m = typeof ts === 'string' ? SLACK_TS.exec(ts) : null
+  return m ? `om_slack_${channel}_${m[1]}_${m[2]}` : null
+}
+function slackControlId(channel, key) {
+  if (typeof channel !== 'string' || !SLACK_CHANNEL.test(channel) || typeof key !== 'string' || !key) return null
+  return `om_slack_${channel}_x` + crypto.createHash('sha256').update('sintbot-slack-control-v1\0')
+    .update(channel).update('\0').update(key).digest('hex').slice(0, 24)
+}
+// { channel, ts } for a real message, { channel, ts: null } for a control id, null otherwise.
+function slackMessageRef(messageId) {
+  const m = typeof messageId === 'string' ? SLACK_MESSAGE_ID.exec(messageId) : null
+  if (!m) return null
+  return { channel: m[1], ts: m[2] ? `${m[2]}.${m[3]}` : null }
+}
+
+// A long answer is sent as several messages; each part stays under the
+// markdown limit and breaks on a paragraph or line where it can. A fenced code
+// block cut by a break is closed in one part and reopened in the next.
+const DURABLE_PART_LIMIT = 11_000
+const DURABLE_MAX_PARTS = 8
+function splitForSlack(text, limit = DURABLE_PART_LIMIT) {
+  const parts = []
+  let rest = String(text == null ? '' : text)
+  let reopen = ''
+  while (rest.length) {
+    const room = limit - reopen.length - 8
+    if (reopen.length + rest.length <= limit) { parts.push(reopen + rest); break }
+    let cut = rest.lastIndexOf('\n\n', room)
+    if (cut < room / 2) cut = rest.lastIndexOf('\n', room)
+    if (cut < room / 2) cut = room
+    let head = reopen + rest.slice(0, cut)
+    rest = rest.slice(cut).replace(/^\n+/, '')
+    // An odd number of fence lines means this part ends inside a code block.
+    const fences = head.match(/^ {0,3}(```|~~~)[^\n]*$/gm) || []
+    if (fences.length % 2) {
+      const open = fences[fences.length - 1].trim()
+      head += '\n' + open.slice(0, 3)
+      reopen = open + '\n'
+    } else reopen = ''
+    parts.push(head)
+  }
+  return parts.filter((part) => part.trim())
 }
 
 // ── 平台本体 ──────────────────────────────────────────────────────────────────────
@@ -696,6 +780,13 @@ function createSlackPlatform({
   replyInThread = true, maxEventAgeMs = 10 * 60 * 1000,
   commands = [], commandAlias = '!', umbrellaCommand = '/sint',
   card = {}, log = () => {}, onConn = () => {}, ws = {}, fetchImpl = null,
+  // durable: true = the release service's durable route. Conversations and
+  // messages carry the reserved `oc_slack_` / `om_slack_` identities, every
+  // answer is one plain message through replyOnce, and there is no streaming
+  // card. The default (false) keeps the earlier engine's shapes.
+  durable = false, inboxDir = '', maxFileBytes = 30 * 1024 * 1024,
+  WebSocketImpl = null, // tests script the socket; production uses `ws`
+  presence = true,      // durable route: ⏳/✅ on the person's message and the native "Working…" status in channel threads
 } = {}) {
   if (!botToken || !appToken) throw new Error('slack: botToken (xoxb-) and appToken (xapp-) required')
   // env 里有代理变量但我们用不了(典型:shell 的 all_proxy=socks5://…)⇒ 出网会直连,**要说出来**:
@@ -719,6 +810,9 @@ function createSlackPlatform({
   let refreshTimer = null, retryTimer = null, tickTimer = null
   let approxLifeSec = 0
   let consecFail = 0
+  let online = false           // a hello has arrived on the current connection
+  let stopPresence = null      // durable route: clears the status heartbeats on stop
+  const helloWaiters = []
 
   const tickIntervalMs = num(ws.tickIntervalMs, 30_000)
   const refreshRatio = Number(ws.refreshRatio) > 0 && Number(ws.refreshRatio) < 1 ? Number(ws.refreshRatio) : 0.9
@@ -803,6 +897,8 @@ function createSlackPlatform({
     const kind = (e && e.kind) || 'other'
     if (kind === 'fatal') {
       fatal = e.code
+      if (!fatalAt) fatalAt = Date.now()
+      for (const wake of helloWaiters.splice(0)) wake(false)
       log(`🔴 slack ${where} 致命错误 ${e.code} —— 凭据失效,已停止重试。去 api.slack.com 重取 token 后重启守护进程。`)
       try { if (watchdog) watchdog.onError(e) } catch {}
     } else if (kind === 'channel') {
@@ -848,7 +944,7 @@ function createSlackPlatform({
 
     // ⚠ WS 与 REST **共用同一个隧道 agent**:`ws` 同样不读 `http_proxy`,而它不走代理时的
     //   表现是**「连上了但一直没 Hello」** —— 连 error 都不报,最像"Slack 挂了"的一种失败。
-    const s = new WebSocket(url, { agent: getProxyAgent() || undefined })
+    const s = new (WebSocketImpl || WebSocket)(url, { agent: getProxyAgent() || undefined })
     s.__replacement = replacement
     s.addEventListener('open', () => { connecting = false })
     s.addEventListener('message', (ev) => onFrame(s, ev && ev.data))
@@ -861,7 +957,7 @@ function createSlackPlatform({
       connecting = false
       const wasStandby = s === standby
       if (wasStandby) standby = null
-      else if (s === sock) sock = null
+      else if (s === sock) { sock = null; online = false }
       else return // 交接时关掉的旧连接 —— 早就不是当前连接了,不触发任何动作
       if (stopped || fatal) return
       if (sock) return // 主连接还在(候补没起来 / 已交接完)—— 别再开一条
@@ -892,6 +988,8 @@ function createSlackPlatform({
       approxLifeSec = (m.debug_info && Number(m.debug_info.approximate_connection_time)) || 0
       if (s.__replacement) promote(s)
       consecFail = 0
+      online = true
+      for (const wake of helloWaiters.splice(0)) wake(true)
       if (watchdog) (s.__replacement ? watchdog.onReconnected() : watchdog.onReady())
       s.__replacement = false
       log(`slack socket hello(连接数 ${m.num_connections || '?'} · 预计存活≈${approxLifeSec || '?'}s · host=${(m.debug_info && m.debug_info.host) || '?'})`)
@@ -934,6 +1032,22 @@ function createSlackPlatform({
       const asEngine = payload.command === umbrellaCommand ? '/' + cmdText : `${payload.command} ${cmdText}`.trim()
       if (!dedupe.take('slash:' + payload.trigger_id)) return
       const now = Date.now()
+      if (durable) {
+        // The durable route needs a stable source identity: the click's own
+        // trigger id, hashed. `/sint` alone asks for the command list.
+        const words = cmdText.split(/\s+/).filter(Boolean)
+        const head = (payload.command === umbrellaCommand ? (words.shift() || 'help') : String(payload.command || '').replace(/^\//, '')).toLowerCase()
+        const chatId = slackChatId(payload.channel_id)
+        const msgId = slackControlId(payload.channel_id, 'slash:' + payload.trigger_id)
+        if (!chatId || !msgId || !payload.trigger_id || !/^[a-z]{1,20}$/.test(head)) return
+        const userId = payload.user_id || 'unknown'
+        Promise.resolve(emit({
+          chatId, userId, senderName: payload.user_name || userId,
+          text: ['/' + head, ...words].join(' '), msgId, createTimeMs: now,
+          replyCtx: { chatId, messageId: msgId, channel: payload.channel_id, ts: null, threadTs: null, userId },
+        })).catch((e) => log('slack slash onMessage error: ' + (e && e.message)))
+        return
+      }
       Promise.resolve(emit({
         chatId: payload.channel_id,
         userId: payload.user_id || 'unknown',
@@ -954,6 +1068,8 @@ function createSlackPlatform({
     //   Socket Mode 下这类载荷本来就在投递,此前只是被上面那行 `return` 丢掉了。
     // ⚠ 斜杠命令在**线程里调不出来**,而进度消息就在线程里 ⇒ 这是线程内唯一免教学的控制入口。
     if (m.type === 'interactive') {
+      // Buttons only ever sit on a progress message, which the durable route does not post.
+      if (durable) return
       // 名字取消息路径同一份缓存(同步读;没命中就退回载荷里的 handle,不为一个按钮去打 users.info)
       const msg = actionMessage(payload, { commands, nameOf: (id) => (nameCache.has(id) ? nameCache.get(id) : null) })
       if (!msg) return
@@ -973,15 +1089,97 @@ function createSlackPlatform({
       log(`slack 事件超龄已丢弃(${Math.round((Date.now() / 1000 - eventTime) / 60)} 分钟前): ${event.type}`)
       return
     }
-    try { handleEvent(event) } catch (e) { log('slack event error: ' + (e && e.message)) }
+    try { handleEvent(event, eventId) } catch (e) { log('slack event error: ' + (e && e.message)) }
   }
 
   let emit = () => {}
   let hooks = {}
 
-  function handleEvent(event) {
+  // Durable route: saving an attachment is the only await on the inbound
+  // path. Messages of one conversation are handed over in arrival order
+  // behind it; other conversations never wait. The lane orders the handover
+  // only: it never waits for the service to finish with a message, or a
+  // !stop would queue behind the very turn it is meant to stop.
+  const lanes = new Map()
+  function inOrder(channel, work) {
+    const prior = lanes.get(channel) || Promise.resolve()
+    const next = prior.then(work).catch((e) => log('slack inbound error: ' + (e && e.message)))
+    lanes.set(channel, next)
+    next.then(() => { if (lanes.get(channel) === next) lanes.delete(channel) })
+  }
+  // One received file, saved under the inbox and named in the message as a
+  // local path (the same marker WeCom uses). A failure is a marker too: the
+  // message still arrives, and the reason stays in the log.
+  async function saveInbound(file, base) {
+    const image = String(file.mimetype || '').startsWith('image/')
+    const label = image ? '图片' : '文件'
+    const name = String(file.name || file.title || '').replace(/[\r\n\]]+/g, ' ').slice(0, 80)
+    if (!inboxDir) return `[${label}${name ? ' ' + name : ''} 未下载]`
+    if (Number(file.size) > maxFileBytes) return `[${label}${name ? ' ' + name : ''} 过大,未下载]`
+    const ext = (/\.[A-Za-z0-9]{1,8}$/.exec(String(file.name || '')) || [''])[0].toLowerCase()
+    const dest = path.join(inboxDir, String(base).replace(/[^\w.-]+/g, '_').slice(0, 96) + ext)
+    try {
+      fs.mkdirSync(inboxDir, { recursive: true, mode: 0o700 })
+      await downloadFile(call, botToken, file.id, dest, { fetchImpl })
+      try { fs.chmodSync(dest, 0o600) } catch {}
+      return `[${label} path=${dest}]`
+    } catch (e) {
+      log(`slack 附件下载失败(${label}): ${(e && e.code) || (e && e.message) || e}`)
+      return `[${label}${name ? ' ' + name : ''} 下载失败]`
+    }
+  }
+  // Where a message's answer goes, kept for the presence signals below.
+  const threads = new Map() // msgId -> { thread, userId }
+  function rememberThread(msgId, thread, userId) {
+    threads.set(msgId, { thread: thread || null, userId })
+    for (const key of threads.keys()) { if (threads.size <= 512) break; threads.delete(key) }
+  }
+  const handOver = (message) => {
+    Promise.resolve().then(() => emit(message)).catch((e) => log('slack onMessage error: ' + (e && e.message)))
+  }
+  function emitDurable(event, body, senderName) {
+    const chatId = slackChatId(event.channel)
+    const msgId = slackMessageId(event.channel, event.ts)
+    if (!chatId || !msgId) { log('slack 入站消息的会话或消息标识不可用,已丢弃'); return }
+    const files = (Array.isArray(event.files) ? event.files : []).filter((f) => f && f.id).slice(0, 10)
+    // A direct message is answered in the conversation itself; a channel
+    // message gets its answer in a thread under it.
+    const direct = event.channel.charAt(0) === 'D'
+    const thread = typeof event.thread_ts === 'string' && SLACK_TS.test(event.thread_ts) ? event.thread_ts : null
+    const threadTs = thread || (direct ? null : event.ts)
+    const userId = event.user || 'unknown'
+    rememberThread(msgId, threadTs, event.user || '')
+    inOrder(event.channel, async () => {
+      const marks = []
+      for (let i = 0; i < files.length; i++) marks.push(await saveInbound(files[i], `${msgId}-${i + 1}`))
+      const text = [body, ...marks].filter(Boolean).join('\n')
+      if (!text.trim()) return
+      handOver({
+        chatId, userId, senderName, text, msgId,
+        createTimeMs: Math.round(parseFloat(event.ts) * 1000) || Date.now(),
+        replyCtx: { chatId, messageId: msgId, channel: event.channel, ts: event.ts, threadTs, userId: event.user || '' },
+      })
+    })
+  }
+
+  function handleEvent(event, eventId) {
     if (event.type === 'app_mention') return // 被 @ 时 message 与 app_mention 同时来,以 message 为准(SLACK.md「收消息」)
     if (event.type === 'app_rate_limited') { log('🔴 slack app_rate_limited —— 事件投递已超 30,000/小时,期间的消息全部丢失'); return }
+    if (event.type === 'agent_session_stopped' && durable) {
+      // The native Stop button under "Working…": the same as typing !stop in
+      // that conversation. Its source identity is the event's own id.
+      const chatId = slackChatId(event.channel)
+      const msgId = slackControlId(event.channel, 'stop:' + (eventId || `${event.thread_ts || ''}:${event.event_ts || ''}`))
+      if (!chatId || !msgId) return
+      const thread = typeof event.thread_ts === 'string' && SLACK_TS.test(event.thread_ts) ? event.thread_ts : null
+      const userId = event.user || 'unknown'
+      inOrder(event.channel, () => handOver({
+        chatId, userId, senderName: (nameCache.has(userId) && nameCache.get(userId)) || userId,
+        text: '/stop', msgId, createTimeMs: Date.now(),
+        replyCtx: { chatId, messageId: msgId, channel: event.channel, ts: null, threadTs: thread, userId: event.user || '' },
+      }))
+      return
+    }
     if (event.type === 'agent_session_stopped') { if (hooks.onAgentStop) hooks.onAgentStop({ chatId: event.channel, threadTs: event.thread_ts, userId: event.user }); return }
     // App Home 主页。⚠ 这个事件**两个页签都会来**(Messages 也算),不筛就等于每次有人点开
     //   DM 都白发一次 views.publish。⚠ 失败一律只记日志:主页发不出来不该影响任何一轮任务。
@@ -997,6 +1195,12 @@ function createSlackPlatform({
     const verdict = shouldHandle(event, { botUserId: selfId, onlyWhenMentioned, ownTs })
     if (verdict === 'recall') {
       log(`slack recall event: chat=${event.channel || '?'} msg=${event.deleted_ts}`)
+      if (durable) {
+        const chatId = slackChatId(event.channel)
+        const msgId = slackMessageId(event.channel, event.deleted_ts)
+        if (chatId && msgId && hooks.onRecall) hooks.onRecall({ chatId, msgId })
+        return
+      }
       if (hooks.onRecall) hooks.onRecall({ chatId: event.channel, msgId: event.deleted_ts })
       return
     }
@@ -1006,6 +1210,16 @@ function createSlackPlatform({
     const body = restoreCommand(parseText(event.text, { botUserId: selfId }), { commands, alias: commandAlias })
     const text = [body, ...attachmentMarks(files)].filter(Boolean).join('\n')
     if (!text) return
+    if (durable) {
+      // The sender's name follows the same rule as below: cached or the user id, never awaited.
+      let name = event.user || 'user'
+      if (event.user) {
+        if (nameCache.has(event.user)) name = nameCache.get(event.user) || event.user
+        else nameOf(event.user).catch(() => {})
+      }
+      emitDurable(event, body, name)
+      return
+    }
 
     // 发送者名:**绝不在这里 await**。命中缓存就同步用,未命中回退 user id 并后台预热 ——
     // 这条纪律照搬 feishu.js:每帧是独立的并发 listener,一个 await 会让后到但已缓存的消息
@@ -1032,7 +1246,7 @@ function createSlackPlatform({
     })).catch((e) => log('slack onMessage error: ' + (e && e.message)))
   }
 
-  return {
+  const adapter = {
     // 自描述(引擎按它改写自知清单;core 不认平台名,只读这几个字段)。不声明 skillCmd:Slack 还没有
     // 基础技能命令(文件上下行没接,docs/SLACK.md 第 3 步)⇒ features.skills:false 让清单把那一段整段换成「写路径」。
     // 回复是独立落地的消息、不是钉在轮次开头的卡片;读历史 / 回复编辑撤回 / 表情 / 下载 / 画布 / 生图通知 / 接管卡都没接。
@@ -1057,14 +1271,25 @@ function createSlackPlatform({
       }
       watchdog = createWatchdog({ rebuild: () => { closeSocket(sock, 'watchdog-rebuild'); sock = null; standby = null; connecting = false; openSocket({ replacement: false }) }, log, onConn, ...wdOpts })
       await openSocket({ replacement: false })
-      tickTimer = setInterval(() => { if (watchdog) watchdog.tick() }, tickIntervalMs)
+      // Bot Token 被撤销 / 应用被卸载时 Slack 不再推事件,长连接(xapp)却照样在线 ⇒ 控制台一直「已连接」、
+      // 消息石沉大海(11-16 真机)。每 authProbeMs 用 Bot Token 探一次 auth.test:凭据错 ⇒ 走致命路径报 failed;
+      // 网络类错误只记日志,不改状态(断网由看门狗管)。
+      let ticks = 0
+      const probeEvery = Math.max(1, Math.round(num(ws.authProbeMs, 300_000) / tickIntervalMs))
+      tickTimer = setInterval(() => {
+        if (watchdog) watchdog.tick()
+        if (++ticks % probeEvery || fatal || stopped) return
+        call('auth.test', {}, { retries: 0 }).catch((e) => { if (e && e.kind === 'fatal') onApiError('auth.test', e, null) })
+      }, tickIntervalMs)
       if (tickTimer.unref) tickTimer.unref()
       log('slack Socket Mode 已启动(watchdog on)')
     },
 
     // 控制台健康行读它;字段与飞书同口径(src/ui/server.js connHealthStatus)
     connHealth() {
-      const base = watchdog ? watchdog.snapshot() : fatal ? fatalSnapshot() : { state: 'stopped', since: 0, lastReadyAt: 0, lastEventAt: 0, reconnects: 0, rebuilds: 0, lastError: null }
+      // 凭据已判失效:看门狗可能正按 failed 重建、快照写着 connecting —— 一律报 failed 并说出原因
+      const base = fatal ? { ...(watchdog ? watchdog.snapshot() : {}), ...fatalSnapshot(), ...(watchdog ? { reconnects: watchdog.snapshot().reconnects, rebuilds: watchdog.snapshot().rebuilds } : {}) }
+        : watchdog ? watchdog.snapshot() : { state: 'stopped', since: 0, lastReadyAt: 0, lastEventAt: 0, reconnects: 0, rebuilds: 0, lastError: null }
       return { ...base, sdkState: sock ? ['connecting', 'open', 'closing', 'closed'][sock.readyState] || null : null, reconnectAttempts: consecFail, approxLifeSec, fatal }
     },
 
@@ -1244,22 +1469,224 @@ function createSlackPlatform({
     /** 逃生口:让调用方直接打任意 Web API(第 2 步接进度表达时会用到 agents.sessions.*)。 */
     api: call,
 
-    async stop() {
+    // strict: wait until both sockets report closed (bounded), so the caller
+    // knows no further event can arrive. Returns whether that was confirmed.
+    async stop({ strict = false } = {}) {
       stopped = true
+      online = false
+      if (typeof stopPresence === 'function') stopPresence()
+      for (const wake of helloWaiters.splice(0)) wake(false)
       if (tickTimer) { try { clearInterval(tickTimer) } catch {} tickTimer = null }
       refreshTimer = clearTimer(refreshTimer)
       retryTimer = clearTimer(retryTimer)
       if (watchdog) { try { watchdog.stop() } catch {} }
+      const closing = [standby, sock].filter((s) => s && s.readyState !== 3)
       closeSocket(standby, 'stop')
       closeSocket(sock, 'stop')
       standby = null
       sock = null
+      if (!strict || !closing.length) return true
+      const closed = await Promise.all(closing.map((s) => new Promise((resolve) => {
+        if (s.readyState === 3) return resolve(true)
+        const timer = setTimeout(() => { try { s.terminate() } catch {} resolve(s.readyState === 3) }, 3000)
+        s.addEventListener('close', () => { clearTimeout(timer); resolve(true) })
+      })))
+      return closed.every(Boolean)
     },
   }
+  if (!durable) return adapter
+
+  // ── Durable route ────────────────────────────────────────────────────────────
+  // One answer is one plain message (or a few, for a long one), sent exactly
+  // once. Slack's chat.postMessage has no idempotency key, so a timeout or a
+  // 5xx is reported as unconfirmed and never sent again; only a 429, which
+  // refuses the request before it is processed, is waited out once.
+  const channelOfChat = (chatId) => slackChannelOf(chatId)
+  async function deliverOnce(channel, parts, threadTs) {
+    let first = null
+    for (let i = 0; i < parts.length; i++) {
+      let response = null
+      let code = 'unconfirmed'
+      try {
+        response = await call('chat.postMessage', messagePayload(channel, parts[i], { threadTs }), { retries: 0, retry429: 1 })
+      } catch (e) {
+        code = (e && e.code) || 'unconfirmed'
+        onApiError('chat.postMessage', e, channel)
+      }
+      const id = response && typeof response.ts === 'string' ? slackMessageId(channel, response.ts) : null
+      if (!id) {
+        log(`slack 单次外发未确认(第 ${i + 1}/${parts.length} 段,${code})`)
+        return { code: -1, msg: code, data: { parts: parts.length, confirmedParts: i } }
+      }
+      remember(response.ts)
+      if (!first) first = id
+    }
+    return { code: 0, data: { message_id: first, parts: parts.length } }
+  }
+  function partsOf(content) {
+    const parts = splitForSlack(content)
+    if (parts.length <= DURABLE_MAX_PARTS) return parts
+    const kept = parts.slice(0, DURABLE_MAX_PARTS)
+    kept[kept.length - 1] += '\n\n… (内容过长,后面的部分没有发出)'
+    return kept
+  }
+  // Engine notices name commands with `/`; on Slack people type them with the
+  // alias. An answer is never rewritten: a `/status` in it may be a route.
+  const worded = (content, opts) => opts && opts.notice === true
+    ? localizeCommands(content, { commands, alias: commandAlias }) : content
+
+  adapter.features = { ...adapter.features, plainReplies: true, ...(inboxDir ? { mediaMarker: 'path' } : {}) }
+  adapter.commandPrefix = commandAlias && commandAlias !== '/' ? commandAlias : ''
+  delete adapter.createStreamingCard
+  delete adapter.updateMessage
+  adapter.nameOf = nameOf
+  // Resolves true once Slack has greeted the connection, false when that does
+  // not happen in time or the credentials were refused.
+  adapter.ready = (timeoutMs = 15_000) => new Promise((resolve) => {
+    if (stopped || fatal) return resolve(false)
+    if (online) return resolve(true)
+    let timer = null
+    const wake = (value) => { clearTimeout(timer); resolve(value) }
+    timer = setTimeout(() => { const i = helloWaiters.indexOf(wake); if (i >= 0) helloWaiters.splice(i, 1); resolve(false) }, timeoutMs)
+    if (timer.unref) timer.unref()
+    helloWaiters.push(wake)
+  })
+
+  // The durable terminal effect, and queue / stop / refusal notices. The
+  // caller has already recorded one attempt; the answer is sent once and the
+  // result is reported in the shape the durable path reads:
+  // { code: 0, data: { message_id } } only when every part was accepted.
+  adapter.replyOnce = async (replyCtx, content, opts) => {
+    const channel = replyCtx ? channelOfChat(replyCtx.chatId) : null
+    const ref = replyCtx ? slackMessageRef(replyCtx.messageId) : null
+    if (!channel || !ref || ref.channel !== channel || typeof content !== 'string' || !content) {
+      throw new TypeError('durable Slack reply needs exact message target and text')
+    }
+    const parts = partsOf(worded(content, opts))
+    if (!parts.length) throw new TypeError('durable Slack reply needs visible text')
+    // A live message says where its answer goes. A receipt recovered after a
+    // restart carries only its identities: a channel message is answered in
+    // its thread, a direct message in the conversation.
+    const thread = Object.prototype.hasOwnProperty.call(replyCtx, 'threadTs')
+      ? (typeof replyCtx.threadTs === 'string' && SLACK_TS.test(replyCtx.threadTs) ? replyCtx.threadTs : null)
+      : (channel.charAt(0) === 'D' ? null : ref.ts)
+    return deliverOnce(channel, parts, replyInThread ? thread : null)
+  }
+  // One message to a conversation, for a startup recovery notice. Returns its
+  // id, or null when not confirmed (recorded as unknown, never resent).
+  adapter.pushOnce = async (chatId, content) => {
+    const channel = channelOfChat(chatId)
+    if (!channel || typeof content !== 'string' || !content) {
+      throw new TypeError('Slack push needs an exact conversation and text')
+    }
+    const parts = splitForSlack(worded(content, { notice: true }))
+    if (parts.length !== 1) throw new TypeError('Slack single push must fit one message')
+    const response = await deliverOnce(channel, parts, null)
+    return response.code === 0 ? response.data.message_id : null
+  }
+  // ── Presence (best effort) ───────────────────────────────────────────────────
+  // While a turn runs, the person's message carries ⏳ and, in a channel, its
+  // thread shows Slack's native "Working…" status with a Stop button; when the
+  // turn ends the ⏳ becomes ✅ for an answered turn. None of this is a durable
+  // effect: nothing here is awaited by the service, a failure is logged once
+  // and the signals switch themselves off, and the answer never depends on it.
+  // A direct message gets the reactions only: the native status belongs to a
+  // thread, and a direct message is answered in the conversation itself.
+  let statusOff = false
+  const sessions = new Map() // channel:thread -> { count, beat }
+  async function sessionStatus(channel, thread, status, userId) {
+    if (statusOff || stopped || fatal) return
+    try {
+      await call('agents.sessions.setStatus', { channel_id: channel, thread_ts: thread, status,
+        ...(userId ? { initiator_user_id: userId } : {}) }, { retries: 0 })
+    } catch (e) {
+      statusOff = true
+      log(`slack 原生状态不可用(${(e && e.code) || e})—— 任务照常进行,只是没有 Working… 与 Stop 按钮`)
+    }
+  }
+  function openSession(channel, thread, userId) {
+    const key = `${channel}:${thread}`
+    const open = sessions.get(key)
+    if (open) { open.count += 1; return }
+    // "processing" times out after an hour; sending it again restarts the clock.
+    const beat = setInterval(() => { void sessionStatus(channel, thread, 'processing') }, 5 * 60 * 1000)
+    if (beat.unref) beat.unref()
+    sessions.set(key, { count: 1, beat })
+    void sessionStatus(channel, thread, 'processing', userId)
+  }
+  function closeSession(channel, thread) {
+    const key = `${channel}:${thread}`
+    const open = sessions.get(key)
+    if (!open) return
+    open.count -= 1
+    if (open.count > 0) return
+    clearInterval(open.beat)
+    sessions.delete(key)
+    // Posting an answer does not clear the status; without this it spins for an hour.
+    void sessionStatus(channel, thread, 'active')
+  }
+  const sourcesOf = (chatId, messageIds) => {
+    const channel = channelOfChat(chatId)
+    if (!channel || !Array.isArray(messageIds)) return []
+    return messageIds.map((id) => ({ id, ref: slackMessageRef(id) }))
+      .filter(({ ref }) => ref && ref.ts && ref.channel === channel)
+      .map(({ id, ref }) => ({ channel, ts: ref.ts, thread: (threads.get(id) || {}).thread || ref.ts, userId: (threads.get(id) || {}).userId || '' }))
+  }
+  stopPresence = () => { for (const open of sessions.values()) clearInterval(open.beat); sessions.clear() }
+  adapter.presence = presence === false ? null : {
+    working(chatId, messageIds) {
+      for (const source of sourcesOf(chatId, messageIds)) {
+        addReactionTo(source.channel, source.ts, 'hourglass_flowing_sand').catch(() => {})
+        if (source.channel.charAt(0) !== 'D') openSession(source.channel, source.thread, source.userId)
+      }
+    },
+    done(chatId, messageIds, answered) {
+      for (const source of sourcesOf(chatId, messageIds)) {
+        removeReactionFrom(source.channel, source.ts, 'hourglass_flowing_sand').catch(() => {})
+        if (answered) addReactionTo(source.channel, source.ts, 'white_check_mark').catch(() => {})
+        if (source.channel.charAt(0) !== 'D') closeSession(source.channel, source.thread)
+      }
+    },
+  }
+  // The channels the bot is in, as bindable conversations (the console's
+  // "bind another project" list). Direct messages are bound by their first
+  // message during setup and are not listed.
+  adapter.listChats = async () => (await fetchSlackChannels(botToken, { fetchImpl }))
+    .map((c) => ({ chatId: slackChatId(c.id), name: '#' + c.name, isPrivate: c.isPrivate }))
+    .filter((c) => c.chatId)
+  // Sending needs no socket, so there is nothing to open before the service
+  // starts serving; a stopped adapter says so.
+  adapter.openOutbound = () => !stopped && !fatal
+  // A line shown in the conversation (console say, service notices): one
+  // attempt, its durable id or null.
+  adapter.send = async (chatId, content) => {
+    const channel = channelOfChat(chatId)
+    if (!channel || typeof content !== 'string' || !content.trim()) return null
+    const parts = partsOf(worded(content, { notice: true }))
+    const response = await deliverOnce(channel, parts, null)
+    return response.code === 0 ? response.data.message_id : null
+  }
+  adapter.reply = async (replyCtx, content) => {
+    const channel = replyCtx ? channelOfChat(replyCtx.chatId) : null
+    if (!channel || typeof content !== 'string' || !content.trim()) return null
+    const thread = typeof replyCtx.threadTs === 'string' && SLACK_TS.test(replyCtx.threadTs) ? replyCtx.threadTs : null
+    const response = await deliverOnce(channel, partsOf(worded(content, { notice: true })), replyInThread ? thread : null)
+    return response.code === 0 ? response.data.message_id : null
+  }
+  return adapter
 }
 
 module.exports = {
   createSlackPlatform,
+  isSlackChatId,
+  isSlackDmChatId,
+  isSlackMessageId,
+  slackChatId,
+  slackChannelOf,
+  slackMessageId,
+  slackControlId,
+  slackMessageRef,
+  splitForSlack,
   createProgressThrottle,
   slackPrecheck,
   fetchSlackChannels,

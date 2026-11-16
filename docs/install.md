@@ -1,14 +1,14 @@
-# Install SintBot 1.4.23
+# Install SintBot 1.4.24
 
 English · [简体中文](./zh-CN/install.md)
 
-You need a Mac, Node.js 22 or newer, and projects stored on that Mac. Install and sign in to at least one runner: Codex or Claude Code. This release connects 1–32 project conversations across Feishu China groups and WeCom chats or groups, binds each conversation to one local project, and runs in the foreground.
+You need a Mac, Node.js 22 or newer, and projects stored on that Mac. Install and sign in to at least one runner: Codex or Claude Code. This release connects 1–32 project conversations across Slack, Feishu China groups and WeCom chats or groups, binds each conversation to one local project, and runs in the foreground.
 
 ## Desktop app
 
 On an Apple silicon Mac, [download SintBot for macOS](https://github.com/sintlab/sintbot-desktop/releases/latest), drag it to Applications and open it. Node.js is included. Choose a project and executor, then start locally, scan with Feishu, or scan with WeCom to create a bot. Closing the window or quitting the app keeps the service running; Stop holds across logins until you choose Start. Remove Background Service preserves configuration and history.
 
-For WeCom, follow the separate [connection and usage guide](./platforms/wecom.md).
+For Slack, follow the [Slack connection and usage guide](./platforms/slack.md); the desktop app adds Slack once it bundles 1.4.24. For WeCom, follow the separate [connection and usage guide](./platforms/wecom.md).
 
 ## 1. Install with one command
 
@@ -16,19 +16,37 @@ For WeCom, follow the separate [connection and usage guide](./platforms/wecom.md
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-The installer checks the environment, installs `sintbot@1.4.23` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.23`. No sudo is needed.
+The installer checks the environment, installs `sintbot@1.4.24` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.24`. No sudo is needed.
 
 To preview, append `-s -- --dry-run`. To choose another location, set `SINTBOT_INSTALL_DIR` and adjust the executable paths below.
 
-## 2. Connect Feishu in the browser (recommended)
-
-Prerequisite: the Feishu app on your phone is signed in with an enterprise or team identity; a personal identity without an organization cannot scan, so create a team first (free). The app created by the scan belongs to the scanner's organization; approval depends on its policies.
+## 2. Connect in the browser (recommended)
 
 ```bash
 "$HOME/.local/share/sintbot/bin/sintbot" start --ui
 ```
 
-Without a configuration file this command does not fail; it opens the local setup page (`http://127.0.0.1:4600`, reachable only from this Mac). Enter a project name (default `sintbot`, created under `~/Projects` with a `README.md`) or pick an existing folder, choose the runner if both are installed, tick the basic option if you are not an organization administrator, then click Start. Scan the QR code on the page with Feishu and confirm on the phone. It then, in order: obtains the app credentials → runs the self-check → opens the contact range and visibility and publishes a version → creates a group and adds you → creates the project folder → writes `~/.sbot/config.json` → initializes the message journals, showing each result on the page. Once the scan is confirmed, the app exists in your organization; any later failed check stops before the folder and the configuration exist and the page offers Retry (it reuses the app already created, never a second one); if the group could not be created, the page asks you to create one by hand, add the bot, paste the group ID and continue.
+Without a configuration file this command does not fail; it opens the local setup page (`http://127.0.0.1:4600`, reachable only from this Mac). Choose a project and an executor, then pick your chat platform. In English the page lists Slack first.
+
+### Slack
+
+Slack has no scan-to-create step, so connecting takes three short steps on the page, with no terminal:
+
+1. Click **Create app in Slack**. Slack opens with the app's permissions and events already filled in; pick your workspace, click **Next**, then **Create**.
+2. On the app's **Basic Information** page, generate an app-level token with the `connections:write` scope and paste it (it starts with `xapp-`). The page checks it at once.
+3. Click **Open install page**, install the app to your workspace, and paste the **Bot User OAuth Token** (it starts with `xoxb-`).
+
+Click **Connect Slack**, then send the bot any message in Slack: a direct message, or an @mention in a channel you invited it to. That conversation is bound to the project, and the service starts.
+
+You need permission to install apps in the workspace; a free workspace you create yourself works. Both tokens are stored in clear text in `~/.sbot/config.json` (file 0600, directory 0700). In Slack, commands start with `!` (`!status`, `!stop`, `!new`), because Slack keeps `/` for itself. The [Slack guide](./platforms/slack.md) has every step, everyday use and troubleshooting.
+
+To add Slack to an installation you already use, open **Settings → Slack** in the console; existing connections, projects and history are kept.
+
+### Feishu
+
+Prerequisite: the Feishu app on your phone is signed in with an enterprise or team identity; a personal identity without an organization cannot scan, so create a team first (free). The app created by the scan belongs to the scanner's organization; approval depends on its policies.
+
+On the setup page, choose **Feishu** under **Chat platform**. Enter a project name (default `sintbot`, created under `~/Projects` with a `README.md`) or pick an existing folder, choose the runner if both are installed, tick the basic option if you are not an organization administrator, then click Start. Scan the QR code on the page with Feishu and confirm on the phone. It then, in order: obtains the app credentials → runs the self-check → opens the contact range and visibility and publishes a version → creates a group and adds you → creates the project folder → writes `~/.sbot/config.json` → initializes the message journals, showing each result on the page. Once the scan is confirmed, the app exists in your organization; any later failed check stops before the folder and the configuration exist and the page offers Retry (it reuses the app already created, never a second one); if the group could not be created, the page asks you to create one by hand, add the bot, paste the group ID and continue.
 
 Before showing the QR code, setup reads the selected executor's live model catalog and displays its recommended model and thinking depth. These choices are saved explicitly for the new group. If the live list is unavailable, setup stops before creating an app; check the executor login and connection, then retry. After connecting, change the choices in the console or with `/model`. Existing group choices are preserved.
 
@@ -210,6 +228,10 @@ If a group stays paused, first restart: a group whose records can recover reopen
 Sealing keeps the old journal unchanged under `incidents/` in the data directory and gives the group a new journal; messages left unfinished before the seal are never processed again. Start the service again to reopen the group. When the service runs in the background (for example under the desktop app), **Seal and continue** on the console overview's "Needs attention" card performs the same seal and the service restarts by itself; it waits until other groups have no task. The service still starts when every group is paused, so the console stays available. A preflight fails while any group would stay paused. Never delete journals or resend to get around a paused group. Run only one connected process per Feishu app. This release does not register a background service.
 
 [Illustrated website guide](https://sintbot.com/guide/install/) · [AI-assisted installation](./AI-ASSISTED-INSTALL.md)
+
+## Connect Slack
+
+Choose Slack on the first-launch setup page, or add it from Settings in an existing console. Follow the [Slack connection guide](./platforms/slack.md) to create the app, paste the two tokens, bind a conversation and send the first task.
 
 ## Connect WeCom
 

@@ -1,5 +1,32 @@
 [
   {
+    "version": "1.4.24",
+    "date": "2026-11-16",
+    "name": "Slack",
+    "items": [
+      {
+        "t": "Use SintBot in Slack",
+        "d": "Message the bot directly, or @mention it in a channel. Answers arrive in the direct message, or in a thread under your message. It connects over Socket Mode, needs no public address and works in free workspaces."
+      },
+      {
+        "t": "Three steps, no terminal",
+        "d": "Choose Slack on the setup page or in console Settings: create your own app from a link that is already filled in, paste two tokens, then send the bot one message to bind the project. A token pasted in the wrong field is named at once."
+      },
+      {
+        "t": "See that it is working",
+        "d": "While a task runs your message shows ⏳ and a channel thread shows a Stop button; ⏳ becomes ✅ when the answer arrives. A follow-up sent during the task gets ⏳ too once it is read."
+      },
+      {
+        "t": "Commands start with !",
+        "d": "Slack keeps / for its own commands, so use !status, !stop, !skip, !new and !model; outside threads /sint stop works too. Images and files sent with a task are saved on your Mac for the task."
+      },
+      {
+        "t": "Create a Feishu group from the console",
+        "d": "Groups · Projects → Set up a group project can now create a new Feishu group and select it for binding, without creating it in Feishu first."
+      }
+    ]
+  },
+  {
     "version": "1.4.23",
     "date": "2026-11-14",
     "name": "Smoother WeCom settings",

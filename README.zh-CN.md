@@ -20,7 +20,7 @@
 
 ---
 
-SintBot 是跑在你自己 Mac 上的个人 AI 助理。在飞书或 Slack 里交代一句,它就在你的电脑上把事做完:读代码、改代码、做设计、跑脚本,再把结果回到聊天里。一个人用,它是只有你和它的群里的助理;拉进团队的项目群,它是群里谁都能派活的同事。两种用法都是一个群绑一个项目目录,全程在你自己的机器上。
+SintBot 是跑在你自己 Mac 上的个人 AI 助理。在飞书、企业微信或 Slack 里交代一句,它就在你的电脑上把事做完:读代码、改代码、做设计、跑脚本,再把结果回到聊天里。一个人用,它是只有你和它的群里的助理;拉进团队的项目群,它是群里谁都能派活的同事。两种用法都是一个群绑一个项目目录,全程在你自己的机器上。
 
 SintBot 通过 **Claude Code** 或 **Codex** 执行项目任务，接入工具、MCP、skills 和项目说明。执行器与模型按群选择：Claude Code 可使用 Claude，也可接 GLM、MiniMax、DeepSeek 等兼容服务；Codex 对应 GPT 模型。
 
@@ -45,7 +45,7 @@ curl -fsSL https://sintbot.com/install.sh | bash
 
 脚本会检查环境、安装 SintBot 并验证结果，不用 `sudo`。也可以先读 [install.sh](./install.sh)。安装本身不登录模型账号、不连接群，也不启动服务。
 
-**2. 接入群和项目。** 运行 `sintbot start --ui`，浏览器会打开本机接入页；填项目名、用企业/团队身份的飞书扫码，它会创建应用、项目目录和群，写好配置并直接启动。终端里也可以用 `sintbot connect`。参数、手动路径和启动步骤见[安装指南](https://sintbot.com/zh/guide/install/)。
+**2. 接入群和项目。** 运行 `sintbot start --ui`，浏览器会打开本机接入页；填项目名、选聊天平台。飞书：用企业/团队身份扫码，它会创建应用、项目目录和群。企业微信：扫码创建机器人，再给它发一句话。Slack：用已经填好的链接创建应用，粘贴两枚令牌，再给机器人发一句话。接入完成后写好配置并直接启动。终端里也可以用 `sintbot connect`。参数、手动路径和启动步骤见[安装指南](https://sintbot.com/zh/guide/install/)。
 
 想让本机 AI 助手帮忙安装并完成首次使用？先看 [AI 安装与首次使用说明](./docs/zh-CN/AI-ASSISTED-INSTALL.md)。
 
@@ -57,7 +57,7 @@ curl -fsSL https://sintbot.com/install.sh | bash
 
 飞书只允许企业或团队身份创建应用，个人身份的飞书账号要先建一个团队，免费。
 
-Slack 上用法相同：在频道里，或者直接和机器人私聊；工作区可以自己免费建一个。当前安装包能接入哪些平台，见[安装指南](./docs/zh-CN/install.md)。
+企业微信和 Slack 上用法相同：直接和机器人私聊，或者在群、频道里 @它；Slack 工作区可以自己免费建一个。当前安装包能接入哪些平台，见[安装指南](./docs/zh-CN/install.md)；Slack 的步骤见 [Slack 接入指南](./docs/zh-CN/platforms/slack.md)。
 
 ### 选模型：不绑定单一服务商
 

@@ -591,6 +591,7 @@ label.f{display:block;font-size:12px;line-height:18px;font-weight:500;color:var(
 /* 卡内分区小标题(凭证 / 身份 / 访问地址) */
 .fx-sub{font-size:12px;line-height:18px;font-weight:600;color:var(--dim);margin:16px 0 8px;display:flex;align-items:center;gap:10px}
 /* 设置 → 添加企业微信:扫码二维码与手动折叠区 */
+.sa-step{display:flex;gap:10px;align-items:flex-start;margin-top:14px}.sa-num{flex:none;width:22px;height:22px;border-radius:50%;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:var(--muted)}.sa-body{flex:1;min-width:0}.sa-title{font-weight:600;font-size:13px;line-height:22px}.sa-body .hint{margin:2px 0 0}.sa-body input{flex:1;min-width:0}.sa-note:empty{display:none}.sa-note.bad{color:var(--fail)}
 .wa-actions{flex-wrap:wrap;gap:8px;margin-bottom:8px}.wa-qr{display:flex;justify-content:flex-start;margin:12px 0 4px}.wa-qr svg{display:block;width:min(200px,100%);height:auto;aspect-ratio:1;background:#fff;border:8px solid #fff;border-radius:8px;shape-rendering:crispEdges}#wecomAttachCard .hint{overflow-wrap:anywhere}.wa-off{display:none!important}
 .fx-sub::after{content:"";flex:1;height:1px;background:var(--line)}
 /* 预检结果清单 */
@@ -4135,6 +4136,7 @@ function renderSettings(){
   $('#settings').innerHTML=`<div class="stoc" id="setToc" role="navigation" aria-label="本页内容"></div><div class="grid cols2 stagger">
     ${fxFeishuCard(fe)}
     ${S.runtimeCapabilities?fxWecomAttachCard():''}
+    ${S.runtimeCapabilities?fxSlackAttachCard():''}
     ${fxFeishuAccessCard(fe)}
     ${netCard}
     <div class="card"><div class="lbl">运行限制</div>
@@ -4194,7 +4196,7 @@ function renderSettings(){
     catch(e){toast(e.message,'err');}};
   // 只开着控制台的守护进程(还没接平台):第一次接上平台时说一句接下来会发生什么(服务托管的会自己重启连上)
   {const pl=S.platforms||{};if(S.setupMode&&(pl.feishu||pl.slack||pl.wecom)&&!window._sbRestartToast){window._sbRestartToast=1;toast(S.setupMode.supervised?'已接上聊天平台 —— 后台服务几秒后自动重启并连上':'已接上聊天平台 —— 在终端里重启 sintbot start --ui 连上','ok');}}
-  bindWecomCard(); bindWecomAttachCard();
+  bindWecomCard(); bindWecomAttachCard(); bindSlackAttachCard();
   bindFxFolds();
   const lo=$('#logoutBtn');if(lo)lo.onclick=async()=>{try{await api('/api/logout','POST',{});}catch{}dropToken();TOKEN='';location.reload();};
   const la=$('#logoutAllBtn');if(la)la.onclick=async()=>{try{const r=await api('/api/logout/all','POST',{});toast('已退出 '+(r.n||0)+' 个登录','ok');}catch(e){toast(e.message,'err');return;}dropToken();TOKEN='';setTimeout(()=>location.reload(),600);};
@@ -4418,6 +4420,110 @@ function bindWecomAttachCard(){
  if(!WA.loaded){WA.loaded=true;api('/api/wecom/attach').then(j=>{if(j&&j.phase==='running'){WA.job=j;waPaint();void waPoll();}}).catch(()=>{});}
  waPaint();
 }
+/* 设置 → 添加 Slack:Slack 没有扫码建应用,所以是三步 —— 用预填清单的链接建应用、粘贴应用级令牌、安装后粘贴 Bot Token,
+   然后在 Slack 里给机器人发一句话绑定项目。两枚令牌先在服务端逐枚验证(结论和文案出自内置核心),接入任务在服务端跑,
+   页面只轮询状态;令牌提交后立刻从输入框清掉,任何响应里都不回传。 */
+const SA={job:null,polling:false,loaded:false,app:null,create:null};
+function slackConnText(c){
+  if(!c)return '服务还没有连接 Slack';
+  const bits=[connDetail(c)];
+  if(c.lastEventAt){const s=Math.max(0,Math.round((Date.now()-c.lastEventAt)/1000));bits.push('最近事件 '+(s<60?s+' 秒前':Math.round(s/60)+' 分钟前'));}
+  if(c.fatal)bits.push('令牌已失效，需要重新接入');
+  return bits.join(' · ');
+}
+function saStatusPill(){
+ const on=!!(S.platforms&&S.platforms.slack),c=connDict(S.conn).slack,st=on?connStatus(c):'',running=!!(SA.job&&SA.job.phase==='running');
+ const txt=running?'接入中':!on?'尚未接入':st==='ok'?'已连接':st==='warn'?(c?'连接中':'等待连接'):'连接中断';
+ const dot=running?'warn':!on?'skip':st;
+ return `<span class="fx-status ${on&&st==='ok'?'on':''}" id="saPill"><span class="dot ${dot}"></span>${txt}</span>`;
+}
+function fxSlackAttachCard(){
+ const head=`<div class="feishu-heading"><div class="lbl">${platLogo('slack')}Slack</div>${saStatusPill()}</div>`;
+ const guide=(label,ext)=>`<a class="btn" data-guide="install/#slack" href="${guideBase()}install/#slack" target="_blank" rel="noopener">${label}${ext?' '+IC.ext:''}</a>`;
+ if(S.platforms&&S.platforms.slack){
+  const sl=S.slack||{},c=connDict(S.conn).slack,bound=(S.groups||[]).filter(g=>g.platform==='slack');
+  const settings=sl.appId?`https://api.slack.com/apps/${encodeURIComponent(sl.appId)}/general`:'https://api.slack.com/apps';
+  return `<div class="card feishu-setup" id="slackStatusCard" style="grid-column:1/-1">${head}
+   <div class="kv"><span class="kk">工作区</span><span class="vv">${esc(sl.team||'Slack 工作区')}</span></div>
+   <div class="kv"><span class="kk">已绑定项目</span><span class="vv">${bound.length}</span></div>
+   <div class="kv"><span class="kk">消息响应</span><span class="vv">私聊直接回复，频道里回复 @ 机器人的消息；命令以 ! 开头</span></div>
+   <div class="feishu-actions"><button class="btn primary" data-gotab="groups">管理项目</button><a class="btn" data-guide="usage/#slack-workflow" href="${guideBase()}usage/#slack-workflow" target="_blank" rel="noopener">查看使用指南</a></div>
+   <details class="feishu-details"><summary>高级：应用信息与连接</summary>
+    <div class="kv"><span class="kk">App ID</span><span class="vv">${esc(sl.appId||'未记录')}</span></div>
+    <div class="kv"><span class="kk">应用凭据</span><span class="vv">已设置，不显示令牌</span></div>
+    <div class="kv"><span class="kk">连接</span><span class="vv" id="sConnLine">${esc(slackConnText(c))}</span></div>
+    <p class="hint">再绑一个项目：在 Slack 的目标频道里发 /invite @机器人名 把它请进频道，再到「群 · 项目 → 配置群项目」选这个频道。每个 Slack 应用只由一台 SintBot 连接；令牌只保存在这台 Mac。</p>
+    <div class="feishu-actions"><button class="btn" id="saRetryConnection">刷新连接状态</button><a class="btn" href="${esc(settings)}" target="_blank" rel="noopener">打开 Slack 应用设置 ${IC.ext}</a>${guide('查看完整安装指南',true)}</div>
+   </details></div>`;
+ }
+ const provs=(S.providers||[]).filter(p=>!p.hidden&&(S.wecomAttachProviders||[]).includes(p.name)&&['codex','claude'].includes(p.runner||'claude'));
+ const root=(S.projectsRoots&&S.projectsRoots[0])||'';
+ return `<div class="card feishu-setup" id="slackAttachCard" style="grid-column:1/-1">${head}
+  <p class="hint">在 Slack 创建你自己的应用，粘贴两枚令牌，再给它发一句话就绑定项目。现有连接和项目都保留。</p>
+  <div class="field" style="margin-top:12px"><label for="saWorkdir">项目目录</label><div class="feishu-actions" style="margin:0"><input id="saWorkdir" placeholder="${esc(root?root.replace(/\/+$/,'')+'/my-project':'选择已有项目的完整目录')}" spellcheck="false" autocomplete="off"><button class="btn" id="saBrowse" type="button">${IC.folder} 选择…</button></div></div>
+  <div class="field"><label for="saProvider">执行器</label><select id="saProvider">${provs.map(({name})=>`<option value="${esc(name)}"${name===S.defaultProvider?' selected':''}>${esc(name)}</option>`).join('')}</select>${provs.length?'':'<div class="hint" style="margin-top:5px">没有可用的执行器：先在「模型 · 库」里登录 Codex 或 Claude Code。</div>'}</div>
+  <div class="sa-step"><div class="sa-num">1</div><div class="sa-body"><div class="sa-title">创建 Slack 应用</div>
+   <p class="hint">权限和事件已经填好。在打开的页面里选择工作区，点 Next，再点 Create。</p>
+   <div class="feishu-actions" style="margin:8px 0 0"><input id="saName" value="SintBot" maxlength="35" aria-label="应用名称" spellcheck="false" autocomplete="off" style="max-width:180px"><button class="btn primary" id="saCreate">在 Slack 创建应用 ${IC.ext}</button></div></div></div>
+  <div class="sa-step"><div class="sa-num">2</div><div class="sa-body"><div class="sa-title">粘贴应用级令牌</div>
+   <p class="hint">创建后停在 Basic Information 页：往下找到 App-Level Tokens，点 Generate Token and Scopes，权限选 connections:write，生成后复制 xapp- 开头的令牌。</p>
+   <div class="feishu-actions" style="margin:8px 0 0"><input id="saAppToken" type="password" placeholder="xapp-…" aria-label="应用级令牌" autocomplete="off" spellcheck="false"><button class="btn" id="saCheckApp">验证</button></div>
+   <p class="hint sa-note" id="saAppNote" role="status" aria-live="polite"></p></div></div>
+  <div class="sa-step"><div class="sa-num">3</div><div class="sa-body"><div class="sa-title">安装并粘贴 Bot Token</div>
+   <p class="hint">打开安装页，点 Install to 加工作区名的按钮，再点 Allow；然后复制 Bot User OAuth Token（xoxb- 开头）。</p>
+   <div class="feishu-actions" style="margin:8px 0 0"><a class="btn" id="saInstall" href="https://api.slack.com/apps" target="_blank" rel="noopener">打开安装页 ${IC.ext}</a><input id="saBotToken" type="password" placeholder="xoxb-…" aria-label="Bot Token" autocomplete="off" spellcheck="false"></div></div></div>
+  <div class="feishu-actions"><button class="btn primary" id="saStart">连接并绑定项目</button><button class="btn wa-off" id="saCancel">取消接入</button><a class="btn wa-off" id="saOpen" href="https://slack.com/" target="_blank" rel="noopener">在 Slack 里打开机器人 ${IC.ext}</a>${guide('查看 Slack 接入指南',false)}</div>
+  <p class="hint" id="saStatus" role="status" aria-live="polite" style="margin-top:8px">连接后在 Slack 里给机器人发一句话（私聊，或在已邀请它的频道里 @它）即可完成接入。令牌只保存在这台 Mac。</p>
+ </div>`;
+}
+function saPaint(){
+ const card=$('#slackAttachCard');if(!card)return;const j=SA.job,running=!!(j&&j.phase==='running');
+ if(j&&j.notice)$('#saStatus').textContent=j.notice;
+ $('#saCancel').classList.toggle('wa-off',!running);$('#saStart').disabled=running;$('#saCheckApp').disabled=running;$('#saCreate').disabled=running;
+ for(const id of ['saWorkdir','saProvider','saBrowse','saName','saAppToken','saBotToken'])if($('#'+id))$('#'+id).disabled=running;
+ const open=$('#saOpen'),link=running&&j.open&&j.open.web;open.classList.toggle('wa-off',!link);if(link)open.href=j.open.web;
+ if(SA.app&&SA.app.links)$('#saInstall').href=SA.app.links.install;
+ const pill=$('#saPill');if(pill)pill.outerHTML=saStatusPill();
+}
+async function saPoll(){
+ if(SA.polling)return;SA.polling=true;
+ try{for(let i=0;i<1200&&SA.job&&SA.job.phase==='running';i++){await new Promise(r=>setTimeout(r,2000));try{SA.job=await api('/api/slack/attach')}catch(e){break}saPaint();}
+  if(SA.job&&SA.job.phase==='done'){SA.app=null;S=await api('/api/state');renderAll();toast('Slack 已添加','ok')}}
+ catch(e){toast(e.message,'err')}finally{SA.polling=false;saPaint();}
+}
+function bindSlackAttachCard(){
+ if($('#saRetryConnection'))$('#saRetryConnection').onclick=async()=>{try{await api('/api/slack/attach/retry','POST',{});S=await api('/api/state');renderAll();toast('Slack 已连接','ok')}catch(e){toast(e.message,'err')}};
+ if(!$('#saStart'))return;
+ const say=(id,text,bad)=>{const el=$('#'+id);el.textContent=text;el.classList.toggle('bad',!!bad);};
+ $('#saBrowse').onclick=()=>openFsPicker(p=>{if(p)$('#saWorkdir').value=p;});
+ $('#saCancel').onclick=async()=>{try{await api('/api/slack/attach/cancel','POST',{});}catch(e){toast(e.message,'err')}};
+ // 建应用的链接由核心生成(清单的权限与事件在核心里)。先同步打开一个窗口再填地址:等接口返回后再开会被浏览器当成弹窗拦掉。
+ $('#saCreate').onclick=async()=>{const w=window.open('about:blank','_blank');
+  try{const r=await api('/api/slack/manifest?name='+encodeURIComponent($('#saName').value.trim()));
+   if(w)w.location.href=r.createUrl;else location.href=r.createUrl;
+   say('saAppNote',r.hint,false);}
+  catch(e){if(w)w.close();say('saAppNote',e.message,true);}};
+ const checkApp=async()=>{const appToken=$('#saAppToken').value.trim();
+  if(!appToken){say('saAppNote','请先粘贴应用级令牌',true);$('#saAppToken').focus();return null;}
+  $('#saCheckApp').disabled=true;
+  try{const r=await api('/api/slack/verify','POST',{appToken});say('saAppNote',r.notice,!r.ok);
+   SA.app=r.ok?{appId:r.appId,links:r.links}:null;if(r.ok&&r.links)$('#saInstall').href=r.links.install;return r.ok?r:null;}
+  catch(e){say('saAppNote',e.message,true);return null;}
+  finally{$('#saCheckApp').disabled=false;}};
+ $('#saCheckApp').onclick=()=>{void checkApp();};
+ // 粘贴进来就验一次:下一步的安装页链接要靠令牌里的应用 ID
+ $('#saAppToken').addEventListener('paste',()=>setTimeout(()=>{void checkApp();},0));
+ $('#saStart').onclick=()=>{const workdir=$('#saWorkdir').value.trim(),provider=$('#saProvider').value;
+  if(!workdir||!workdir.startsWith('/')){$('#saStatus').textContent='请选择已有项目目录';$('#saWorkdir').focus();return;}
+  if(!provider){$('#saStatus').textContent='没有可用的执行器';return;}
+  const appToken=$('#saAppToken').value.trim(),botToken=$('#saBotToken').value.trim();
+  if(!appToken||!botToken){$('#saStatus').textContent='请先粘贴应用级令牌和 Bot Token';(appToken?$('#saBotToken'):$('#saAppToken')).focus();return;}
+  $('#saAppToken').value='';$('#saBotToken').value='';
+  (async()=>{try{SA.job=await api('/api/slack/attach','POST',{workdir,provider,appToken,botToken});saPaint();void saPoll();}
+   catch(e){$('#saStatus').textContent=e.message;}})();};
+ if(!SA.loaded){SA.loaded=true;api('/api/slack/attach').then(j=>{if(j&&j.phase==='running'){SA.job=j;saPaint();void saPoll();}}).catch(()=>{});}
+ saPaint();
+}
 function fxWecomCard(we){
   const on=!!(we&&(we.botId||we.botIdRef)&&we.secretStatus!=='none');
   const namesText=we?Object.entries(we.names||{}).map(([k,v])=>k+' '+v).join('\n'):'';
@@ -4558,7 +4664,7 @@ function fxSlackCard(sl){
       <div class="fx-body">
         <div class="fx-step"><span class="n">1</span><span class="t">后台点 <b>Create New App → From an app manifest</b>,粘贴随产品附带的 manifest 模板(<a class="lnk2" href="https://github.com/sintlab/sintbot/blob/main/docs/slack-app-manifest.yaml" target="_blank" rel="noopener">slack-app-manifest.yaml</a>)。⚠ <b>每台机器各建一个应用</b> —— 长连接是随机分发不是广播,两台共用一个应用会让消息随机落到其中一台,表现为「时灵时不灵」。</span></div>
         <div class="fx-step"><span class="n">2</span><span class="t"><b>Basic Information → App-Level Tokens → Generate</b>,勾 <code>connections:write</code>,拿到 <code>xapp-</code> 开头那个(只用来建长连接)。</span></div>
-        <div class="fx-step"><span class="n">3</span><span class="t"><b>OAuth &amp; Permissions → Install to Workspace</b>,拿到 <code>xoxb-</code> 开头那个(收发消息用的就是它)。</span></div>
+        <div class="fx-step"><span class="n">3</span><span class="t"><b>OAuth &amp; Permissions → Install to &lt;workspace&gt;</b>,拿到 <code>xoxb-</code> 开头那个(收发消息用的就是它)。</span></div>
         <div class="fx-step"><span class="n">4</span><span class="t">到要用的频道里发 <code>/invite @机器人</code>。<b>不做这步一条消息都收不到</b>,而且频道也不会出现在下面的绑定列表里。</span></div>
         <div class="fx-step"><span class="n">5</span><span class="t">⚠ 之后<b>改权限或事件订阅,必须重新安装</b>才生效(与飞书的「发版」同性质)。不重装的典型症状是 <b>事件静默不来</b> —— 不报错、只是什么都没发生。</span></div>
       </div>
@@ -4844,6 +4950,7 @@ function updateConnLive(){
   const d=connDict(S.conn);
   // 设置页企微卡的「身份与连接」条先同步(就地改文案,不重渲染表单 —— 用户可能正在填);放在最前:下面概览那段遇到行增减会整卡重画后 return
   {const wp=$('#waPill'); if(wp)wp.outerHTML=waStatusPill();}
+  {const sp=$('#saPill'); if(sp)sp.outerHTML=saStatusPill(); const sl=$('#sConnLine'); if(sl)sl.textContent=slackConnText(d.slack);}
   {const wl=$('#wConnLine'); if(wl){const c=d.wecom; wl.textContent=wecomConnText(c); const ws=$('#wConnSt'); if(ws){const st=connStatus(c); ws.className='fx-ident-st '+(st==='ok'?'on':(st==='fail'?'off':'')); ws.textContent=c?(c.state==='connected'?'长连接在线':connDetail(c)):'未连接';}}}
   if(!$('#overview').innerHTML)return;
   for(const [k,label] of Object.entries(CONN_LABEL)){
@@ -4925,6 +5032,72 @@ updateThemeBtn();
    ⚠ 正则一律 ^…$ 整串、不加 g 标志;更具体的条目必须排在泛化条之前。 */
 const I18N_EN=[
   ["执行器","Executor"],
+  // Slack 卡(设置页)与 Slack 接入的服务端提示
+  ["在 Slack 创建你自己的应用，粘贴两枚令牌，再给它发一句话就绑定项目。现有连接和项目都保留。", "Create your own app in Slack, paste two tokens, then send it one message to bind the project. Existing connections and projects are kept."],
+  ["创建 Slack 应用", "Create the Slack app"],
+  ["权限和事件已经填好。在打开的页面里选择工作区，点 Next，再点 Create。", "Scopes and events are already filled in. On the page that opens, pick a workspace, choose Next, then Create."],
+  ["在 Slack 创建应用", "Create app in Slack"],
+  ["粘贴应用级令牌", "Paste the app-level token"],
+  ["创建后停在 Basic Information 页：往下找到 App-Level Tokens，点 Generate Token and Scopes，权限选 connections:write，生成后复制 xapp- 开头的令牌。", "After creating, you land on Basic Information. Scroll to App-Level Tokens, choose Generate Token and Scopes, add the connections:write scope, generate, then copy the token that starts with xapp-."],
+  ["应用级令牌", "App-level token"],
+  ["验证", "Check"],
+  ["安装并粘贴 Bot Token", "Install and paste the bot token"],
+  ["打开安装页，点 Install to 加工作区名的按钮，再点 Allow；然后复制 Bot User OAuth Token（xoxb- 开头）。", "Open the install page, choose the Install to button named after your workspace, then Allow. Then copy the Bot User OAuth Token (starts with xoxb-)."],
+  ["打开安装页", "Open install page"],
+  ["在 Slack 里打开机器人", "Open the bot in Slack"],
+  ["查看 Slack 接入指南", "Read the Slack setup guide"],
+  ["连接后在 Slack 里给机器人发一句话（私聊，或在已邀请它的频道里 @它）即可完成接入。令牌只保存在这台 Mac。", "After connecting, send the bot any message in Slack (a direct message, or @mention it in a channel it has been invited to) to finish. The tokens stay on this Mac."],
+  ["Slack 已添加", "Slack added"],
+  ["Slack 已连接", "Slack connected"],
+  ["工作区", "Workspace"],
+  ["Slack 工作区", "Slack workspace"],
+  ["私聊直接回复，频道里回复 @ 机器人的消息；命令以 ! 开头", "Replies in direct messages, and to @mentions in channels; commands start with !"],
+  ["高级：应用信息与连接", "Advanced: app details and connection"],
+  ["未记录", "Not recorded"],
+  ["已设置，不显示令牌", "Set; tokens are not shown"],
+  ["再绑一个项目：在 Slack 的目标频道里发 /invite @机器人名 把它请进频道，再到「群 · 项目 → 配置群项目」选这个频道。每个 Slack 应用只由一台 SintBot 连接；令牌只保存在这台 Mac。", "To bind another project, send /invite @your-bot-name in the Slack channel you want, then pick that channel in Groups · Projects → Set up a group project. Each Slack app connects to one SintBot only; the tokens stay on this Mac."],
+  ["打开 Slack 应用设置", "Open Slack app settings"],
+  ["服务还没有连接 Slack", "The service has not connected to Slack yet"],
+  ["令牌已失效，需要重新接入", "The tokens are no longer valid; connect again"],
+  ["应用级令牌可用。", "The app-level token works."],
+  ["这枚应用级令牌的格式不完整，请回到 Basic Information → App-Level Tokens 重新复制整枚令牌。", "This app-level token is incomplete. Go back to Basic Information → App-Level Tokens and copy the whole token again."],
+  ["应用级令牌无效或已撤销：到 Basic Information → App-Level Tokens 重新生成一枚，权限选 connections:write。", "The app-level token is invalid or revoked. Generate a new one under Basic Information → App-Level Tokens with the connections:write scope."],
+  ["这枚应用级令牌没有 connections:write 权限：到 Basic Information → App-Level Tokens 重新生成并选上它。", "This app-level token lacks the connections:write scope. Generate a new one under Basic Information → App-Level Tokens and add that scope."],
+  ["还没有验证应用级令牌，请再试一次。", "The app-level token has not been checked yet. Try again."],
+  ["Bot Token 无效或已撤销：到 OAuth & Permissions 重新安装应用，再复制新的 Bot User OAuth Token。", "The bot token is invalid or revoked. Reinstall the app under OAuth & Permissions, then copy the new Bot User OAuth Token."],
+  ["还没有验证 Bot Token，请再试一次。", "The bot token has not been checked yet. Try again."],
+  ["两枚令牌来自不同的 Slack 应用。请从同一个应用的设置页复制应用级令牌和 Bot Token。", "The two tokens belong to different Slack apps. Copy the app-level token and the bot token from the same app."],
+  ["已连接 Slack。", "Connected to Slack."],
+  ["Slack 已连接，在 Slack 里给机器人发任务即可：私聊直接发，频道里 @它。", "Slack is connected. Send the bot a task in Slack: message it directly, or @mention it in a channel."],
+  ["在打开的 Slack 页面里选择工作区，点 Next，再点 Create。需要你有在该工作区安装应用的权限；没有的话可以先新建一个免费工作区。", "On the Slack page that opened, pick a workspace, choose Next, then Create. You need permission to install apps there; if you do not have it, create a free workspace first."],
+  ["Slack 接入不能携带其他平台的凭据", "A Slack connection cannot carry another platform’s credentials."],
+  ["请填写 Bot Token（xoxb- 开头）", "Enter the bot token (starts with xoxb-)."],
+  ["请填写应用级令牌（xapp- 开头）", "Enter the app-level token (starts with xapp-)."],
+  ["请选择 Slack 频道或私聊", "Choose a Slack channel or direct message."],
+  ["Slack 应用信息格式无效", "The Slack app details are not valid."],
+  ["已经接入 Slack，请使用已有连接", "Slack is already connected. Use the existing connection."],
+  ["该会话已绑定或项目数量已达上限", "This conversation is already bound, or the project limit has been reached."],
+  ["请填写应用级令牌和 Bot Token", "Enter the app-level token and the bot token."],
+  ["请先粘贴应用级令牌", "Paste the app-level token first."],
+  ["请先粘贴应用级令牌和 Bot Token", "Paste the app-level token and the bot token first."],
+  ["等待消息超时，请在 Slack 里给机器人发一句话后重试", "No message arrived. Send the bot a message in Slack, then retry."],
+  ["Slack 连接不可用，请检查两枚令牌是否仍然有效", "The Slack connection is unavailable. Check that both tokens are still valid."],
+  ["连不上 Slack，请检查网络或代理后重试", "Could not reach Slack. Check your network or proxy and retry."],
+  ["Slack 连接失败，请检查令牌和网络", "Could not connect to Slack. Check the tokens and your network."],
+  ["Slack 连接尚未完全关闭，请稍后重试", "The Slack connection has not closed yet. Please retry shortly."],
+  ["在 Slack 里给机器人发一句话（私聊，或在已邀请它的频道里 @它）即可完成接入。", "Send the bot any message in Slack (a direct message, or @mention it in a channel it has been invited to) to finish."],
+  ["Slack 仍未连接，请检查网络、代理或两枚令牌是否仍然有效", "Slack is still disconnected. Check the network, the proxy and whether both tokens are still valid."],
+  ["Slack 接入正在进行", "Slack setup is in progress."],
+  ["配置已保存，Slack 尚未连接成功；请在设置中刷新连接状态，勿重复添加", "Configuration saved, but Slack has not connected. Refresh connection status in Settings instead of adding it again."],
+  ["Slack 接入不可用", "Slack setup is unavailable."],
+  ["当前服务不能添加 Slack 连接", "This service cannot add a Slack connection."],
+  ["正在验证两枚令牌…", "Checking both tokens…"],
+  ["Slack 已添加，请在 Slack 里发送任务。", "Slack added. Send your tasks in Slack."],
+  ["Slack 接入失败", "Slack setup failed."],
+  ["Slack 连接已存在", "A Slack connection already exists."],
+  ["这里只列出机器人已加入的频道。先在 Slack 的目标频道里发 /invite @机器人名，再刷新。", "Only channels the bot has joined are listed. In the Slack channel you want, send /invite @your-bot-name, then refresh."],
+  ["应用缺少列出频道的权限（channels:read / groups:read），补上后需重新安装", "The app lacks the scopes to list channels (channels:read / groups:read). Add them and reinstall."],
+  ["读取 Slack 频道失败，请检查网络或代理后重试", "Could not read Slack channels. Check your network or proxy and retry."],
   ["添加企业微信", "Add WeCom"],
   ["机器人名称", "Bot name"],
   ["企业微信智能机器人", "WeCom smart bot"],
@@ -6391,6 +6564,17 @@ const I18N_EN=[
   ["本页内容", "On this page"],
 ];
 const I18N_EN_RX=[
+  // Slack 接入:带动态内容的提示(核心给出的令牌结论、连接状态)
+  [/^最近事件 (\d+) 秒前$/,"Last event $1 s ago"],
+  [/^最近事件 (\d+) 分钟前$/,"Last event $1 min ago"],
+  [/^请粘贴(应用级令牌|Bot Token)（x(?:app|oxb)- 开头），在应用设置的 (.+)。$/,(m,kind,place)=>"Paste the "+(kind==='Bot Token'?'bot token (starts with xoxb-)':'app-level token (starts with xapp-)')+". It is under "+place+" in the app settings."],
+  [/^这里要填(应用级令牌|Bot Token)（x(?:app|oxb)- 开头），你贴的是\s?(.+)。它在应用设置的 (.+)。$/,(m,kind,pasted,place)=>"This field takes the "+(kind==='Bot Token'?'bot token (starts with xoxb-)':'app-level token (starts with xapp-)')+". You pasted "+(/^应用级令牌/.test(pasted)?'the app-level token (starts with xapp-), so the two fields are swapped':/^Bot Token/.test(pasted)?'the bot token (starts with xoxb-), so the two fields are swapped':/^用户令牌/.test(pasted)?'a user token (starts with xoxp-)':/^配置令牌/.test(pasted)?'a configuration token (starts with xoxe; it manages apps and cannot send or receive messages)':/^开了令牌轮换/.test(pasted)?'a rotating token (starts with xoxe.). SintBot needs a token without rotation; create a new app from the link on this page':'something else')+". It is under "+place+" in the app settings."],
+  [/^连不上 Slack（(.+)）：检查网络或代理后再试一次。$/,"Could not reach Slack ($1). Check your network or proxy and try again."],
+  [/^Slack 拒绝了这枚应用级令牌（(.+)）。请确认应用是用本页的链接创建的，并已开启 Socket Mode。$/,"Slack refused this app-level token ($1). Make sure the app was created from the link on this page and that Socket Mode is on."],
+  [/^Slack 拒绝了这枚 Bot Token（(.+)）。$/,"Slack refused this bot token ($1)."],
+  [/^应用缺少必需权限：(.+)。请用本页的链接重新创建应用，或在应用的 App Manifest 页补上后重新安装。$/,(m,list)=>"The app is missing required scopes: "+list.split('、').join(', ')+". Create the app again from the link on this page, or add them on the App Manifest page and reinstall."],
+  [/^已连接，但应用少了这些权限：(.+)。可以继续使用；要补上需在应用的 App Manifest 页添加后重新安装。$/,(m,list)=>"Connected, but the app lacks these scopes: "+list.replace(/（[^）]*）/g,'').split('；').join(', ')+". You can keep going; to add them, edit the App Manifest page and reinstall."],
+  [/^已连接 Slack 工作区「(.+)」。$/,"Connected to the Slack workspace “$1”."],
   [/^排队 (\d+)$/,(_,n)=>`${n} queued`],
   /* 群卡「速度」:Fast 代价那句(服务端 fastNote)与开 Fast 后 toast 里的深度段 */
   [/^Fast：((?:(?! · ).)+)$/,(_,n)=>'Fast: '+(trSeg(n)||n)],   // 只吃到「 · 」之前,整句交给拆段
@@ -6876,7 +7060,7 @@ async function fetchCodexModels(){if(CX_MODELS)return CX_MODELS;try{CX_MODELS=aw
 function cxDefEffortLabel(model){const m=CX_MODELS&&(CX_MODELS.models||[]).find(x=>x.model===model);return '默认'+(m&&m.defEffort?'('+m.defEffort+')':'');}
 /* 有 codex provider 时启动即预热模型列表(server 缓存 10min)→ 卡片默认档标注补齐 + 面板秒开 */
 function warmCodexModels(){if(!CX_MODELS&&S&&(S.providers||[]).some(x=>x.runner==='codex'&&!x.hidden))fetchCodexModels().then(()=>renderProviders());}
-const RUNTIME_DISABLED_SELECTORS='.gpv,[data-rm],[data-gcfg],[data-cronnew],[data-cronadd],[data-crontgl],[data-cronrm],[data-reposave],[data-repotest],[data-iconuse],[data-iconsys],[data-iconstyle],[data-stylecollect],#mNewChat,#amDel,#mNewGo,#pgSend,#pgNew,#fSave,#slSave,#wSave,#bSave,#styleNew,[data-styleedit],[data-styledup],[data-styledel],#nsSave,#nsExtract,#clSave,[data-pvstop],[data-lvkill],[data-lvkillall]';
+const RUNTIME_DISABLED_SELECTORS='.gpv,[data-rm],[data-gcfg],[data-cronnew],[data-cronadd],[data-crontgl],[data-cronrm],[data-reposave],[data-repotest],[data-iconuse],[data-iconsys],[data-iconstyle],[data-stylecollect],#amDel,#pgSend,#pgNew,#fSave,#slSave,#wSave,#bSave,#styleNew,[data-styleedit],[data-styledup],[data-styledel],#nsSave,#nsExtract,#clSave,[data-pvstop],[data-lvkill],[data-lvkillall]';
 // 持久处理流程按服务端白名单放行:前端照同一份名单判断某个动作能不能做,而不是一刀切。
 function runtimeAllows(method,path){
   const caps=S&&S.runtimeCapabilities;if(!caps)return true;
@@ -6900,6 +7084,8 @@ function applyRuntimeCapabilities(){
   if(!S||!S.runtimeCapabilities)return;
   document.querySelectorAll(RUNTIME_DISABLED_SELECTORS).forEach(el=>disableRuntimeControl(el,RUNTIME_UI_TEXT.unavailable));
   // 插话照服务端白名单放行(忙时去向在浮层里按实时状态说明)
+  // 建群照服务端白名单放行(建好后绑定走 /api/groups)
+  if(!runtimeAllows('POST','/api/feishu/chats/create'))document.querySelectorAll('#mNewChat,#mNewGo').forEach(el=>disableRuntimeControl(el,RUNTIME_UI_TEXT.unavailable));
   if(!runtimeAllows('POST','/api/groups/say'))document.querySelectorAll('[data-osay]').forEach(el=>disableRuntimeControl(el,RUNTIME_UI_TEXT.unavailable));
   if(!runtimeAllows('POST','/api/providers/order'))document.querySelectorAll('#pgrid .drag').forEach(el=>{el.draggable=false;el.title=trText(RUNTIME_UI_TEXT.unavailable);});
 }

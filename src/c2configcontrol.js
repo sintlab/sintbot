@@ -130,13 +130,17 @@ function createC2ConfigControl({ installation, getBindings, getHeld = () => new 
     if (!isDeepStrictEqual(connectionOnly(cfg.feishu), connectionOnly(next.cfg.feishu))) {
       throw new Error('Connection settings require a service restart')
     }
-    let connectionAdded = false
-    if (!isDeepStrictEqual(cfg.wecom, next.cfg.wecom)) {
+    // A WeCom or Slack connection may be added online, and only as the exact
+    // configuration its attach flow has just proven; any other change to
+    // either block needs a restart.
+    const connectionAdded = []
+    for (const name of ['wecom', 'slack']) {
+      if (isDeepStrictEqual(cfg[name], next.cfg[name])) continue
       if (typeof validateConnectionAddition !== 'function' || typeof activateConnection !== 'function' ||
-          validateConnectionAddition(cfg, next.cfg) !== true) throw new Error('Connection settings require a service restart')
-      connectionAdded = true
+          validateConnectionAddition(cfg, next.cfg, name) !== true) throw new Error('Connection settings require a service restart')
+      connectionAdded.push(name)
     }
-    for (const key of ['slack', 'proxy', 'projectsRoots', 'browser']) {
+    for (const key of ['proxy', 'projectsRoots', 'browser']) {
       if (!isDeepStrictEqual(cfg[key], next.cfg[key])) throw new Error('Connection and filesystem settings require a service restart')
     }
     if (cfg.agent.maxConcurrent !== next.cfg.agent.maxConcurrent) {
@@ -280,7 +284,7 @@ function createC2ConfigControl({ installation, getBindings, getHeld = () => new 
     }
     for (const route of added) routes.push(route)
     routes.sort((a, b) => a.chatId < b.chatId ? -1 : a.chatId > b.chatId ? 1 : 0)
-    const connectionReady = connectionAdded ? Promise.resolve().then(() => activateConnection(cfg)) : Promise.resolve()
+    const connectionReady = connectionAdded.length ? Promise.resolve().then(() => activateConnection(cfg, connectionAdded)) : Promise.resolve()
     connectionReady.catch(error => log(`connection activation failed: ${error?.message || String(error)}`))
     for (const route of [...routes.filter(item => activations.includes(item.chatId)),
       ...added.filter(item => !item.paused)]) {

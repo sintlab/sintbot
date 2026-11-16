@@ -2,6 +2,7 @@
 
 const FEISHU_MESSAGE_ID = /^om_[A-Za-z0-9_-]{1,124}$/
 const { isWecomMessageId } = require('../platform/wecom')
+const { isSlackChatId, isSlackMessageId, slackMessageRef, slackChannelOf } = require('../platform/slack')
 
 // An operator must carry these exact source IDs across every restart of a
 // restricted trial. A fresh journal alone cannot recognize messages already
@@ -37,9 +38,11 @@ function createC2V2SourceQuarantine(value, { required = false } = {}) {
 const CHAT_ID = /^(?:oc_|wr)[A-Za-z0-9_-]{1,124}$/
 // A WeCom conversation's receipts carry the adapter's reserved message shape
 // (src/platform/wecom.js); every other conversation carries a Feishu or local one.
+// A Slack conversation's receipts carry `om_slack_<its own channel>_…`.
 function validIncidentSourceId(chatId, id) {
-  return typeof id === 'string' && (String(chatId).startsWith('wr')
-    ? isWecomMessageId(id) : FEISHU_MESSAGE_ID.test(id))
+  if (typeof id !== 'string') return false
+  if (isSlackChatId(chatId)) return isSlackMessageId(id) && slackMessageRef(id).channel === slackChannelOf(chatId)
+  return String(chatId).startsWith('wr') ? isWecomMessageId(id) : FEISHU_MESSAGE_ID.test(id)
 }
 const RECEIPT_ID = /^[0-9a-f]{32}$/
 function loadC2IncidentQuarantine(stateDir, { fs = require('node:fs'), path = require('node:path') } = {}) {

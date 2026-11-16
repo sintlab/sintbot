@@ -46,7 +46,7 @@ async function answerC2InputRejection({ error, msg, platform, log = () => {} } =
     }
     if (!notified) {
       try {
-        const response = await platform.replyOnce(target, error.notice)
+        const response = await platform.replyOnce(target, error.notice, { notice: true })
         notified = response?.code === 0
       } catch {}
     }

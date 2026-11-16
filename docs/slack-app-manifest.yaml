@@ -1,0 +1,58 @@
+# SintBot Slack app manifest, for creating the app by hand.
+#
+# The setup page and the console open Slack with this manifest already filled in, so most
+# people never need this file. Use it when that link is unavailable: go to
+# https://api.slack.com/apps, choose Create New App, then From a manifest, pick the workspace
+# and paste the text below. You may change the two names.
+#
+# The built-in core generates the manifest the link carries; a test keeps this file identical
+# to it. Do not turn on token rotation: it cannot be turned off again, and the bot token
+# would then expire every 12 hours.
+display_information:
+  name: "SintBot"
+  description: "Hand tasks to Claude Code or Codex on your own Mac, from Slack."
+  background_color: "#1a1a1a"
+features:
+  app_home:
+    home_tab_enabled: true
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+  bot_user:
+    display_name: "SintBot"
+    always_online: false
+  agent_view:
+    agent_description: "Message me in a DM, or @mention me in a channel, and I do the work in the project folder on your Mac."
+  slash_commands:
+    - command: "/sint"
+      description: "Control the task in this conversation"
+      usage_hint: "stop | skip | new | status | help | model"
+      should_escape: false
+oauth_config:
+  scopes:
+    bot:
+      - chat:write
+      - im:history
+      - channels:history
+      - groups:history
+      - mpim:history
+      - channels:read
+      - groups:read
+      - users:read
+      - reactions:write
+      - files:read
+      - files:write
+      - commands
+settings:
+  event_subscriptions:
+    bot_events:
+      - message.im
+      - message.channels
+      - message.groups
+      - message.mpim
+      - agent_session_stopped
+      - app_home_opened
+  interactivity:
+    is_enabled: true
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false

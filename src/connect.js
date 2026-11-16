@@ -602,6 +602,13 @@ async function runWecomSetup(input = {}, deps = {}) {
   return runConversationSetup(input, deps, 'wecom')
 }
 
+// Setup with a Slack app the person created from the prefilled manifest link:
+// both tokens are verified again here, then the first direct message or
+// channel @mention binds the conversation.
+async function runSlackSetup(input = {}, deps = {}) {
+  return runConversationSetup(input, deps, 'slack')
+}
+
 async function runConversationSetup(input = {}, deps = {}, platform = 'local') {
   const d = defaultDeps(deps)
   const { fs, stderr, stdout } = d
@@ -662,7 +669,7 @@ async function runConversationSetup(input = {}, deps = {}, platform = 'local') {
     }
 
     // WeCom conversations are named after the project; local ones keep their title.
-    const title = platform === 'wecom' ? path.basename(workdir) : input.title || '本机对话'
+    const title = platform === 'wecom' || platform === 'slack' ? path.basename(workdir) : input.title || '本机对话'
     const buildFor = (chatId, credentials) => core.connectConfig({ platform, chatId, ...credentials, name: title,
       workdir, home: d.home, provider, runners })
     let chatId, built
@@ -694,13 +701,46 @@ async function runConversationSetup(input = {}, deps = {}, platform = 'local') {
         },
         onNotice: say })
       if (!built || built.config?.groups?.[chatId] === undefined) built = buildFor(chatId, { botId: bot.botId, secret: bot.secret })
+    } else if (platform === 'slack') {
+      // Both tokens are checked against Slack before anything is written; the
+      // core words every refusal. The identity it reports is kept for display.
+      const verify = require('./slackverify')
+      const app = await (deps.verifySlackAppToken || verify.verifySlackAppToken)(input.appToken)
+      if (!app.ok) throw new Error(app.notice)
+      const bot = await (deps.verifySlackBotToken || verify.verifySlackBotToken)(input.botToken, { appId: app.appId })
+      if (!bot.ok) throw new Error(bot.notice)
+      say(bot.notice)
+      if (interrupted()) return EXIT_INTERRUPTED
+      const identity = bot.identity || {}
+      const credentials = { botToken: String(input.botToken).trim(), appToken: String(input.appToken).trim(),
+        ...(identity.appId || app.appId ? { slackAppId: identity.appId || app.appId } : {}),
+        ...(identity.teamId ? { teamId: identity.teamId } : {}),
+        ...(identity.botUserId ? { botUserId: identity.botUserId } : {}),
+        ...(identity.team ? { team: identity.team } : {}) }
+      const preflight = buildFor('oc_slack_D0PREFLIGHT', credentials)
+      if (!preflight.ok) throw new Error(preflight.error)
+      d.onSlackIdentity?.({ ...identity, appId: identity.appId || app.appId })
+      const transport = require('./slacksetuptransport')
+      // The first direct message or channel @mention binds the conversation.
+      // The core checks the binding while the setup connection is still open,
+      // so the reply in Slack only follows an accepted configuration.
+      chatId = await (deps.discoverSlackConversation || transport.discoverSlackConversation)({
+        botToken: credentials.botToken, appToken: credentials.appToken, signal: abort.signal,
+        inboxDir: path.join(stateDir, 'slack-inbox'),
+        confirm: async ({ chatId: found }) => {
+          built = buildFor(found, credentials)
+          if (!built.ok) throw new Error(built.error)
+          return transport.confirmReply(title)
+        },
+        onNotice: say })
+      if (!built || built.config?.groups?.[chatId] === undefined) built = buildFor(chatId, credentials)
     } else {
       chatId = (d.newLocalChatId || newLocalChatId)()
       built = buildFor(chatId, {})
     }
     if (interrupted()) return EXIT_INTERRUPTED
     if (!built.ok) throw new Error(built.error)
-    if (platform === 'wecom' && built.config.groups?.[chatId] && !built.config.groups[chatId].name) built.config.groups[chatId].name = title
+    if ((platform === 'wecom' || platform === 'slack') && built.config.groups?.[chatId] && !built.config.groups[chatId].name) built.config.groups[chatId].name = title
     const modelDefaults = applyInitialGroupDefaults(built.config, chatId, selectedCatalog)
     d.onModelDefaults?.(modelDefaults)
     say(`对话默认：${modelDefaults.name} · ${modelDefaults.effort}。之后可在控制台修改。`)
@@ -784,4 +824,4 @@ async function scannerName(client, openId, sdkName, basic, d) {
   return name ? core.connectManifest(basic, name, d.version).appPreset.name : ''
 }
 
-module.exports = { runConnect, runLocalSetup, runWecomSetup, CONNECT_OPTIONS, sdkAddons, qrPage, failureInput, probeRunners, EXIT_INTERRUPTED, connectModelCatalog, applyInitialGroupDefaults }
+module.exports = { runConnect, runLocalSetup, runWecomSetup, runSlackSetup, CONNECT_OPTIONS, sdkAddons, qrPage, failureInput, probeRunners, EXIT_INTERRUPTED, connectModelCatalog, applyInitialGroupDefaults }

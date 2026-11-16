@@ -11,6 +11,8 @@ const { secureDataDir } = require('../src/core/datadir')
 const { StateStore } = require('../src/core/store')
 const { createFeishuPlatform, feishuClient } = require('../src/platform/feishu')
 const { createWecomPlatform } = require('../src/platform/wecom')
+const { createSlackPlatform } = require('../src/platform/slack')
+const { GROUP_COMMANDS } = require('../src/runtimefacts')
 const { createMultiPlatform } = require('../src/platform/multi')
 const { createLocalPlatform } = require('../src/platform/local')
 const { isC2InputRejection, answerC2InputRejection } = require('../src/core/c2inputrejection')
@@ -33,7 +35,7 @@ async function startService(rest) {
   const setupConfig = path.resolve(values.config || process.env.SBOT_CONFIG || path.join(installationStateDir(values['data-dir']), 'config.json'))
   if (!fs.existsSync(setupConfig)) {
     if (preflightOnly || values.ui !== true) {
-      throw new Error('No configuration yet. Run `sintbot start --ui` and connect Feishu or WeCom in the browser (or `sintbot connect` in the terminal)')
+      throw new Error('No configuration yet. Run `sintbot start --ui` and connect Feishu, WeCom or Slack in the browser (or `sintbot connect` in the terminal)')
     }
     await runSetupMode({ configFile: setupConfig, dataDir: values['data-dir'],
       host: values['ui-host'] || '127.0.0.1', port: Number(values['ui-port'] || 4600),
@@ -75,7 +77,7 @@ async function runSetupMode({ configFile, dataDir, host, port, open }) {
     runners: probeRunners(), host, port, log: message => process.stderr.write(`Setup · ${message}\n`) })
   await setup.listen()
   const url = `http://${host === '::1' ? '[::1]' : host}:${port}/`
-  process.stderr.write(`SintBot is not set up yet. Open ${url} to connect Feishu by scanning, or to start with a conversation on this Mac.\n`)
+  process.stderr.write(`SintBot is not set up yet. Open ${url} to connect Feishu, WeCom or Slack, or to start with a conversation on this Mac.\n`)
   if (open && process.platform === 'darwin') {
     try { require('node:child_process').spawn('open', [url], { stdio: 'ignore', detached: true }).unref() } catch {}
   }
@@ -151,7 +153,7 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
   const { createC2ServiceStartGate } = require('../src/core/c2servicestartgate')
   const { C2PayloadHandles } = require('../src/core/c2payloadhandles')
   const { createC2LocalEffectExecutor, resolveC2LocalEffectTurn } = require('../src/core/c2localeffectexecutor')
-  const { createWecomRecoverySender, createFeishuRecoverySender, createLocalRecoverySender, createRoutedRecoverySender } = require('../src/core/c2platformrecoverysender')
+  const { createWecomRecoverySender, createSlackRecoverySender, createFeishuRecoverySender, createLocalRecoverySender, createRoutedRecoverySender } = require('../src/core/c2platformrecoverysender')
   const { createC2V2SourceQuarantine } = require('../src/core/c2sourcequarantine')
   const { Engine } = require('../src/core/v2engine')
   const { createC2MultiGroupService } = require('../src/c2multigroupservice')
@@ -256,6 +258,11 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
     activity = require('../src/ui/liveactivity').createLiveActivity({
       file: path.join(stateDir, 'activity-v1.json'), canWrite: assertWriterLock,
       log: message => process.stderr.write(`Console · ${message}\n`) })
+    // The engines report each turn's life to this recorder; for a Slack
+    // conversation the same moments also drive ⏳ / ✅ and the native status.
+    const engineActivity = require('../src/slackpresence').withSlackPresence(activity, {
+      getAdapter: () => liveTransport?.platform.get('slack') || null,
+      log: message => process.stderr.write(`Slack · ${message}\n`) })
     const closeChecks = {
       claude: require('../src/agent/claudecode').isClosedRunnerResult,
       'codex-exec': require('../src/agent/codexcode').isClosedRunnerResult,
@@ -340,11 +347,23 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
             inboxDir: require('node:path').join(stateDir, 'wecom-inbox'),
             log: message => process.stderr.write(`WeCom · ${message}\n`) })
         }
+        // Slack on the durable route: reserved identities, plain replies, one
+        // attempt per message. People type the group commands with `!`.
+        const slackAdapter = config => createSlackPlatform({ botToken: config.slack.botToken,
+          appToken: config.slack.appToken, botUserId: config.slack.botUserId || '',
+          onlyWhenMentioned: config.slack.onlyWhenMentioned !== false,
+          replyInThread: config.slack.replyInThread !== false,
+          commands: GROUP_COMMANDS, commandAlias: config.slack.commandAlias || '!',
+          umbrellaCommand: config.slack.umbrellaCommand || '/sint', ws: config.slack.ws || {},
+          durable: true, inboxDir: path.join(stateDir, 'slack-inbox'), presence: config.slack.presence !== false,
+          log: message => process.stderr.write(`Slack · ${message}\n`) })
+        if (platformsConfigured(cfg).slack) adapters.slack = slackAdapter(cfg)
         const platform = createMultiPlatform({ adapters,
           resolve: chatId => chatPlatform(cfg, chatId) })
         const senders = {
           local: createLocalRecoverySender({ cfg, platform }),
           ...(adapters.wecom ? { wecom: createWecomRecoverySender({ cfg, platform }) } : {}),
+          ...(adapters.slack ? { slack: createSlackRecoverySender({ cfg, platform }) } : {}),
           ...(client ? { feishu: createFeishuRecoverySender({ cfg, platform, client }) } : {}) }
         const sender = createRoutedRecoverySender({ cfg, senders })
         liveTransport = { platform, sender,
@@ -357,11 +376,17 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
             await platform.add('wecom', adapter)
             senders.wecom = createWecomRecoverySender({ cfg, platform })
           },
+          addSlack: async config => {
+            if (platform.get('slack')) throw new Error('Slack 连接已存在')
+            await platform.add('slack', slackAdapter(config))
+            senders.slack = createSlackRecoverySender({ cfg, platform })
+          },
           stopPlatform: async () => {
             platform.seal()
             const stopped = await Promise.all([
               adapters.feishu ? adapters.feishu.stop({ strict: true }) : true,
-              adapters.wecom ? adapters.wecom.stop({ strict: true }) : true, local.stop()])
+              adapters.wecom ? adapters.wecom.stop({ strict: true }) : true,
+              platform.get('slack') ? platform.get('slack').stop({ strict: true }) : true, local.stop()])
             return stopped.every(value => value === true)
           } }
         return liveTransport
@@ -425,7 +450,7 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
             })
           }
           engine = new Engine({ ...cfg, groups: { [route.chatId]: route.group } }, {
-            store, activity, log: message => process.stderr.write(`C2 v2 · ${message}\n`),
+            store, activity: engineActivity, log: message => process.stderr.write(`C2 v2 · ${message}\n`),
             durableV2Runtime: runtime, durableV2Payloads: handles,
             durableV2StartTurn: startTurn, durableV2ApplyLocalEffect: applyLocalEffect,
             durableV2VerifyRunnerClosed: ({ result, error }) => result
@@ -471,11 +496,17 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
       writeConfig: mutate => configControl.writeConfig(mutate),
       activateConnection: config => liveTransport.addWecom(config),
       awaitConnected: () => liveTransport?.platform.get('wecom')?.ready(15000) || Promise.resolve(false) })
+    const slackAttach = require('../src/slackattach').createSlackAttach({
+      configPath: cfg._path, stateDir, canAttach: () => service.serving && !service.inMaintenance,
+      writeConfig: mutate => configControl.writeConfig(mutate),
+      activateConnection: config => liveTransport.addSlack(config),
+      awaitConnected: () => liveTransport?.platform.get('slack')?.ready(20000) || Promise.resolve(false) })
+    const attachOf = name => name === 'slack' ? slackAttach : wecomAttach
     configControl = require('../src/c2configcontrol').createC2ConfigControl({
       installation, getBindings: () => service.bindings, getHeld: () => service.held,
       assertWriterLock, store,
-      validateConnectionAddition: wecomAttach.validateConnectionAddition,
-      activateConnection: wecomAttach.activateConnection,
+      validateConnectionAddition: (before, next, name) => attachOf(name).validateConnectionAddition(before, next),
+      activateConnection: (config, names = ['wecom']) => Promise.all(names.map(name => attachOf(name).activateConnection(config))),
       activateRoute: route => service.addRoute(route), isFrozen: () => service.inMaintenance,
       log: message => process.stderr.write(`C2 multi-group · ${message}\n`) })
     if (!preflightOnly) {
@@ -512,12 +543,13 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
     process.on('SIGTERM', onSigterm)
     if (uiEnabled && !preflightOnly) {
       ui = require('../src/c2console').createC2Console({
-        configPath: cfg._path, stateDir, host: uiHost, activity, store, wecomAttach,
+        configPath: cfg._path, stateDir, host: uiHost, activity, store, wecomAttach, slackAttach,
         getConfig: () => cfg, getBindings: () => service.bindings,
         getHeld: () => service.held, getCapacity: () => capacity.snapshot(),
         acquireCapacity: options => capacity.acquire(options),
         getConnHealth: () => liveTransport?.platform.connHealth?.() || {},
         getWecomChats: () => liveTransport?.platform.get('wecom')?.listChats?.() || [],
+        getSlackChats: () => liveTransport?.platform.get('slack')?.listChats?.() || [],
         // Console injection enters through the same ingress as a group
         // message, posted and answered with that group's own adapter.
         getPlatform: chatId => liveTransport?.platform.forChat(chatId) || null,
@@ -635,8 +667,8 @@ Usage:
   sintbot version
   sintbot help
 
-Supports explicit Feishu and WeCom groups using Codex or Claude Code. Start runs in the foreground.
-start --ui with no configuration opens local setup: scan with Feishu or enter WeCom bot credentials; the service starts once setup has written and
+Supports Feishu, WeCom and Slack conversations using Codex or Claude Code. Start runs in the foreground.
+start --ui with no configuration opens local setup: scan with Feishu, enter WeCom bot credentials or paste a Slack app's two tokens; the service starts once setup has written and
 initialized the configuration.
 connect scans a Feishu QR code to create the app, then creates a group (or binds --chat), the project
 folder under ~/Projects, the configuration and the journals, in that order; a failed check stops before

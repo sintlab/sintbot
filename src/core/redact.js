@@ -11,6 +11,7 @@ const PATTERNS = [
   [/\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{6,}/g, '‹redacted:jwt›'],
   [/\bsk-[A-Za-z0-9_-]{16,}/g, '‹redacted:key›'],
   [/\bxox[baprs]-[A-Za-z0-9-]{10,}/g, '‹redacted:slack›'],
+  [/\bxapp-[A-Za-z0-9-]{10,}/g, '‹redacted:slack›'],
   // cloud / code-hosting credentials (v0.6 review: FR9.1 增补)
   [/\bAKIA[0-9A-Z]{16}\b/g, '‹redacted:aws›'],
   [/\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, '‹redacted:github›'],

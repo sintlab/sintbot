@@ -1,5 +1,16 @@
 [
   {
+    "version": "1.4.27",
+    "date": "2026-11-18",
+    "name": "Confirmations in the desktop app",
+    "items": [
+      {
+        "t": "Confirmations work in the desktop app",
+        "d": "In the desktop app, console actions that need confirmation (full access, plain text, sealing, interrupting a task for a new session, removing a model, upgrading Codex and others) did not ask first. The console now shows its own confirmation dialog, the same in the app and in a browser: Cancel, Esc or a click outside does nothing."
+      }
+    ]
+  },
+  {
     "version": "1.4.26",
     "date": "2026-11-18",
     "name": "Codex upgrades in the console, configuration history and stability",

@@ -2,7 +2,7 @@
 # The function is parsed in full before installation starts, including when piped.
 sintbot_install() (
   set -eu
-  version=1.4.26
+  version=1.4.27
   prefix="${SINTBOT_INSTALL_DIR:-$HOME/.local/share/sintbot}"
   fail() { printf 'SintBot: %s\n' "$*" >&2; exit 1; }
   case "${1:-}" in

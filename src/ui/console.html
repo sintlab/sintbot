@@ -840,6 +840,9 @@ h4.sec{font-size:12px;line-height:18px;font-weight:600;color:var(--dim);margin:1
 .upg-note{font-size:13px;line-height:20px;color:var(--dim);padding:8px 10px;border-radius:var(--r-ctl);background:var(--inset-bg);margin:0 0 16px}
 .upg-note.warn{color:var(--warn-ink)}.upg-note.fail{color:var(--fail)}
 .upg-btns{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.ask-bg{z-index:60}
+.modal.ask{padding:22px 24px 18px}
+.ask-msg{white-space:pre-wrap;word-break:break-word;line-height:1.6;margin:0 0 18px}
 /* ── 新建/编辑自定义风格(左表单 · 右实时预览)────────────────────────────────
    预览必须**一直在视野里** —— 这张表单的每一项都对应预览图的一条通道,改哪儿图上立刻变哪儿
    才是它区别于「填一份 YAML」的全部价值;所以右列 sticky,滚表单时图不走。 */
@@ -1289,7 +1292,7 @@ function heldSigNow(){return heldGroupsList().map(r=>r.g.chatId+':'+(r.lv.sealEr
 function bindHeld(){$$('#ovHeldWrap [data-seal]').forEach(b=>b.onclick=()=>{const g=(S.groups||[]).find(x=>x.chatId===b.dataset.seal);sealHeldGroup(b.dataset.seal,(g&&g.name)||b.dataset.seal.slice(-8));});}
 function syncHeldCard(){const w=$('#ovHeldWrap');if(!w)return;const sig=heldSigNow();if(sig===heldSig)return;heldSig=sig;w.innerHTML=heldCardHtml();bindHeld();}
 async function sealHeldGroup(chatId,name){
-  if(!confirm('封存「'+name+'」？\n\n上一个任务的结果无法确认。封存会把现在的记录原样存档，那条消息不会再处理，需要的话请重发；随后服务自动重启，用新的记录继续。'))return;
+  if(!await askConfirm('封存「'+name+'」？\n\n上一个任务的结果无法确认。封存会把现在的记录原样存档，那条消息不会再处理，需要的话请重发；随后服务自动重启，用新的记录继续。'))return;
   try{await api('/api/groups/seal','POST',{chatId});}catch(e){toast(e.message,'err');return;}
   toast('正在封存，服务重启后页面会自动刷新','ok');
   // The service stops, seals and is started again by launchd: wait for it to
@@ -1398,12 +1401,12 @@ function renderOverview(){
   // 预览服务:停止按钮(后端会顺带在群里告知 —— 群成员可能正开着那个链接)
   $$('#overview [data-pvstop]').forEach(b=>b.onclick=async()=>{
     const nm=b.dataset.pvname||'该预览';
-    if(!confirm(`停止预览「${nm}」?群成员正在打开的页面会失效(群里会收到一条告知)。`))return;
+    if(!await askConfirm(`停止预览「${nm}」?群成员正在打开的页面会失效(群里会收到一条告知)。`))return;
     try{const r=await api('/api/previews/stop','POST',{id:b.dataset.pvstop});S=r;toast('已停止预览','ok');renderOverview();}catch(e){toast(e.message,'err');}});
   // 后台进程:结束一个 / 全部结束。先 confirm —— 偶尔也有 agent 故意留下的东西(比如起着看的 dev server),
   // 杀不杀是人的判断;后端还会不走缓存重验一遍名单,这里只把页面上看到的 pid 原样带过去。
   const lvKill=async(pids,what)=>{
-    if(!confirm(`结束${what}?它会被立刻终止(先温和请求退出,不理会再强制结束)。`))return;
+    if(!await askConfirm(`结束${what}?它会被立刻终止(先温和请求退出,不理会再强制结束)。`))return;
     try{const r=await api('/api/leftovers/kill','POST',{pids});S=r;toast('已结束','ok');renderOverview();}catch(e){toast(e.message,'err');}};
   $$('#overview [data-lvkill]').forEach(b=>b.onclick=()=>lvKill([+b.dataset.lvkill],`这个后台进程(${b.dataset.lvage||''}前起的)`));
   $$('#overview [data-lvkillall]').forEach(b=>b.onclick=()=>{const rows=(S.leftovers&&S.leftovers.rows)||[];if(rows.length)lvKill(rows.map(r=>r.pid),`全部 ${rows.length} 个后台进程`);});
@@ -1412,7 +1415,7 @@ function renderOverview(){
   $$('#overview [data-onew]').forEach(b=>b.onclick=async()=>{
     const lv=S.live&&S.live.groups&&S.live.groups[b.dataset.onew];
     // 持久处理流程里停止要等结账确认,不能当场接着重置会话:忙时由服务端照实拒绝,不弹「中断并开新」。
-    if(!S.runtimeCapabilities&&lv&&lv.busy&&!confirm('该群任务运行中 — 中断当前任务、清空队列并开新会话?'))return;
+    if(!S.runtimeCapabilities&&lv&&lv.busy&&!await askConfirm('该群任务运行中 — 中断当前任务、清空队列并开新会话?'))return;
     try{const r=await api('/api/groups/interrupt','POST',{chatId:b.dataset.onew});toast(r.wasBusy?'已中断并开新会话':'已开新会话','ok');}catch(e){toast(e.message,'err');}});
   updateOverviewLive();
 }
@@ -1630,8 +1633,30 @@ function stateSig(s){try{
   const ib=(inbox||[]).map(i=>[i.key,i.count||0]); // 时间戳每次刷新都在走(进程年龄、预览时长),只签身份
   return JSON.stringify([rest,pv,ib]);
 }catch{return null;}}
+/* 页内确认框，返回 Promise<boolean>。桌面 App 的 WebView 里原生 confirm() 不能用：对话框插件把它换成了异步函数，
+   同步判断时返回值恒为真，确认等于没问；控制台页面也没有调用 App 对话框的权限。所以一律走这里，浏览器与 App 行为一致。
+   单独一层（高于 #modal），从模型卡等弹窗里发起时不会顶掉原弹窗。Esc / 点遮罩 = 取消，Enter = 确定。 */
+let askPending=null;
+function askConfirm(msg){
+  if(askPending)askPending(false);
+  let bg=$('#askBg');
+  if(!bg){bg=document.createElement('div');bg.className='modal-bg ask-bg';bg.id='askBg';document.body.appendChild(bg);}
+  bg.innerHTML='<div class="modal ask" role="alertdialog" aria-modal="true"><div class="ask-msg"></div><div class="upg-btns"><button class="btn" data-ask="0">取消</button><button class="btn primary" data-ask="1">确定</button></div></div>';
+  bg.querySelector('.ask-msg').textContent=String(msg==null?'':msg);
+  bg.classList.add('show');
+  return new Promise(resolve=>{
+    const key=e=>{if(e.key!=='Escape'&&e.key!=='Enter')return;e.preventDefault();e.stopImmediatePropagation();done(e.key==='Enter');};
+    const done=v=>{if(askPending!==done)return;askPending=null;window.removeEventListener('keydown',key,true);bg.classList.remove('show');bg.innerHTML='';resolve(v);};
+    askPending=done;
+    window.addEventListener('keydown',key,true);
+    bg.querySelectorAll('[data-ask]').forEach(b=>b.onclick=()=>done(b.dataset.ask==='1'));
+    bg.onclick=e=>{if(e.target===bg)done(false);};
+    setTimeout(()=>{const ok=bg.querySelector('[data-ask="1"]');if(ok)ok.focus();},0);
+  });
+}
 function busyInteracting(){
   if($('#modalBg')&&$('#modalBg').classList.contains('show'))return true;      // 模态框开着
+  if($('#askBg')&&$('#askBg').classList.contains('show'))return true;          // 确认框开着
   if(document.querySelector('.card.dragging'))return true;                      // 拖拽排序中
   const a=document.activeElement;
   if(a&&/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))return true;                // 正在填表
@@ -2159,7 +2184,7 @@ function openProviderModal(name,opts){
       renderProviders();
       if(lg.loggedIn&&runtimeAllows('POST','/api/models/refresh')){cb.innerHTML='<span class="spin"></span>正在取可选型号…';await refreshModelList('codex',$('#cxModelsNote'));}
     }catch(e){toast(e.message,'err');}finally{cb.disabled=false;cb.innerHTML=old;}};}
-  if(edit)$('#amDel').onclick=async()=>{if(!confirm('移除模型 '+name+' ?'))return;try{S=await api('/api/providers?name='+encodeURIComponent(name),'DELETE');toast('已移除','ok');closeModal();renderProviders();}catch(e){toast(e.message,'err');}};
+  if(edit)$('#amDel').onclick=async()=>{if(!await askConfirm('移除模型 '+name+' ?'))return;try{S=await api('/api/providers?name='+encodeURIComponent(name),'DELETE');toast('已移除','ok');closeModal();renderProviders();}catch(e){toast(e.message,'err');}};
   $('#amSave').onclick=async()=>{const nm=edit?name:$('#amName').value.trim();if(!nm){toast('名称必填','err');return;}
     // codex 与 Claude 订阅登录都用「下拉 + 自定义…回退文本框」;第三方仍是纯文本框。
     // ⚠ 未登录的 Claude provider 根本没画型号控件 ⇒ 取不到值时**保持原样**,别把已有型号清掉。
@@ -2451,7 +2476,7 @@ function paintStyleLib(){
     if(!del)return;
     const slug=del.dataset.styledel;
     const s=(styleLib.styles||[]).find(x=>x.slug===slug);
-    if(!confirm('从风格库移除「'+((s&&s.name)||slug)+'」?\n项目里已经用上它的那些不受影响。'))return;
+    if(!await askConfirm('从风格库移除「'+((s&&s.name)||slug)+'」?\n项目里已经用上它的那些不受影响。'))return;
     del.disabled=true;
     try{const r=await api('/api/design/styles','DELETE',{slug});
       styleLib=null;await loadStyleLib();
@@ -3251,25 +3276,25 @@ ${rtOff('/api/groups/preview')?'':`    <div class="kv"><span class="kk">预览</
     setGroupCardOpen(b.dataset.gfold,open);if(open&&typeof refitAllStrips==='function')refitAllStrips();});
   makeSortable($('#ggrid'),{item:'.card[data-gid]',key:c=>c.dataset.gid,
     save:o=>api('/api/groups/order','POST',{order:o}).then(r=>{S=r;renderOverview();return r;})});  // 概览群行同步新顺序
-  $$('#groups [data-rm]').forEach(b=>b.onclick=async()=>{const gg=S.groups.find(x=>x.chatId===b.dataset.rm);if(!confirm('解除本群与项目的绑定?\n(仅移除绑定配置,群本身保留'+(gg&&gg.platform==='wecom'?')':';要解散群请去「配置群项目」面板)')))return;try{S=await api('/api/groups?chatId='+encodeURIComponent(b.dataset.rm),'DELETE');toast('已解除绑定','ok');renderAll();}catch(e){toast(e.message,'err');}});
+  $$('#groups [data-rm]').forEach(b=>b.onclick=async()=>{const gg=S.groups.find(x=>x.chatId===b.dataset.rm);if(!await askConfirm('解除本群与项目的绑定?\n(仅移除绑定配置,群本身保留'+(gg&&gg.platform==='wecom'?')':';要解散群请去「配置群项目」面板)')))return;try{S=await api('/api/groups?chatId='+encodeURIComponent(b.dataset.rm),'DELETE');toast('已解除绑定','ok');renderAll();}catch(e){toast(e.message,'err');}});
   // 暂停/恢复:完全可逆(配置全保留)故无冷静期无令牌;暂停方向仍 confirm 一下(会清空排队消息)。
   // 预览常驻开关(operator 的正规入口;群内会收到一行告知)
   $$('#groups .gpv').forEach(c=>c.onchange=async()=>{
     const on=c.checked;
-    if(on&&!confirm('设为常驻?该群的原型预览将不再自动停止,那个目录会一直挂在局域网上,直到有人手动停。'))
+    if(on&&!await askConfirm('设为常驻?该群的原型预览将不再自动停止,那个目录会一直挂在局域网上,直到有人手动停。'))
       {c.checked=false;return;}
     try{S=await api('/api/groups/preview','POST',{chatId:c.dataset.g,persist:on});renderGroups();toast(on?'已设为常驻 · 群内已通知':'已回到默认回收策略 · 群内已通知','ok');}
     catch(e){c.checked=!on;toast(e.message,'err');}});
   // 数据明文开关(v0.11.6):PII 出站按群放行;密钥类无开关。群内会收到一行告知。
   $$('#groups .gpii').forEach(c=>c.onchange=async()=>{
     const on=c.checked;
-    if(on&&!confirm('设为明文?该群回复里的手机号/邮箱将原样显示给所有群成员。\n密钥类信息仍会自动遮盖。'))
+    if(on&&!await askConfirm('设为明文?该群回复里的手机号/邮箱将原样显示给所有群成员。\n密钥类信息仍会自动遮盖。'))
       {c.checked=false;return;}
     try{S=await api('/api/groups/redact','POST',{chatId:c.dataset.g,showPii:on});renderGroups();toast(S.runtimeCapabilities?(on?'已设为明文 · 下轮生效':'已恢复遮盖 · 下轮生效'):(on?'已设为明文 · 群内已通知':'已恢复遮盖 · 群内已通知'),'ok');}
     catch(e){c.checked=!on;toast(e.message,'err');}});
   $$('#groups [data-gpause]').forEach(b=>b.onclick=async()=>{
     const on=b.dataset.p!=='1';
-    if(on&&!confirm(S.runtimeCapabilities?'暂停本群?只有任务结束且记录全部结账后才能暂停；暂停期间不处理新消息，配置和会话保留。':'暂停本群?\n期间消息不处理(静默丢弃)、排队清空、定时任务与画布播报停发;进行中的任务会跑完。\n完全可逆:配置/会话/画布全保留,点「恢复」即原样回来。'))return;
+    if(on&&!await askConfirm(S.runtimeCapabilities?'暂停本群?只有任务结束且记录全部结账后才能暂停；暂停期间不处理新消息，配置和会话保留。':'暂停本群?\n期间消息不处理(静默丢弃)、排队清空、定时任务与画布播报停发;进行中的任务会跑完。\n完全可逆:配置/会话/画布全保留,点「恢复」即原样回来。'))return;
     try{S=await api('/api/groups/pause','POST',{chatId:b.dataset.gpause,paused:on});renderGroups();renderOverview();toast(S.runtimeCapabilities?(on?'已暂停':'已恢复'):(on?'已暂停 · 群内已通知':'已恢复 · 群内已通知'),'ok');}catch(e){toast(e.message,'err');}});
   $$('#groups .gprov').forEach(sel=>sel.onchange=()=>saveGroupBrain(sel.dataset.g,{provider:sel.value}));
   $$('#groups .gmodel').forEach(sel=>sel.onchange=()=>{const box=$('.gcustom[data-g="'+sel.dataset.g+'"]');
@@ -3311,7 +3336,7 @@ ${rtOff('/api/groups/preview')?'':`    <div class="kv"><span class="kk">预览</
       try{r=await api('/api/design/icons','POST',{chatId:id,system:want});}
       catch(e){
         if(e.status!==409||!e.payload||e.payload.error!=='confirm')throw e;
-        if(!confirm(e.payload.note+'\n\n继续?')){sel.value=prev;return;}
+        if(!await askConfirm(e.payload.note+'\n\n继续?')){sel.value=prev;return;}
         r=await api('/api/design/icons','POST',{chatId:id,system:want,force:true});
       }
       sel.dataset.prev=want;
@@ -3354,7 +3379,7 @@ ${rtOff('/api/groups/preview')?'':`    <div class="kv"><span class="kk">预览</
   const CRON_ONEOFF=[/^\d{1,2}:\d{2}$/,/^\d{1,2}-\d{1,2}[ T]\d{1,2}:\d{2}$/,/^\d{4}-\d{1,2}-\d{1,2}[ T]\d{1,2}:\d{2}$/,/^\d{1,2}月\d{1,2}日\s*\d{1,2}:\d{2}$/,/^\d{4}年\d{1,2}月\d{1,2}日\s*\d{1,2}:\d{2}$/];
   $$('#groups [data-cronadd]').forEach(b=>b.onclick=async()=>{const f=b.closest('.cronform');const val=f.querySelector('.cronexpr').value.trim(),kind=f.querySelector('.cronkind').value,text=f.querySelector('.crontext').value.trim();if(!val){toast('填写时间(如「10:20」「07-16 10:20」「每天 09:00」)','err');return;}if(!text){toast(kind==='do'?'填写到点让 agent 做的事':kind==='run'?'填写要跑的命令':'填写要发送的消息','err');return;}const isDate=CRON_ONEOFF.some(re=>re.test(val));const body=isDate?{chatId:b.dataset.cronadd,at:val,kind,text}:{chatId:b.dataset.cronadd,expr:val,kind,text};try{S=await api('/api/groups/cron/add','POST',body);renderGroups();toast(isDate?'已创建一次性任务':'已创建定时任务','ok');}catch(e){toast(e.message,'err');}});
   $$('#groups [data-crontgl]').forEach(b=>b.onclick=async()=>{try{S=await api('/api/groups/cron/toggle','POST',{chatId:b.dataset.g,id:b.dataset.crontgl,enabled:b.dataset.en==='1'});renderGroups();}catch(e){toast(e.message,'err');}});
-  $$('#groups [data-cronrm]').forEach(b=>b.onclick=async()=>{if(!confirm('删除该定时任务?'))return;try{S=await api('/api/groups/cron/remove','POST',{chatId:b.dataset.g,id:b.dataset.cronrm});cronOpen.delete(b.dataset.cronrm);renderGroups();toast('已删除','ok');}catch(e){toast(e.message,'err');}});
+  $$('#groups [data-cronrm]').forEach(b=>b.onclick=async()=>{if(!await askConfirm('删除该定时任务?'))return;try{S=await api('/api/groups/cron/remove','POST',{chatId:b.dataset.g,id:b.dataset.cronrm});cronOpen.delete(b.dataset.cronrm);renderGroups();toast('已删除','ok');}catch(e){toast(e.message,'err');}});
   // 点整行展开/收起全文。行内那三个按钮各管各的(启停/删除/复制),别被行的 handler 抢走。
   $$('#groups [data-cronx]').forEach(r=>r.onclick=(e)=>{
     if(e.target.closest('.cdot,.crm,.ccopy'))return;
@@ -3380,12 +3405,12 @@ ${rtOff('/api/groups/preview')?'':`    <div class="kv"><span class="kk">预览</
     const g=b.dataset.g,mode=b.dataset.mode,wantBypass=mode==='bypassPermissions';
     const curBypass=(S.groups.find(x=>x.chatId===g)||{}).permissionMode==='bypassPermissions';
     if(wantBypass===curBypass)return; // 已是该状态,不重复保存
-    if(wantBypass&&!confirm('⚠ 完全访问:跳过所有权限校验与目录围栏 — 群里任何成员的一条消息都能在这台机器上执行任意操作。\n仅限完全可信的私人群。'))return;
+    if(wantBypass&&!await askConfirm('⚠ 完全访问:跳过所有权限校验与目录围栏 — 群里任何成员的一条消息都能在这台机器上执行任意操作。\n仅限完全可信的私人群。'))return;
     try{S=await api('/api/groups/policy','POST',{chatId:g,permissionMode:mode});renderGroups();toast(wantBypass?'已设为完全访问 · 下轮生效':'已设为受限 · 下轮生效','ok');}
     catch(e){toast(e.message,'err');}});
-  $$('#groups [data-pp]').forEach(b=>b.onclick=()=>{
+  $$('#groups [data-pp]').forEach(b=>b.onclick=async()=>{
     const p=PERM_PRESETS[b.dataset.pp];if(!p)return;
-    if(b.dataset.pp==='full'&&!confirm('⚠ 全信任 = Bash(*) 全开,无目录围栏!\n群里任何成员的一条消息都能在这台机器上执行任意命令(删文件/外发数据/装软件)。\n仅限完全可信的私人群。确定填入?(仍需点「保存权限」才生效)'))return;
+    if(b.dataset.pp==='full'&&!await askConfirm('⚠ 全信任 = Bash(*) 全开,无目录围栏!\n群里任何成员的一条消息都能在这台机器上执行任意命令(删文件/外发数据/装软件)。\n仅限完全可信的私人群。确定填入?(仍需点「保存权限」才生效)'))return;
     $('.gallow[data-g="'+b.dataset.g+'"]').value=p.allow.join(', ');
     $('.gdeny[data-g="'+b.dataset.g+'"]').value=p.deny.join(', ');
     toast('已填入「'+p.label+'」预设 — 可手改,点「保存权限」生效','ok');});
@@ -4199,8 +4224,8 @@ function renderSettings(){
     const patch={lanEnabled,publicEnabled};
     const pw=$('#netPass');if(pw&&pw.value)patch.password=pw.value;
     if(lanEnabled&&!net.lan&&!net.authOn&&(!patch.password||patch.password.length<6)){toast('开启局域网访问前要设置至少 6 位访问密码','err');return;}
-    if(lanEnabled!==!!net.lan&&!confirm(lanEnabled?'开启后,同一可信局域网内可访问登录页;继续?':'关闭后,远程设备将无法访问控制台;继续?'))return;
-    if(publicEnabled!==!!net.publicEnabled&&!confirm(publicEnabled?'启用公网飞书登录入口?这不会修改反向代理或隧道。':'关闭公网入口并让现有飞书登录退出?'))return;
+    if(lanEnabled!==!!net.lan&&!await askConfirm(lanEnabled?'开启后,同一可信局域网内可访问登录页;继续?':'关闭后,远程设备将无法访问控制台;继续?'))return;
+    if(publicEnabled!==!!net.publicEnabled&&!await askConfirm(publicEnabled?'启用公网飞书登录入口?这不会修改反向代理或隧道。':'关闭公网入口并让现有飞书登录退出?'))return;
     const b=$('#netSave');b.disabled=true;
     try{const r=await api('/api/ui/network','POST',patch);
       if(r.rebinding){toast('访问地址正在切换;页面即将重载','ok');setTimeout(()=>location.reload(),1200);return;}
@@ -4218,7 +4243,7 @@ function renderSettings(){
     // 后台托管:页内确认 → 进度弹窗(每一步、断线重连、完成后刷新到新版控制台)。前台 / 旧式更新器仍走下面的原生确认
     if(u.mode==='managed'){upgConfirm(announce);return;}
     const what=u.mode==='managed'?'等所有群空闲、记录结清后装到单独的目录，再切换后台服务；切换期间约一分钟不处理新消息，新版本没连上全部群会自动换回。':`${announce?'安装完成后会向未暂停的群播报；':'本次不向群播报。'}所有群任务结束后才开始安装，后台服务会重启。`;
-    if(!confirm(`将从 v${u.currentVersion} 升级到 v${version}。${what}继续?`))return;
+    if(!await askConfirm(`将从 v${u.currentVersion} 升级到 v${version}。${what}继续?`))return;
     const b=$('#updInstall');b.disabled=true;
     try{const r=await api('/api/update/start','POST',{version,announce});S.update={...r,announce};await refreshInbox();renderSettings();renderOverview();toast(u.mode==='managed'?'升级已排队，所有群空闲后开始':'更新已排队，群任务空闲后开始','ok');}
     catch(e){toast(e.message,'err');b.disabled=false;}};
@@ -5671,6 +5696,7 @@ const I18N_EN=[
   ["在列表中隐藏此模型","Hide this model from the list"],
   ["移除","Remove"],
   ["取消","Cancel"],
+  ["确定","OK"],
   ["保存","Save"],
   ["未登录,暂不列型号 —— 先在这台机器上跑一次","Not signed in, so no models are listed — first run once on this machine:"],
   [",再回来点下方「检测登录」。",", then come back and use \"Check sign-in\" below."],
@@ -7172,7 +7198,7 @@ async function loadCodexCli(){
   box.style.color='';box.style.display='';
   const b=$('#cxUp');if(!b)return;
   b.onclick=async()=>{
-    if(!confirm(`把这台机器上的 Codex 程序从 ${r.version} 升级到 ${r.latest}？\n会用安装它的 npm 重新全局安装最新版，大约一分钟。所有用 Codex 的群从下一轮起用新版；有群正在用 Codex 处理任务时不会升级。`))return;
+    if(!await askConfirm(`把这台机器上的 Codex 程序从 ${r.version} 升级到 ${r.latest}？\n会用安装它的 npm 重新全局安装最新版，大约一分钟。所有用 Codex 的群从下一轮起用新版；有群正在用 Codex 处理任务时不会升级。`))return;
     b.disabled=true;b.innerHTML='<span class="spin"></span>升级中';
     try{const u=await api('/api/codex/cli/upgrade','POST',{});
       box.textContent=u.changed?`Codex 程序已从 ${u.from} 升级到 ${u.to}。`:`Codex 程序仍是 ${u.to}，没有变化。`;box.style.color='var(--ok)';

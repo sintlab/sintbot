@@ -1,5 +1,24 @@
 [
   {
+    "version": "1.4.25",
+    "date": "2026-11-18",
+    "name": "A cleaner console",
+    "items": [
+      {
+        "t": "Group cards show only what works",
+        "d": "Cards now show only the settings this version supports: model, thinking depth, execution mode, busy follow-up, data output and plugins (view only for now). Preview, scheduled tasks, repository, design style, icons, canvas and unbind, which are not available yet, no longer appear. The Claude allowlist folds into one line and opens for editing."
+      },
+      {
+        "t": "A note when the public address is down",
+        "d": "If a public address is set, the console checks that it reaches this Mac. When it does not, Overview and Settings say so: Feishu sign-in from outside is unavailable for now, while the LAN console and all groups keep working."
+      },
+      {
+        "t": "Overview starts with no project selected",
+        "d": "Opening Overview no longer preselects a project. Click a project to see its task activity, and click it again to close it."
+      }
+    ]
+  },
+  {
     "version": "1.4.24",
     "date": "2026-11-16",
     "name": "Slack",

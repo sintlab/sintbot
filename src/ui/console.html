@@ -1049,6 +1049,17 @@ button.btn.nsmini{height:20px;padding:0 8px;font-size:11px;vertical-align:1px}
 #ggrid .gdetail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:24px}
 #ggrid .gdetail-grid>.kv{padding:12px 0;align-items:flex-start;min-width:0}
 #ggrid .gdetail-grid .vv{white-space:normal;overflow-wrap:anywhere}
+#ggrid .gdetail-list>.kv{padding:12px 0;align-items:center;min-width:0}
+#ggrid .gdetail-list>.kv:first-child{border-top:0}
+#ggrid .gdetail-list .vv{white-space:normal;overflow-wrap:anywhere}
+#ggrid .gids{display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:4px;padding:10px 0 2px;border-top:1px solid var(--line);font-family:var(--mono);font-size:11px;line-height:1.6;color:var(--faint);overflow-wrap:anywhere}
+#ggrid .gids>span{min-width:0}
+#ggrid .gperm-edit>summary{display:flex;align-items:center;gap:6px;min-height:28px;cursor:pointer;list-style:none;font-size:12px;color:var(--dim)}
+#ggrid .gperm-edit>summary::-webkit-details-marker{display:none}
+#ggrid .gperm-edit>summary::before{content:'›';font-size:16px;line-height:1;transition:transform .15s}
+#ggrid .gperm-edit[open]>summary::before{transform:rotate(90deg)}
+#ggrid .gperm-edit[open]>summary{margin-bottom:8px}
+#ggrid .gperm-edit>summary:focus-visible{outline:2px solid var(--ember);outline-offset:3px;border-radius:4px}
 #ggrid .gmore .acts{display:flex;justify-content:flex-end;border-top:1px solid var(--line);padding-top:12px;margin-top:8px}
 @container(max-width:740px){
   .gprimary-grid{grid-template-columns:minmax(0,1fr);gap:8px}
@@ -1317,6 +1328,13 @@ function startCardHtml(){
     ${sm&&!anyPlat?`<div class="hint" style="margin-top:8px">${sm.supervised?'后台服务现在只开着控制台:平台接好、保存后,它会自动重启并连上(约 15 秒)。':'守护进程现在只开着控制台:接好平台后,在终端里按 Ctrl-C 再运行 sintbot start --ui 连上。'}</div>`:''}
   </div>`;
 }
+// 公网入口打不开:群不依赖它(只是从外网用飞书登录控制台的入口),所以只在这里提示一句,不进「需要处理」。
+function publicReachHost(r){try{return new URL(r.url).host;}catch(e){return String((r&&r.url)||'');}}
+function publicReachNoteHtml(){
+  const r=S&&S.net&&S.net.publicReach;
+  if(!r||r.state!=='down')return '';
+  return `<div class="warn-line pubnote" style="margin-bottom:12px">${IC.warn} <span>公网入口 ${esc(publicReachHost(r))} 当前打不开（${fmtHM(r.checkedAt)} 检测）：外网飞书登录暂不可用，局域网控制台和各群不受影响。</span></div>`;
+}
 function renderOverview(){
   if(typeof activityPanel!=='undefined')activityPanel.preserve();
   const h=S.health;
@@ -1334,7 +1352,7 @@ function renderOverview(){
       ${liveOn?`<button class="iconbtn sm" data-ostop="${esc(g.chatId)}" title="停止当前任务(保留会话)" style="flex:none">${IC.square}</button>
       <button class="iconbtn sm" data-onew="${esc(g.chatId)}" title="${S.runtimeCapabilities?'开新会话 — 仅在该群空闲、记录全部结账后可用;运行中请先停止,结束后再开(同群内 /new)':'开新会话 — 运行中会先中断当前任务并清空队列(同群内 /new)'}" style="flex:none">${IC.rotate}</button>`:''}</div>`).join('')
     :'<div class="empty">还没有群项目 · 去「群·项目」配置</div>';
-  $('#overview').innerHTML=`${startCardHtml()}<div id="ovHeldWrap">${heldCardHtml()}</div><div id="ovInboxWrap">${inboxHtml()}</div><div class="grid ${S.runtimeCapabilities?'':'cols2'} stagger">
+  $('#overview').innerHTML=`${publicReachNoteHtml()}${startCardHtml()}<div id="ovHeldWrap">${heldCardHtml()}</div><div id="ovInboxWrap">${inboxHtml()}</div><div class="grid ${S.runtimeCapabilities?'':'cols2'} stagger">
     <div class="card${S.runtimeCapabilities?` hcard${healthFoldOpen(h)?'':' folded'}${healthAbnormal(h)?' locked':''}`:''}" id="ovHealth">${S.runtimeCapabilities
       ?`<button type="button" class="hfold" id="ovHealthFold" aria-controls="ovHrows" aria-expanded="${healthFoldOpen(h)}" title="展开或收起健康检查"><span class="lbl">健康</span><span class="hsum" id="ovHealthSum">${healthSumHtml(h)}</span>
       <span class="hpill ${healthClass(h)}" id="ovHealthPill"><span class="led"></span><span id="ovHealthTxt">${healthText(h)}</span></span><span class="hcaret">${IC.chevronDown}</span></button>`
@@ -2935,10 +2953,11 @@ function groupBrainRows(g){
     </span></div>`:'';
   const win=g.contextWindow&&g.contextWindow.tokens?providerWindowText({contextWindow:g.contextWindow,runner:pr.runner},true):'';
   // One "模型" row: backend and model side by side (they wrap on a narrow screen).
-  return `<div class="kv"><span class="kk">模型</span><span class="vv inline" style="gap:6px;flex-wrap:wrap;min-width:0">${backend}${model}</span></div>
+  const rule='换后端会开新对话；换型号或调深度接着当前对话 · 群空闲时才能改';
+  return `<div class="kv"><span class="kk"${S.runtimeCapabilities?` title="${rule}"`:''}>模型</span><span class="vv inline" style="gap:6px;flex-wrap:wrap;min-width:0">${backend}${model}</span></div>
     <div class="kv"><span class="kk">思考深度</span>${effort}</div>${speedRow}
     ${win?`<div class="kv"><span class="kk">上下文</span><span class="vv" title="${esc(win)}">${esc(win)}</span></div>`:''}
-    <div class="kv"><span class="kk"></span><span class="faint" style="font-size:11px">换后端会开新对话；换型号或调深度接着当前对话 · 群空闲时才能改</span></div>`;
+    ${S.runtimeCapabilities?'':`<div class="kv"><span class="kk"></span><span class="faint" style="font-size:11px">${rule}</span></div>`}`;
 }
 /* 群卡折叠:每群记一份(localStorage `sbot-gfold` = {chatId:0|1});没记过的按群数定默认 —— 两个以内全展开,再多就先收成一行。
    ⚠ 这几个助手在单测抠出来的那段脚本里(那里没有 document / localStorage),所以只用 try 包着的全局。 */
@@ -2949,6 +2968,7 @@ function setGroupCardOpen(chatId,open){const st=groupFoldState();st[chatId]=open
   const live=new Set(((S&&S.groups)||[]).map(g=>g.chatId));for(const k of Object.keys(st))if(!live.has(k))delete st[k];   // 解绑的群不留记录
   try{localStorage.setItem('sbot-gfold',JSON.stringify(st));}catch(e){}}
 // 路径只为显示缩成 ~/…(完整路径在悬浮提示与「更多设置」里)
+const I18N_SEP_ZH=' · ';
 function tildePath(p){return String(p==null?'':p).replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/,'~');}
 async function saveGroupBrain(chatId,change){
   try{
@@ -2969,6 +2989,8 @@ function renderGroups(){
     // Codex(GPT)跑自己的 agent 框架:只吃 permissionMode→沙箱层级,allow/deny 与 MCP 门控
     // 都是 Claude 专属(codexcode 根本不接收这些字段)。所以 codex 群不渲染那些无效控件。
     const pr=provOf(g), isCodex=!!pr&&pr.runner==='codex';
+    // 新版服务按白名单放行:不支持的行不画(有写接口的按白名单判断,服务端放行后自动回来);旧行为对照照旧全画。
+    const rt=!!S.runtimeCapabilities, rtOff=(path,method)=>rt&&!runtimeAllows(method||'POST',path), plugRo=!isCodex&&rtOff('/api/groups/plugins');
 
     // 群属于哪个平台(服务端按配置 / id 形态算好):企微群没有画布、没有解散、基础技能文案不同;徽标只在配了企微 / Slack 时出(只配飞书的机器零变化)
     const isWe=g.platform==='wecom', isSl=g.platform==='slack', showPlat=!!(S.platforms&&(S.platforms.wecom||S.platforms.slack));
@@ -2987,14 +3009,15 @@ function renderGroups(){
     // 权限区(两后端同名「权限」):完全访问 → 统一警告;受限下 Claude=预设+allow/deny,Codex=一行说明。
     const warnFull=`<div class="warn-line">${IC.warn} 本群 <b>完全访问</b>(${fullTech}):跳过所有权限校验与目录围栏,可读写整机${isCodex?'':',allow/deny 清单<b>不生效</b>'}。上方改回「${safeLabel}」即恢复。</div>`
     const permInner=isBypass?warnFull:(isCodex
-      ?`<div class="hint">Codex 为<b>只读沙箱</b>,无 allow/deny 细粒度(Claude 专属)。MCP 在「模型 · 库」页「插件库」的 <b>Codex</b> 区装,全局对所有 codex 群生效。</div>`
-      :`<div class="inline" style="gap:6px;margin-bottom:6px"><span class="hint">白名单预设:</span>
+      ?(S.runtimeCapabilities?'<div class="hint">Codex 为<b>只读沙箱</b>,无 allow/deny 细粒度(Claude 专属)。</div>'
+        :`<div class="hint">Codex 为<b>只读沙箱</b>,无 allow/deny 细粒度(Claude 专属)。MCP 在「模型 · 库」页「插件库」的 <b>Codex</b> 区装,全局对所有 codex 群生效。</div>`)
+      :`${rt?`<details class="gperm-edit" data-gdetails="perm:${esc(g.chatId)}"${groupDetailsOpen.has('perm:'+g.chatId)?' open':''}><summary>编辑白名单${I18N_SEP_ZH}${(g.allowedTools||[]).length?'allow '+(g.allowedTools||[]).length+' 项':'allow 留空 = 只读'}${(g.disallowedTools||[]).length?I18N_SEP_ZH+'deny '+(g.disallowedTools||[]).length+' 项':''}</summary>`:''}<div class="inline" style="gap:6px;margin-bottom:6px"><span class="hint">白名单预设:</span>
           <button class="btn" data-pp="ro" data-g="${esc(g.chatId)}" title="allow 留空 = 只读安全集(缺省,fail-closed)">只读</button>
           <button class="btn" data-pp="dev" data-g="${esc(g.chatId)}" title="文件读写 + 联网查询 + 窄 Bash 白名单(npm/node/python/git 本地),deny 兜底线 — 日常推荐">开发</button>
           <button class="btn ghost" data-pp="full" data-g="${esc(g.chatId)}" title="Bash(*) 全开,无目录围栏 — 群里任何成员可在主机执行任意命令,仅限完全可信的私人群" style="color:var(--risk)">全信任</button></div>
         <textarea class="gallow" data-g="${esc(g.chatId)}" rows="2" placeholder="allowedTools(逗号/换行分隔)· 留空 = 只读" style="width:100%;font-size:11px;box-sizing:border-box">${esc((g.allowedTools||[]).join(', '))}</textarea>
         <textarea class="gdeny" data-g="${esc(g.chatId)}" rows="1" placeholder="disallowedTools(可留空)" style="width:100%;font-size:11px;box-sizing:border-box;margin-top:5px">${esc((g.disallowedTools||[]).join(', '))}</textarea>
-        <div class="inline" style="justify-content:space-between;margin-top:5px"><span class="hint">仅本项目目录 · 空 allow = 只读 · 预设可手改,点保存生效</span><button class="btn primary" data-pol="${esc(g.chatId)}">保存权限</button></div>`)
+        <div class="inline" style="justify-content:space-between;margin-top:5px"><span class="hint">仅本项目目录 · 空 allow = 只读 · 预设可手改,点保存生效</span><button class="btn primary" data-pol="${esc(g.chatId)}">保存权限</button></div>${rt?'</details>':''}`)
     // 权限行 + 插件行两后端同名。Claude=按群勾选(strict 接管);codex=只读查看(全局加载,无按群门控)。
     // 基础技能(群项目基础能力):恒有的内建飞书发送能力 + 自知清单说明。只读展示(无门控)。
     // codex 只读沙箱无法联网发送,给出可操作警示;claude 与 codex 完全访问下均可用。
@@ -3014,19 +3037,19 @@ function renderGroups(){
       :denyPush
         ?' · <span style="color:var(--risk)">'+IC.warn+' 当前权限 <b>deny 了 git push</b>,agent 推不动 —— 去下方「权限」区移除 <code>Bash(git push *)</code> 并加进 allow</span>'
         :' · <span style="color:var(--risk)">'+IC.warn+' 当前 allow 里<b>没有 git push</b>,agent 推不动 —— 去下方「权限」区加 <code>Bash(git push *)</code></span>')
-    const permPlug=`        <div class="kv" style="align-items:flex-start"><span class="kk">基础技能</span>
+    const permPlug=`${rt?'':`        <div class="kv" style="align-items:flex-start"><span class="kk">基础技能</span>
           <div style="flex:1;min-width:0">
             ${S.runtimeCapabilities?'<div class="hint">'+esc(RUNTIME_UI_TEXT.skills)+'</div>':`            <div class="inline" style="gap:6px;flex-wrap:wrap">${isWe?'<span class="chip cap" title="发送(文件/图片/消息) · 拉近 7 天群历史 —— 均针对本群;企业微信没有编辑/撤回/表情回应">企业微信 · 收发群消息</span>':'<span class="chip cap" title="发送(文件/图片/消息) · 拉历史 · 回复/编辑/撤回 · 下载文件 · 表情回应 —— 均针对本群">飞书 · 收发/管理群消息</span>'}<span class="chip cap" title="群里直接对它说「每天9点拉构建报告」就会创建;支持创建/修改/删除定时任务,到点触发执行或只发提醒 —— 下方「定时任务」区可查看/管理">定时任务</span><span class="chip cap" title="按需使用:仅从零设计新产品且未定视觉方向时推荐预设;也可按要求提炼参考并写入项目 DESIGN.md">设计风格档</span></div>
             <div class="hint" style="margin-top:5px">默认内建 · ${isWe?'企业微信收发/拉历史':'飞书收发/拉历史/回复编辑撤回/下载/表情'} · <b>定时任务</b>(群里说一句即可让 agent 创建/修改) · <b>设计风格档</b>(新产品设计时按需使用) · <b>生图</b>(需机器已登录 codex,借订阅后台生图) · agent 首轮自知(身份/项目/模型/权限/控制台地址 + 已启用插件)${baseSkillNote}</div>`}
           </div></div>
-        <div class="kv" style="align-items:flex-start"><span class="kk">插件</span>
+`}        <div class="kv" style="align-items:flex-start"><span class="kk">插件</span>
           <div style="flex:1;min-width:0">
             <div class="inline" style="justify-content:space-between;gap:8px">
               <span class="hint plugsum" data-g="${esc(g.chatId)}" style="font-size:11px" title="${esc(!isCodex&&g.proj&&(g.proj.mcp.length||g.proj.skills.length)?['项目级 MCP:'+(g.proj.mcp.join('、')||'无'),g.proj.skills.length?'项目技能:'+g.proj.skills.join('、'):''].filter(Boolean).join(' · '):'')}">${isCodex?'全局加载':plugSummary(g)}</span>
-              <button class="btn" data-plug="${esc(g.chatId)}">${isCodex?'查看':'配置'}</button></div>
+              <button class="btn" data-plug="${esc(g.chatId)}"${plugRo?' data-plugro="1"':''}>${isCodex||plugRo?'查看':'配置'}</button></div>
             <div class="plugbox" data-g="${esc(g.chatId)}" style="display:none;margin-top:6px;max-height:280px;overflow-y:auto"></div>
           </div></div>
-        <div class="kv" style="align-items:flex-start"><span class="kk">定时任务</span>
+${rtOff('/api/groups/cron/add')?'':`        <div class="kv" style="align-items:flex-start"><span class="kk">定时任务</span>
           <div style="flex:1;min-width:0">
             <div class="inline" style="justify-content:space-between;gap:8px;margin-bottom:${(g.crons&&g.crons.length)?'7px':'4px'}">
               <span class="hint">${S.runtimeCapabilities?esc(RUNTIME_UI_TEXT.cron):(g.crons&&g.crons.length)?g.crons.length+' 个 · 到点触发 agent 或发消息':'暂无 · 到点触发 agent 或发消息'}</span>
@@ -3064,7 +3087,7 @@ function renderGroups(){
               <div class="hint" style="margin-top:9px"><b>一次性</b>(触发后自动消失):只填 <b>10:20</b> = 今天(过了算明天) · <b>07-16 10:20</b> = 今年 · 完整 <b>2026-07-16 13:10</b> 照旧。<b>循环</b>:每天 09:00 / 工作日 8:30 / cron。时间按群时区</div>
             </div>
           </div></div>
-        <div class="kv" style="align-items:flex-start"><span class="kk">仓库</span>
+`}${rtOff('/api/groups/repo')?'':`        <div class="kv" style="align-items:flex-start"><span class="kk">仓库</span>
           <div style="flex:1;min-width:0">
             <div class="inline" style="gap:6px">
               <input class="grepo mono" data-g="${esc(g.chatId)}" value="${esc(g.repo||'')}" placeholder="git@host:org/repo.git · 可留空" style="flex:1;min-width:0;font-size:11px"/>
@@ -3073,7 +3096,7 @@ function renderGroups(){
             </div>
             <div class="hint" style="margin-top:5px">保存即关联(git init + 设 origin)· 推送交给 agent · 留空解除${repoWarn}</div>
           </div></div>
-        <div class="kv" style="align-items:flex-start"><span class="kk">设计风格</span>
+`}${rt?'':`        <div class="kv" style="align-items:flex-start"><span class="kk">设计风格</span>
           <div style="flex:1;min-width:0">${(g.styles||[]).length
             ?(g.styles||[]).map(st=>`<div class="inline" style="gap:10px;align-items:flex-start;margin-top:${(g.styles||[]).indexOf(st)?'12px':'0'}">
                 ${swatchSvg(st.layout,58)}
@@ -3088,7 +3111,7 @@ function renderGroups(){
             :'<span class="dim">未设置 · 仅从零设计新产品且未定方向时推荐风格库</span>'}
             ${(g.styles||[]).length>1?'<div class="hint faint" style="margin-top:10px">这个项目有多份风格档 —— 出图时按任务挑对应那份(小程序与后台网站的圆角、间距、字号本来就该不一样)</div>':''}
           </div></div>
-        <div class="kv" style="align-items:flex-start"><span class="kk">图标</span>
+`}${rt?'':`        <div class="kv" style="align-items:flex-start"><span class="kk">图标</span>
           <div style="flex:1;min-width:0">
             <div class="inline" style="gap:6px;flex-wrap:wrap;align-items:baseline">
               <select data-iconsys="${esc(g.chatId)}" style="width:auto;min-width:150px">
@@ -3146,7 +3169,7 @@ function renderGroups(){
               ? `图形从 ${esc(g.icons.library)} 来${g.icons.fallbackLibrary?` · 取不到时去 ${esc(g.icons.fallbackLibrary)} 兜底`:' · 不兜底'} · 语义名 ${g.icons.semantics} 条${g.icons.assets?` · 图标目录 ${esc(g.icons.assets)}`:''}`
               : '与设计风格<b>平级</b>的另一件事 —— 这里管图形从哪来、叫什么名、线性还是实心;风格管怎么画(描边粗细/端点/尺寸档)'}</div>
           </div></div>
-        ${isWe?'':`<div class="kv" style="align-items:flex-start"><span class="kk">画布</span>
+`}        ${isWe||rt?'':`<div class="kv" style="align-items:flex-start"><span class="kk">画布</span>
           <div style="flex:1;min-width:0">${g.board&&g.board.url
             ?`<span class="tag">${IC.check} 已创建</span> <a href="${esc(g.board.url)}" target="_blank" rel="noopener" style="color:var(--ember-soft)">打开画板 ${IC.ext}</a>${S.runtimeCapabilities?'<div class="hint">'+esc(RUNTIME_UI_TEXT.board)+'</div>':''}`
             :`<span class="dim">${S.runtimeCapabilities?esc(RUNTIME_UI_TEXT.board):'未创建 · 群里让 agent 需要放图时会自动建'}</span>`}</div></div>`}`
@@ -3159,7 +3182,8 @@ function renderGroups(){
       <div class="inline" style="gap:6px;flex-shrink:0">
         ${g.paused?'<span class="tag pz" title="'+esc(S.runtimeCapabilities?RUNTIME_UI_TEXT.paused:'暂停中:消息静默丢弃 · 定时任务与画布播报停发 · 配置全保留')+'">'+IC.pause+' 已暂停</span>':''}
         ${platTag}
-        <span class="tag${g.exists?'':' bad'}">${g.exists?'workdir '+IC.check:'workdir 缺失'}</span>
+        ${rt?(g.exists?'':'<span class="tag bad" title="项目目录不存在:群里的任务会失败,去「配置群项目」改目录">目录缺失</span>')
+          :`<span class="tag${g.exists?'':' bad'}">${g.exists?'workdir '+IC.check:'workdir 缺失'}</span>`}
         ${repoTag}
         <button class="btn ghost" data-gpause="${esc(g.chatId)}" data-p="${g.paused?'1':'0'}" title="${S.runtimeCapabilities?esc(g.paused?RUNTIME_UI_TEXT.resume:RUNTIME_UI_TEXT.pause):g.paused?'恢复本群:bot 重新响应消息、定时任务与画布播报恢复':'暂停本群:期间消息静默丢弃、排队清空、定时任务与画布播报停发;进行中的任务跑完;完全可逆,配置全保留'}">${g.paused?IC.play+' '+(S.runtimeCapabilities?RUNTIME_UI_TEXT.resumeLabel:'恢复'):IC.pause+' 暂停'}</button>
       </div>
@@ -3176,34 +3200,35 @@ function renderGroups(){
         <input type="checkbox" class="switch gsteer" data-g="${esc(g.chatId)}"${g.followupEnabled?' checked':''}/>
         <span>后续消息加入当前处理</span>
       </label>
-      <span class="faint" style="font-size:11px">默认开启 · 下轮生效</span>
+      ${rt?'':'<span class="faint" style="font-size:11px">默认开启 · 下轮生效</span>'}
     </span></div>
       </section>
     </div>
     <details class="gmore" data-gdetails="${esc(g.chatId)}"${groupDetailsOpen.has(g.chatId)?' open':''}>
-      <summary><span>更多设置</span><span class="hint">插件、数据输出与项目工具</span></summary>
-      <div class="gdetail-grid">
-    <div class="kv"><span class="kk">chatId</span><span class="vv mono">${esc(g.chatId)}</span></div>
-    <div class="kv"><span class="kk">workdir</span><span class="vv mono" title="${esc(g.workdir)}">${esc(g.workdir)}</span></div>
-    <div class="kv"><span class="kk">预览</span><span class="vv inline" style="gap:8px">
+      <summary><span>更多设置</span><span class="hint">${rt?'插件与数据输出':'插件、数据输出与项目工具'}</span></summary>
+      <div class="${rt?'gdetail-list':'gdetail-grid'}">
+    ${rt?'':`<div class="kv"><span class="kk">chatId</span><span class="vv mono">${esc(g.chatId)}</span></div>
+    <div class="kv"><span class="kk">workdir</span><span class="vv mono" title="${esc(g.workdir)}">${esc(g.workdir)}</span></div>`}
+${rtOff('/api/groups/preview')?'':`    <div class="kv"><span class="kk">预览</span><span class="vv inline" style="gap:8px">
       <label class="inline" style="gap:5px;cursor:pointer" title="${esc(S.runtimeCapabilities?RUNTIME_UI_TEXT.preview:'常驻 = 该群的原型预览不再按闲置(默认 30 分钟)或时长(默认 8 小时)自动停止,直到有人手动停。\n这是「让群成员随时都能打开」的正规入口 —— 由你决定,agent 不能自己开。\n代价:那个目录会一直挂在局域网上,请用完及时停。')}">
         <input type="checkbox" class="switch gpv" data-g="${esc(g.chatId)}"${g.preview&&(g.preview.idleMin===0&&g.preview.maxHours===0)?' checked':''}/>
         <span>常驻(不自动停)</span>
       </label>
       <span class="faint" style="font-size:11px">${S.runtimeCapabilities?esc(RUNTIME_UI_TEXT.preview):'当前:'+previewPolicyText(g)}</span>
     </span></div>
-    <div class="kv"><span class="kk">数据输出</span><span class="vv inline" style="gap:8px">
+`}    <div class="kv"><span class="kk">数据输出</span><span class="vv inline" style="gap:8px">
       <label class="inline" style="gap:5px;cursor:pointer" title="明文 = 该群回复里的手机号/邮箱原样显示,不再遮盖。&#10;适用于成员数据本来就是查询内容的内部业务群 —— 由你决定,助手不能自己开。&#10;密钥类信息(token / key / 私钥)没有开关,任何群都会自动遮盖。">
         <input type="checkbox" class="switch gpii" data-g="${esc(g.chatId)}"${g.redactPii===false?' checked':''}/>
         <span>明文(手机号/邮箱不遮盖)</span>
       </label>
-      <span class="faint" style="font-size:11px">${g.redactPii===false?'当前:明文':'当前:遮盖'}</span>
+      ${rt?'':`<span class="faint" style="font-size:11px">${g.redactPii===false?'当前:明文':'当前:遮盖'}</span>`}
     </span></div>
     ${permPlug}
       </div>
-    <div class="acts">
-      <button class="btn ghost" data-rm="${esc(g.chatId)}" title="${isWe?'仅解除本控制台里的绑定配置,群本身保留(企业微信群要解散只能在企业微信里操作)':'仅解除本控制台里的绑定配置,飞书群本身保留(解散群在「配置群项目」面板)'}">解除绑定</button>
-    </div>
+    ${rt?`<div class="gids"><span>${esc(g.chatId)}</span><span>${esc(g.workdir)}</span></div>`:''}
+    ${rtOff('/api/groups','DELETE')?'':`<div class="acts">
+      <button class="btn ghost" data-rm=""${esc(g.chatId)}" title="${isWe?'仅解除本控制台里的绑定配置,群本身保留(企业微信群要解散只能在企业微信里操作)':'仅解除本控制台里的绑定配置,飞书群本身保留(解散群在「配置群项目」面板)'}">解除绑定</button>
+    </div>`}
     </details>
     </div>
   </div>`;
@@ -3364,10 +3389,10 @@ function renderGroups(){
   $$('#groups [data-plug]').forEach(b=>b.onclick=async()=>{
     const cid=b.dataset.plug,box=$('.plugbox[data-g="'+cid+'"]');
     const grp=S.groups.find(x=>x.chatId===cid)||{},pv=S.providers.find(p=>p.name===(grp.provider||S.defaultProvider)),isCodex=!!pv&&pv.runner==='codex';
-    const openLbl=isCodex?'收起':'保存',closeLbl=isCodex?'查看':'配置';
+    const ro=b.dataset.plugro==='1',openLbl=isCodex||ro?'收起':'保存',closeLbl=isCodex||ro?'查看':'配置';
     if(box.style.display!=='none'){box.style.display='none';b.textContent=closeLbl;return;}  // 收起
     box.style.display='block';b.textContent=openLbl;box.innerHTML='<span class="spin"></span>';
-    try{const r=await api('/api/plugins?chatId='+encodeURIComponent(cid));renderPlugBox(cid,box,r,isCodex);}
+    try{const r=await api('/api/plugins?chatId='+encodeURIComponent(cid));renderPlugBox(cid,box,r,isCodex,ro);}
     catch(e){box.innerHTML='<div class="reply err">'+IC.x+' '+esc(e.message)+'</div>';}
   });
 }
@@ -3397,7 +3422,7 @@ function reachChip(r){
     :' · 仍会照常加载 —— 本机直连探测不走代理,探不通不代表它不可用');
   return `<span class="chip ${bad?'warn':'none'}" title="${esc(tip)}" style="flex-shrink:0;margin-left:6px">${bad?'连不上':'未确认'}</span>`;
 }
-function renderPlugBox(cid,box,r,isCodex){
+function renderPlugBox(cid,box,r,isCodex,ro){
   const mrow=(name,detail,reach)=>`<div class="kv" style="padding:3px 0;border-top:none"><span class="kk mono" style="white-space:nowrap">${esc(name)}</span><span class="vv" title="${esc(detail||'')}">${esc(detail||'MCP')}</span>${reachChip(reach)}</div>`;
   if(isCodex){ // codex:只读 —— 全局加载 ~/.codex/config.toml 全部,无按群门控
     const cm=(r.codex&&r.codex.mcp)||[];
@@ -3425,7 +3450,7 @@ function renderPlugBox(cid,box,r,isCodex){
   //   对这类群得反过来说清「不会跳过、每轮都在付」,并给出路(保存一次勾选)。审查逮到的「说的和做的不一致」。
   const deadRow=dead.length?`<div class="hint" style="margin-top:6px;color:var(--warn)" title="${esc(dead.map(m=>m.name+' — '+((m.reach&&m.reach.detail)||'')).join('\n'))}">${en?`勾着但连不上:<span class="mono">${dead.map(m=>esc(m.name)).join('、')}</span> — 这一轮会跳过不加载(否则每轮都白等它启动失败)。<b>不用取消勾选</b>,服务起来后自动恢复。`:`连不上:<span class="mono">${dead.map(m=>esc(m.name)).join('、')}</span> — 本群没配过插件、按默认加载全部,<b>不会跳过</b>,每轮都会替它付一次启动失败;要让它被自动跳过,在这里<b>保存一次勾选</b>(勾上要用的那几个即可),之后服务起来后自动恢复。`}</div>`:'';
   box.innerHTML=`${mcpRows}${skillRow}${deadRow}
-    <div class="hint" style="margin-top:7px" title="启用即自动放行 mcp__名__*,deny 仍优先;取消全部 = 只留项目级">勾选的 MCP 本群加载 · 下轮生效</div>`;
+    <div class="hint" style="margin-top:7px" title="${ro?'':'启用即自动放行 mcp__名__*,deny 仍优先;取消全部 = 只留项目级'}">${ro?'当前版本只能查看本群加载的 MCP':'勾选的 MCP 本群加载 · 下轮生效'}</div>`;
   const sum=$('.plugsum[data-g="'+cid+'"]');
   const saveNow=async(cb)=>{
     const mcp=[...box.querySelectorAll('.pmcp:checked')].map(i=>i.value);
@@ -3436,6 +3461,7 @@ function renderPlugBox(cid,box,r,isCodex){
       if(sum){const g2=S.groups.find(x=>x.chatId===cid);sum.textContent=plugSummary(g2||{plugins:{mcp,skills}});}
       toast('已生效(下轮)','ok');}
     catch(e){toast(e.message,'err');if(cb)cb.checked=!cb.checked;}};  // 失败回滚勾选态
+  if(ro){box.querySelectorAll('.pmcp').forEach(i=>{i.disabled=true;});return;}  // 当前版本不收按群改动:只看
   box.querySelectorAll('.pmcp').forEach(i=>i.onchange=()=>saveNow(i));
   // 安装/添加 MCP 已统一到模型页「插件库」命令行:群卡只做门控(勾选),
   // 不再重复放安装框 —— 库安装走 --scope user 与 cwd 无关,群卡那个框冗余。
@@ -4639,6 +4665,10 @@ function fxFeishuAccessCard(fe){
     <div class="field"><label class="f" for="fPublicUrl">HTTPS 地址</label><div class="feishu-actions"><input id="fPublicUrl" type="url" placeholder="https://console.example.com" value="${esc(fl.publicUrl||'')}"/><button class="btn" id="fPubSave">保存地址</button></div></div>
     ${fl.redirectUri?`<p class="hint">在飞书应用后台「安全设置 → 重定向 URL」添加：</p><div class="feishu-actions"><code class="feishu-uri">${esc(fl.redirectUri)}</code><button class="btn" id="fPubCopy" data-uri="${esc(fl.redirectUri)}">复制回调地址</button></div>`:''}
     <p class="hint">${fl.ready?'飞书登录配置已就绪':!fl.publicUrl?'未设置公网地址，仅使用本机控制台时无需填写':'飞书登录未就绪:'+esc(fl.why||'')}</p>
+    ${(()=>{const r=(S.net||{}).publicReach;if(!r||!fl.publicUrl)return '';
+      if(r.state==='down')return `<p class="hint" style="color:var(--risk)">公网入口当前打不开（${fmtHM(r.checkedAt)} 检测）：外网飞书登录暂不可用，各群不受影响</p>`;
+      if(r.state==='ok')return `<p class="hint">公网入口已连通（${fmtHM(r.checkedAt)} 检测）</p>`;
+      return '<p class="hint">公网入口检测中</p>';})()}
   </details></div>`;
 }
 // Slack 应用身份条:bot 名 + workspace(没预检过就直说"尚未获取",别留白 —— 留白看起来像坏了)
@@ -4996,6 +5026,8 @@ $$('nav button').forEach(b=>b.onclick=()=>{
   // 切过去时若自动刷新期间状态变过就重画这一页(见 renderTabIfStale:变了才动 DOM,
   // 否则填了一半的 cron/设置表单会被无谓清掉)
   try{renderTabIfStale(b.dataset.tab);}catch{}
+  // 每次切到概览都不选中群项目:点了具体的群才显示它的任务活动
+  if(b.dataset.tab==='overview'&&typeof activityPanel!=='undefined'){try{activityPanel.reset();}catch{}}
   if(b.dataset.tab==='playground'&&lc.chat){lcStick();lcSync();}
   // ⚠ 刚切过来这一页才第一次有真实宽度 —— 之前画的样张排是按宽度 0 算的(等于没算)。
   //   不在这儿补一次,那排图就会被 overflow:hidden 切掉半个。
@@ -5260,6 +5292,7 @@ const I18N_EN=[
   ["复制回调地址", "Copy callback URL"],
   ["飞书登录配置已就绪", "Feishu sign-in configuration is ready"],
   ["未设置公网地址，仅使用本机控制台时无需填写", "No public URL set. Leave it empty when using only the local console."],
+  ["公网入口检测中", "Checking the public address"],
   ["尚未添加管理员；使用公网飞书登录前请先添加。", "No administrators added. Add one before using public Feishu sign-in."],
 
   ["正在处理任务", "Task in progress"],
@@ -5394,6 +5427,15 @@ const I18N_EN=[
   ["执行设置","Execution settings"],
   ["更多设置","More settings"],
   ["插件、数据输出与项目工具","Plugins, data output and project tools"],
+  ["插件与数据输出","Plugins and data output"],
+  ["忙时跟进","Busy follow-up"],
+  ["目录缺失","Folder missing"],
+  ["项目目录不存在:群里的任务会失败,去「配置群项目」改目录","The project folder does not exist: tasks in this group will fail. Change it in Configure groups."],
+  ["编辑白名单","Edit allowlist"],
+  ["allow 留空 = 只读","allow empty = read-only"],
+  ["换后端会开新对话；换型号或调深度接着当前对话 · 群空闲时才能改","Changing the backend starts a new conversation; changing the model or depth continues it · only while the group is idle"],
+  ["当前版本只能查看本群加载的 MCP","This version only shows which MCP servers this group loads"],
+  [",无 allow/deny 细粒度(Claude 专属)。"," with no fine-grained allow/deny (Claude only)."],
   ["模型 · 库","Models · Library"],
   ["设置","Settings"],
   ["试跑 — 从控制台直接跑一轮","Test run — run one turn from the console"],
@@ -6564,6 +6606,11 @@ const I18N_EN=[
   ["本页内容", "On this page"],
 ];
 const I18N_EN_RX=[
+  [/^allow (\d+) 项$/,"allow $1"],[/^deny (\d+) 项$/,"deny $1"],
+  // 公网入口检测(概览提示与设置页)
+  [/^公网入口 (\S+) 当前打不开（(.+?) 检测）：外网飞书登录暂不可用，局域网控制台和各群不受影响。$/,"The public address $1 is not reachable (checked $2). Feishu sign-in from outside is unavailable for now; the LAN console and all groups are not affected."],
+  [/^公网入口当前打不开（(.+?) 检测）：外网飞书登录暂不可用，各群不受影响$/,"The public address is not reachable (checked $1). Feishu sign-in from outside is unavailable for now; groups are not affected"],
+  [/^公网入口已连通（(.+?) 检测）$/,"The public address is reachable (checked $1)"],
   // Slack 接入:带动态内容的提示(核心给出的令牌结论、连接状态)
   [/^最近事件 (\d+) 秒前$/,"Last event $1 s ago"],
   [/^最近事件 (\d+) 分钟前$/,"Last event $1 min ago"],

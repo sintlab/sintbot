@@ -1,4 +1,4 @@
-# Install SintBot 1.4.24
+# Install SintBot 1.4.25
 
 English · [简体中文](./zh-CN/install.md)
 
@@ -16,7 +16,7 @@ For Slack, follow the [Slack connection and usage guide](./platforms/slack.md); 
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-The installer checks the environment, installs `sintbot@1.4.24` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.24`. No sudo is needed.
+The installer checks the environment, installs `sintbot@1.4.25` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.25`. No sudo is needed.
 
 To preview, append `-s -- --dry-run`. To choose another location, set `SINTBOT_INSTALL_DIR` and adjust the executable paths below.
 

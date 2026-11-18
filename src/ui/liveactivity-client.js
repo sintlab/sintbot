@@ -1,7 +1,8 @@
 /* Injected into the console's existing script; no framework or extra connection. */
 const activityPanel = (() => {
+  // No project is selected when Overview opens: task activity shows only after a project is clicked,
+  // so the selection is not remembered across tabs or reloads.
   let root, groupBody, listBody, taskBody, capacityNode, selected = '', count = 5
-  try { selected = sessionStorage.getItem('sintbot.activity.group') || '' } catch {}
   let epoch = '', revision = -1, loaded = false, pending = null, frames = [], scheduled = false
   const rows = new Map(), groups = new Map(), detailCache = new Map(), detailPending = new Set(), detailErrors = new Map(), open = new Set()
   const groupNodes = new Map(), rowNodes = new Map(), actionPending = new Set()
@@ -119,9 +120,9 @@ const activityPanel = (() => {
       }
       n.append(actions)
       select.onclick = () => {
-        if (selected === g.chatId) return
+        // A second click on the selected project closes its task activity again.
+        if (selected === g.chatId) { selected = ''; schedule(); return }
         selected = g.chatId; count = 5
-        try { sessionStorage.setItem('sintbot.activity.group', selected) } catch {}
         schedule(); requestAnimationFrame(() => {
           if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
             taskBody.getAnimations().forEach(animation => animation.cancel())
@@ -248,7 +249,7 @@ const activityPanel = (() => {
     text(root.querySelector('h2'),tr('群 · 项目','Groups · Projects'))
     const concurrency = S?.live?.concurrency, capacity = concurrency?.max ?? S?.agent?.maxConcurrent ?? 0
     text(capacityNode, tr('运行 ','Running ') + (concurrency?.active ?? [...groups.values()].filter(g=>g.busy).length) + (capacity > 0 ? ' / ' + capacity : '') + ' · ' + tr('排队 ','Queued ') + (S?.live?.queue || 0))
-    if (loaded && selected && !groups.has(selected)) { selected = ''; try { sessionStorage.removeItem('sintbot.activity.group') } catch {} }
+    if (loaded && selected && !groups.has(selected)) selected = ''
     reconcile(groupBody, groups.size ? [...groups.values()].map(groupNode) : [node('div','empty',loaded ? tr('暂无群项目','No projects') : tr('正在同步…','Syncing…'))])
     const group = groups.get(selected)
     taskBody.hidden = !group
@@ -290,6 +291,8 @@ const activityPanel = (() => {
     // The running/queued readout sits in the console's page-header slot (shown there while Overview is the open tab).
     mount(){setup();const target=document.getElementById('liveActivity');if(target&&root.parentNode!==target)target.append(root);const slot=document.getElementById('pSlot');if(slot&&capacityNode.parentNode!==slot)slot.append(capacityNode);groupBody.scrollTop=groupScroll;if(focusBeforeRender?.isConnected)focusBeforeRender.focus({preventScroll:true});focusBeforeRender=null;schedule();void sync()},
     sync,
+    // Switching to Overview starts with no project selected.
+    reset(){if(selected){selected='';count=5;schedule()}},
     receive(data){if(pending){frames.push(data);if(frames.length>200)frames.shift()}else apply(data,false)},
     live(live){for(const [id,value]of Object.entries(live?.groups||{})){const g=groups.get(id);if(g)Object.assign(g,value)}schedule()},
     connected(value){connected=value;schedule()},

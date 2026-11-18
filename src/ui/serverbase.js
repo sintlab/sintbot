@@ -36,6 +36,7 @@ const design = require('../design') // 设计风格档:风格库(内置预设 + 
 const preview = require('../preview') // 群预览服务:运行中的预览要在概览里看得见、能一键停(那个挂了一周的服务就是因为没人看得见)
 const { createIssues, summarize, fingerprint } = require('../core/issues') // 群内反馈本:同理 —— 只躺在文件里没人看,和消失没区别
 const leftover = require('../leftover') // 遗留进程:对话轮次结束后仍在跑的后台 shell —— 同一条道理,那条每 5 秒打线上接口的循环跑了 35 天就是因为没处看见
+const { createPublicReach } = require('./publicreach') // 公网地址是否通到本进程:只用来在控制台提示,不碰任何群
 const { withFileLock } = require('../core/store') // 反馈本改状态要与 CLI/群命令共用同一把跨进程锁
 const { redact } = require('../core/redact') // 出站脱敏:预览停止通知里含 agent 提供的 label
 const { hashPassword, verifyPassword } = require('./auth')
@@ -224,7 +225,7 @@ function bindNoticeText(workdir, platform = 'feishu', cmd = '/help') {
   return `✅ 本群已绑定项目「${path.basename(String(workdir || '')) || '(未命名)'}」\n${platform === 'wecom' ? '@我 派单(只有 @ 我的消息我才收得到)' : platform === 'slack' ? '在频道里 @我 派单(不 @ 我的消息不处理)' : '直接发消息或 @我 派单'};${cmd} 查看命令`
 }
 
-function createUiServer({ configPath, getLiveState = null, getConnHealth = null, onConfigChange = null, onHostChange = null, control = null, updater = null, host = '127.0.0.1', log = () => {}, issuesPath = null, sessionsPath = null, auditPath = null, ledgerPath = null, inboxDismissPath = null, fetchImpl = null, cdpImpl = null, onTakeoverClaim = null, onTakeoverExpire = null, onTakeoverEnd = null, takeoverNow = null, wecomExec = null, verifyFile = null, setupMode = null, cronRecoveryEnabled = false, runtimePolicy = null, cronTools = null, wecomAttach = null, getWecomChats = null, slackAttach = null, getSlackChats = null } = {}) {
+function createUiServer({ configPath, getLiveState = null, getConnHealth = null, onConfigChange = null, onHostChange = null, control = null, updater = null, host = '127.0.0.1', log = () => {}, issuesPath = null, sessionsPath = null, auditPath = null, ledgerPath = null, inboxDismissPath = null, fetchImpl = null, cdpImpl = null, onTakeoverClaim = null, onTakeoverExpire = null, onTakeoverEnd = null, takeoverNow = null, wecomExec = null, verifyFile = null, setupMode = null, cronRecoveryEnabled = false, runtimePolicy = null, cronTools = null, wecomAttach = null, getWecomChats = null, slackAttach = null, getSlackChats = null, publicReachOptions = null } = {}) {
   // Legacy scheduling rules are injected by its compatibility wrapper only.
   // The durable console cannot acquire those rules through this base module.
   const unsupportedCron = () => { throw new Error('当前控制台未接入定时任务') }
@@ -283,6 +284,8 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
     return { ready: enabled && r.ready, configured: r.ready, enabled, why: !enabled ? '公网登录已关闭' : r.why,
       publicUrl: publicUrl || '', redirectUri: publicUrl ? feishulogin.redirectUri(publicUrl) : '', appId, appSecret, admins }
   }
+  // 公网入口检测:每个响应带本进程随机标识,定时从公网地址取一次小页面比对。不通只在控制台提示(net.publicReach),群照常。
+  const publicReach = createPublicReach({ getUrl: () => { const f = feishuLoginInfo(); return f.enabled ? f.publicUrl : '' }, log, ...(publicReachOptions || {}) }) // 公网登录关掉时不测
   // Host 白名单:环回时只认 loopback(防 DNS-rebinding);对外(--host 非环回)额外放行私网段
   // IPv4(10./192.168./172.16-31./169.254.)。攻击者域名不匹配私网 IP 模式 → rebinding 仍挡住。
   let activeHost = String(host)
@@ -793,6 +796,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
           publicUrl: fli.publicUrl, // 公网地址(飞书登录回调的根;设置页可填)
           publicEnabled: fli.enabled,
           publicReady: fli.configured,
+          publicReach: publicReach.status(), // 公网地址是否通到本进程:off / unknown / ok / down
           feishuLogin: { ready: fli.ready, why: fli.why, redirectUri: fli.redirectUri },
         }
       })(),
@@ -894,6 +898,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost')
     const p = url.pathname
+    try { res.setHeader(publicReach.header, publicReach.instanceId) } catch {}
     try {
       if (!HOST_OK.test(req.headers.host || '')) { res.writeHead(403); return res.end('forbidden') }
       // 三个不需要令牌的入口:密码登录、飞书登录的起跳与回调 —— 其余 /api/* 一律先验令牌。
@@ -1504,7 +1509,8 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         const { publicUrl } = await body(req); const raw = readRaw(); raw.ui = raw.ui || {}
         const t = String(publicUrl || '').trim()
         if (t) { const n = feishulogin.normalizePublicUrl(t); if (!n) return sendJSON(res, 400, { error: '公网地址要写成 https://域名(可带端口),不带路径' }); raw.ui.publicUrl = n } else delete raw.ui.publicUrl
-        writeRaw(raw); return sendJSON(res, 200, await buildState())
+        writeRaw(raw); publicReach.check() // 改完立刻重测一次,结果随下次刷新出现
+        return sendJSON(res, 200, await buildState())
       }
       if (p === '/api/ui/network' && req.method === 'POST') {
         const patch = await body(req); const raw = readRaw(); raw.ui = raw.ui || {}
@@ -2792,6 +2798,8 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
     }
   }
 
+  // 真在监听才开始检测公网入口(首测 15 秒后,之后每 5 分钟;定时器不拖住进程退出)
+  server.on('listening', () => publicReach.start())
   // Broadcast live state + heartbeat over SSE (cheap; no health probe here).
   const tick = setInterval(() => {
     if (!sseClients.size) return
@@ -2823,7 +2831,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         else c.write(msg)
       } catch { sseClients.delete(c) } }
     },
-    close() { wecomAbort?.abort(); slackAbort?.abort(); clearInterval(tick); for (const c of sseClients) { try { c.end() } catch {} } try { browserRoutes.close() } catch {} server.close(); if (typeof server.closeAllConnections === 'function') server.closeAllConnections(); if (updater) updater.close() },
+    close() { publicReach.stop(); wecomAbort?.abort(); slackAbort?.abort(); clearInterval(tick); for (const c of sseClients) { try { c.end() } catch {} } try { browserRoutes.close() } catch {} server.close(); if (typeof server.closeAllConnections === 'function') server.closeAllConnections(); if (updater) updater.close() },
     _browserRoutes: browserRoutes, // 测试探 CDP 会话注册表用
   }
 }

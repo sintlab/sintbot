@@ -27,6 +27,9 @@ const CODEX_LEGAL = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 const CLAUDE_ALIASES = ['opus', 'sonnet', 'haiku'] // 只在拿不到实时清单、退回内置候选时用(原样交给 CLI)
 const CLAUDE_EFFORT = 'xhigh'
 const TTL = 600_000
+// How long the chat /model entry waits for a stale list to refresh; past it the
+// old list is used and the refresh finishes in the background.
+const FRESH_WAIT_MS = 8000
 
 // DeepSeek exposes its Claude-compatible model as a per-project choice.
 function isDeepSeek(p = {}) {
@@ -80,19 +83,35 @@ function createModelCatalog({ codexstatus, claudemodels, claudeBin = 'claude', c
     }
     return inflight[kind]
   }
-  // 有结果就先用、过期了后台再刷;从没取到过(也没存盘)才等这一次
-  async function get(kind) {
+  // 有结果就先用、过期了后台再刷;从没取到过(也没存盘)才等这一次。
+  // waitMs (the chat /model entry): a stale list waits for its refresh, at most
+  // waitMs; a late or failed probe still answers with the old list. Card clicks
+  // pass nothing (their callback must answer within seconds).
+  async function get(kind, waitMs = 0) {
     const c = live[kind]
-    if (c) { if (now() - c.at >= TTL) refresh(kind); return c.data }
+    if (c) {
+      if (now() - c.at >= TTL) {
+        const job = refresh(kind)
+        if (waitMs > 0) {
+          let timer
+          await Promise.race([job, new Promise((r) => { timer = setTimeout(r, waitMs) })])
+          clearTimeout(timer)
+          return live[kind].data
+        }
+      }
+      return c.data
+    }
     await refresh(kind)
     return live[kind] ? live[kind].data : null
   }
   const sourceOf = (kind) => (live[kind] && live[kind].saved && !live[kind].at ? 'saved' : 'live')
 
-  async function catalog(name, provider) {
+  // opts.fresh: wait for a stale list to refresh first (opts.waitMs, default 8 s); see get.
+  async function catalog(name, provider, opts) {
     const p = provider || {}
+    const waitMs = opts && opts.fresh ? (Number(opts.waitMs) > 0 ? Number(opts.waitMs) : FRESH_WAIT_MS) : 0
     if (p.runner === 'codex') {
-      const list = await get('codex')
+      const list = await get('codex', waitMs)
       if (!list) return { ok: false, models: [], aliases: [], efforts: CODEX_LEGAL.slice(1), recommended: { model: '', effort: '' } }
       const models = list.map((m) => ({
         id: m.model,
@@ -109,7 +128,7 @@ function createModelCatalog({ codexstatus, claudemodels, claudeBin = 'claude', c
     }
     if (isDeepSeek(p)) return deepSeekCatalog(p)
     if (!p.baseUrl) {
-      const d = await get('claude')
+      const d = await get('claude', waitMs)
       if (d && Array.isArray(d.models) && d.models.length) {
         const models = d.models.map((m) => ({ id: m.id, name: m.name, ...(m.effort !== false && m.efforts && m.efforts.length ? { efforts: m.efforts.slice() } : {}) }))
         const cat = { ok: true, models, aliases: [], aliasOf: { ...(d.aliasOf || {}) }, efforts: CLAUDE_EFFORTS.slice(), source: sourceOf('claude') }
@@ -128,6 +147,25 @@ function createModelCatalog({ codexstatus, claudemodels, claudeBin = 'claude', c
   catalog.warm = (kinds = ['codex']) => Promise.all(kinds.filter((k) => fetchers[k]).map((k) => refresh(k)))
   // 原始清单(控制台 /api/codex/models · /api/claude/models 用:要 isDefault / 说明这些字段)+ 它是不是实时的
   catalog.raw = async (kind) => ({ data: fetchers[kind] ? await get(kind) : null, source: live[kind] ? sourceOf(kind) : 'none' })
+  // Probe again now (console model card, after a confirmed sign-in): a model the
+  // CLI just gained shows up without waiting for the cache to expire. Reports
+  // whether this probe got a list and what it added or dropped against the
+  // previous one. A failed probe is ok:false and keeps the previous list; with
+  // no previous list it is first:true, never reported as "added".
+  const brief = (kind, data) => (kind === 'codex' ? (data || []).map((m) => ({ id: m.model, name: m.name || m.model }))
+    : ((data && data.models) || []).filter((m) => m && m.id).map((m) => ({ id: m.id, name: m.name || m.id })))
+  catalog.refresh = async (kind) => {
+    if (!Object.hasOwn(fetchers, kind)) return { ok: false, count: 0, added: [], removed: [], first: false }
+    // A probe already running started before this request: let it finish, then probe again.
+    if (inflight[kind]) await inflight[kind]
+    const had = live[kind]
+    const before = had ? brief(kind, had.data) : null
+    await refresh(kind)
+    const ok = !!live[kind] && live[kind] !== had // only a successful probe replaces the entry
+    const after = live[kind] ? brief(kind, live[kind].data) : []
+    const diff = (a, b) => a.filter((x) => !b.some((y) => y.id === x.id))
+    return { ok, count: after.length, added: ok && before ? diff(after, before) : [], removed: ok && before ? diff(before, after) : [], first: ok && !before }
+  }
   return catalog
 }
 

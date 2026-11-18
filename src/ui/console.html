@@ -2055,10 +2055,13 @@ function openProviderModal(name,opts){
     ${isClaudeLogin?`<div class="field"><label class="f">Claude 订阅登录</label>
       <div id="clStatus" class="statbox">${clStatusHtml()}</div>
       <button class="btn" id="clVerify" style="margin-top:8px">检测登录</button>
+      <div class="hint" id="clModelsNote" style="margin-top:6px;display:none"></div>
       <div class="hint" style="margin-top:6px">检查本机 Claude Code 登录状态，不发起模型对话。</div></div>`:''}
     ${isCodex?`<div class="field"><label class="f">Codex 订阅登录 / 额度</label>
       <div id="cxStatus" class="statbox">${cxStatusHtml(cxKey)}</div>
       <button class="btn" id="cxVerify" style="margin-top:8px">验证登录 / 刷新额度</button>
+      <div class="hint" id="cxModelsNote" style="margin-top:6px;display:none"></div>
+      <div class="hint" id="cxCli" style="margin-top:6px;display:none"></div>
       <div class="hint" style="margin-top:6px">显示本机账号返回的额度与重置时间，不发起模型对话。</div></div>`:''}
     ${(isCodex||isClaudeLogin)?'':`<div class="inline" style="margin:2px 0 2px"><input type="checkbox" class="switch" id="amVision" ${edit&&p.vision===false?'checked':''}/> <span class="dim">此模型不支持识图(纯文本模型)</span></div>
       <div class="hint" style="margin:0 0 10px">勾选后,送给它的图片(群里发的图、网页截图、读取的图片文件)会自动降级成一句占位文本 —— 不勾则整轮会被模型以「只支持文本输入」打断。拿不准就先跑一轮试:报这个错就回来勾上。</div>`}
@@ -2121,6 +2124,7 @@ function openProviderModal(name,opts){
         try{paintModels(await api('/api/claude/models'));}catch{} // 刚登录完点它 ⇒ 型号随即出现
         renderProviders();  // 卡片 chip 同步
         toast(r.ok?(r.loggedIn?'已登录'+(r.plan?' · '+r.plan:''):'未登录 — 在这台机器上跑 claude auth login'):'未验证 — '+(r.error||''), (r.ok&&r.loggedIn)?'ok':'err');
+        if(r.ok&&r.loggedIn&&runtimeAllows('POST','/api/models/refresh')){btn.innerHTML='<span class="spin"></span> 正在取可选型号…';await refreshModelList('claude',$('#clModelsNote'));}
       }catch(e){toast(e.message,'err');}finally{btn.disabled=false;btn.textContent=t;}};
   }
   // codex:模型下拉 = /api/codex/models(实时探测账号可用集,失败回退内置预设);
@@ -2148,11 +2152,12 @@ function openProviderModal(name,opts){
     reEnhance(sel);updateCustom();updateRE();
   })();
   $('#amCancel').onclick=closeModal;
-  if(isCodex){$('#cxVerify').onclick=async()=>{const cb=$('#cxVerify');cb.disabled=true;const old=cb.innerHTML;cb.innerHTML='<span class="spin"></span>验证中';
+  if(isCodex){loadCodexCli();$('#cxVerify').onclick=async()=>{const cb=$('#cxVerify');cb.disabled=true;const old=cb.innerHTML;cb.innerHTML='<span class="spin"></span>验证中';
     try{const r=await api('/api/codex/verify','POST',{});const lg=r.login||{},usageText=fmtUsage(r.usage);codexStatus[cxKey]={loggedIn:lg.loggedIn,mode:lg.mode,dead:lg.dead,verified:lg.verified,text:lg.text,usageText,envWarnings:cxEnvWarn(r,cxKey)};
       if($('#cxStatus'))$('#cxStatus').innerHTML=cxStatusHtml(cxKey);
       toast(lg.loggedIn?('Codex 订阅 ✓'+(usageText?' · '+usageText:(r.usage===null?'(额度取用失败:app-server?)':''))):(lg.dead?'登录态已失效 — 机器上重新跑 codex login':'未登录 — 机器上跑 codex login'),lg.loggedIn?'ok':'err');
       renderProviders();
+      if(lg.loggedIn&&runtimeAllows('POST','/api/models/refresh')){cb.innerHTML='<span class="spin"></span>正在取可选型号…';await refreshModelList('codex',$('#cxModelsNote'));}
     }catch(e){toast(e.message,'err');}finally{cb.disabled=false;cb.innerHTML=old;}};}
   if(edit)$('#amDel').onclick=async()=>{if(!confirm('移除模型 '+name+' ?'))return;try{S=await api('/api/providers?name='+encodeURIComponent(name),'DELETE');toast('已移除','ok');closeModal();renderProviders();}catch(e){toast(e.message,'err');}};
   $('#amSave').onclick=async()=>{const nm=edit?name:$('#amName').value.trim();if(!nm){toast('名称必填','err');return;}
@@ -5642,6 +5647,16 @@ const I18N_EN=[
   ["检测登录中…","Checking sign-in…"],
   ["如 glm-5.2[1m]","e.g. glm-5.2[1m]"],
   ["检测登录","Check sign-in"],
+  ["正在取可选型号…","Fetching the model list…"],
+  ["可选型号这次没取到，仍用上一次的清单。","The model list could not be fetched this time; the previous list stays in use."],
+  ["Codex 程序","Codex program"],
+  ["已是最新","Up to date"],
+  ["升级","Upgrade"],
+  ["升级中","Upgrading"],
+  ["这台机器上没找到 Codex 程序","The Codex program was not found on this machine"],
+  ["这台机器的 Codex 不是用 npm 全局安装的，需要在机器上手动升级","Codex on this machine was not installed globally with npm; upgrade it on the machine by hand"],
+  ["没查到最新版本，请检查网络后再试","The latest version could not be looked up; check the network and try again"],
+  ["已经有一次升级在进行","An upgrade is already in progress"],
   ["读的是这台机器","Reads the result of"],
   ["的结果(不联网计费、不占订阅额度)。没登录就在这台机器上跑一次","on this machine (no network billing, no subscription quota used). If not signed in, run once on this machine:"],
   ["。",". "],
@@ -6606,6 +6621,20 @@ const I18N_EN=[
   ["本页内容", "On this page"],
 ];
 const I18N_EN_RX=[
+  // 模型卡面板：重取可选型号的结果、本机 Codex 程序的版本与升级
+  [/^可选型号已更新：(.+)。现在共 (\d+) 个，群卡下拉里可以直接选。$/,(m,parts,n)=>"Model list updated: "+parts.split('；').map(x=>x.replace(/^新增 /,'added ').replace(/^不再提供 /,'no longer offered ').replace(/、/g,', ')).join('; ')+". "+n+" in total now; pick them in the group card dropdown."],
+  [/^可选型号已是最新（共 (\d+) 个）。$/,"The model list is up to date ($1 in total)."],
+  [/^可选型号已取到（共 (\d+) 个）。$/,"Model list fetched ($1 in total)."],
+  [/^Codex 程序 (\d[\w.\-]*)$/,"Codex program $1"],
+  [/^有新版 (\d[\w.\-]*)$/,"$1 available"],
+  [/^把这台机器上的 Codex 程序从 (\S+) 升级到 (\S+)？\n会用安装它的 npm 重新全局安装最新版，大约一分钟。所有用 Codex 的群从下一轮起用新版；有群正在用 Codex 处理任务时不会升级。$/,"Upgrade the Codex program on this machine from $1 to $2?\nThis reinstalls the latest version globally with the npm that installed it, about a minute. Every group on Codex uses the new version from its next turn; nothing is upgraded while a group is running a Codex task."],
+  [/^Codex 程序已从 (\S+) 升级到 (\S+)。$/,"The Codex program was upgraded from $1 to $2."],
+  [/^Codex 程序仍是 (\S+)，没有变化。$/,"The Codex program is still $1; nothing changed."],
+  [/^Codex 程序已升级到 (\S+)$/,"The Codex program was upgraded to $1"],
+  [/^升级没成功：([\s\S]+)$/,(m,why)=>"The upgrade did not succeed: "+trText(why)],
+  [/^有群正在用 Codex 处理任务（(.+)），等它结束再升级$/,"A group is running a Codex task ($1); upgrade after it finishes"],
+  [/^安装没成功：超过 5 分钟没有完成，已停止$/,"The install did not succeed: it did not finish within 5 minutes and was stopped"],
+  [/^安装没成功：([\s\S]+)$/,"The install did not succeed: $1"],
   [/^allow (\d+) 项$/,"allow $1"],[/^deny (\d+) 项$/,"deny $1"],
   // 公网入口检测(概览提示与设置页)
   [/^公网入口 (\S+) 当前打不开（(.+?) 检测）：外网飞书登录暂不可用，局域网控制台和各群不受影响。$/,"The public address $1 is not reachable (checked $2). Feishu sign-in from outside is unavailable for now; the LAN console and all groups are not affected."],
@@ -7107,6 +7136,51 @@ async function fetchCodexModels(){if(CX_MODELS)return CX_MODELS;try{CX_MODELS=aw
 function cxDefEffortLabel(model){const m=CX_MODELS&&(CX_MODELS.models||[]).find(x=>x.model===model);return '默认'+(m&&m.defEffort?'('+m.defEffort+')':'');}
 /* 有 codex provider 时启动即预热模型列表(server 缓存 10min)→ 卡片默认档标注补齐 + 面板秒开 */
 function warmCodexModels(){if(!CX_MODELS&&S&&(S.providers||[]).some(x=>x.runner==='codex'&&!x.hidden))fetchCodexModels().then(()=>renderProviders());}
+/* 模型卡面板里确认已登录后，接着重取一次可选型号：清单平时走服务端缓存和本页内存，新出的型号要等缓存过期才看得见。
+   取到后丢掉本页那几份重新拉，重画模型卡与群卡；结果写在按钮下面那一行，没取到就明说仍是上一份。 */
+function modelListNote(r){
+  if(!r||!r.ok)return {text:'可选型号这次没取到，仍用上一次的清单。',tone:'warn'};
+  const names=a=>a.map(m=>m.name||m.id).join('、');
+  const parts=[];
+  if((r.added||[]).length)parts.push('新增 '+names(r.added));
+  if((r.removed||[]).length)parts.push('不再提供 '+names(r.removed));
+  if(parts.length)return {text:'可选型号已更新：'+parts.join('；')+'。现在共 '+r.count+' 个，群卡下拉里可以直接选。',tone:'ok'};
+  return {text:(r.first?'可选型号已取到（共 ':'可选型号已是最新（共 ')+r.count+' 个）。',tone:''};
+}
+async function refreshModelList(kind,box){
+  let r=null;try{r=await api('/api/models/refresh','POST',{kind});}catch(e){r=null;}
+  if(r&&r.unavailable)return null; // 这次运行没有实时清单可取：不写任何结论
+  if(r&&r.ok){
+    if(kind==='codex'){CX_MODELS=null;await fetchCodexModels();}
+    for(const x of (S&&S.providers)||[])if((x.runner==='codex')===(kind==='codex'))delete MODEL_OPTS[x.name];
+    renderProviders();renderGroups();
+  }
+  const n=modelListNote(r);
+  if(box){box.textContent=n.text;box.style.color=n.tone==='warn'?'var(--warn)':n.tone==='ok'?'var(--ok)':'';box.style.display='';}
+  return n;
+}
+/* 这台机器上 Codex 程序的版本：面板里一行，有新版且能升级时带「升级」按钮。可选型号是它报的，太旧就没有新型号。
+   升级会改动本机程序，先确认；做完写明从哪版到哪版，并接着重取一次可选型号。 */
+async function loadCodexCli(){
+  const box=$('#cxCli');if(!box||!runtimeAllows('GET','/api/codex/cli'))return;
+  let r=null;try{r=await api('/api/codex/cli');}catch(e){return;}
+  if(!$('#cxCli')||!r||(!r.version&&!r.why))return;
+  const v=r.version?'Codex 程序 '+esc(r.version):'Codex 程序';
+  const canUp=r.canUpgrade&&runtimeAllows('POST','/api/codex/cli/upgrade');
+  box.innerHTML=r.newer?`${v} · 有新版 ${esc(r.latest)}${canUp?' <button class="btn" id="cxUp" style="padding:2px 10px;font-size:12px;margin-left:6px">升级</button>':''}`
+    :`${v}${r.latest?' · 已是最新':''}${r.why?' · '+esc(r.why):''}`;
+  box.style.color='';box.style.display='';
+  const b=$('#cxUp');if(!b)return;
+  b.onclick=async()=>{
+    if(!confirm(`把这台机器上的 Codex 程序从 ${r.version} 升级到 ${r.latest}？\n会用安装它的 npm 重新全局安装最新版，大约一分钟。所有用 Codex 的群从下一轮起用新版；有群正在用 Codex 处理任务时不会升级。`))return;
+    b.disabled=true;b.innerHTML='<span class="spin"></span>升级中';
+    try{const u=await api('/api/codex/cli/upgrade','POST',{});
+      box.textContent=u.changed?`Codex 程序已从 ${u.from} 升级到 ${u.to}。`:`Codex 程序仍是 ${u.to}，没有变化。`;box.style.color='var(--ok)';
+      toast('Codex 程序已升级到 '+u.to,'ok');
+      await refreshModelList('codex',$('#cxModelsNote'));
+    }catch(e){box.textContent='升级没成功：'+e.message;box.style.color='var(--fail)';}
+  };
+}
 const RUNTIME_DISABLED_SELECTORS='.gpv,[data-rm],[data-gcfg],[data-cronnew],[data-cronadd],[data-crontgl],[data-cronrm],[data-reposave],[data-repotest],[data-iconuse],[data-iconsys],[data-iconstyle],[data-stylecollect],#amDel,#pgSend,#pgNew,#fSave,#slSave,#wSave,#bSave,#styleNew,[data-styleedit],[data-styledup],[data-styledel],#nsSave,#nsExtract,#clSave,[data-pvstop],[data-lvkill],[data-lvkillall]';
 // 持久处理流程按服务端白名单放行:前端照同一份名单判断某个动作能不能做,而不是一刀切。
 function runtimeAllows(method,path){

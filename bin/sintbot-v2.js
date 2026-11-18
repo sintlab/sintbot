@@ -220,6 +220,16 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
     try { return fs.readFileSync(lockFile, 'utf8').trim() === String(process.pid) }
     catch { return false }
   }
+  // Configuration history (src/confighistory.js): the configuration this
+  // service runs is stored at start and after every online change. A failure
+  // is logged and never stops the service.
+  const recordConfig = () => {
+    try {
+      const saved = require('../src/confighistory').snapshotConfig(cfg._path, { stateDir })
+      if (saved.saved) process.stderr.write(`C2 multi-group · configuration version stored (${saved.id})\n`)
+    } catch (error) { process.stderr.write(`C2 multi-group · configuration version not stored: ${error?.message || String(error)}\n`) }
+  }
+  if (!preflightOnly) recordConfig()
   let running = false
   let service
   let ui
@@ -473,7 +483,7 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
               if (chatId !== route.chatId) throw new Error('Model change targets another group')
               return setGroupBrain(chatId, change, meta)
             },
-            durableV2ModelCatalog: (name, provider) => modelCatalog(name, provider),
+            durableV2ModelCatalog: (name, provider, opts) => modelCatalog(name, provider, opts),
             durableV2ModelCard: state => buildModelCard(state),
             durableV2UsageProbe: usageProbe, durableV2Issues: issues,
             durableV2Version: require('../package.json').version,
@@ -508,6 +518,7 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
       validateConnectionAddition: (before, next, name) => attachOf(name).validateConnectionAddition(before, next),
       activateConnection: (config, names = ['wecom']) => Promise.all(names.map(name => attachOf(name).activateConnection(config))),
       activateRoute: route => service.addRoute(route), isFrozen: () => service.inMaintenance,
+      onApplied: recordConfig,
       log: message => process.stderr.write(`C2 multi-group · ${message}\n`) })
     if (!preflightOnly) {
       // Console software updates. Only a launchd job that starts this exact
@@ -662,6 +673,8 @@ Usage:
   sintbot start [--config <absolute path>] [--data-dir <absolute path>] [--preflight] [--ui] [--ui-host <address>] [--ui-port <port>] [--no-open]
   sintbot connect [--config <absolute path>] [--data-dir <absolute path>] [--workdir <absolute path>] [--name <project>] [--provider codex|claude] [--app-id <cli_…>] [--chat <oc_…>] [--basic] [--attach] [--no-open]
   sintbot incident seal --group <oc_…> [--config <absolute path>] [--data-dir <absolute path>] [--reason <text>]
+  sintbot config history [--limit <n>] [--data-dir <absolute path>]
+  sintbot config restore <version> [--config <absolute path>] [--data-dir <absolute path>]
   sintbot wecom send-msg|send-file|send-image <text-or-relative-path>
   sintbot feishu <action> [arguments…] [--chat <oc_…>] [--config <path>]
   sintbot version
@@ -689,6 +702,9 @@ A group whose last result cannot be proven is held alone; the other groups keep 
 Restart first: a journal that can recover reopens on its own. If the group is still held,
 stop the service, run incident seal for that group, then start again.
 Sealing keeps the old journal unchanged; unknown effects are never replayed.
+config history lists the configurations the service has used (the latest 50 are kept) and which
+settings changed in each, never their values. config restore needs the service stopped: it stores the
+current file, writes the chosen version back unchanged, and takes effect at the next start.
 `
 
 async function main(argv = process.argv.slice(2)) {
@@ -711,7 +727,7 @@ async function main(argv = process.argv.slice(2)) {
     process.exitCode = outcome === 'done' ? 0 : 1
     return
   }
-  if (!['init', 'start', 'connect', 'incident', 'feishu', 'wecom'].includes(sub)) {
+  if (!['init', 'start', 'connect', 'incident', 'config', 'feishu', 'wecom'].includes(sub)) {
     throw new Error(`${sub} is unavailable in this release; use sintbot help`)
   }
   if (process.platform !== 'darwin') throw new Error('this release supports macOS only')
@@ -735,6 +751,11 @@ async function main(argv = process.argv.slice(2)) {
       return
     }
     await feishuCli.runFeishuAction(rest)
+    return
+  }
+  if (sub === 'config') {
+    // Configuration history; restoring is an offline operator action.
+    process.exitCode = require('../src/confighistory').runConfigCommand(rest)
     return
   }
   if (sub === 'incident') {

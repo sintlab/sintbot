@@ -35,7 +35,8 @@ function sessionIdentity(provider) {
 // It never moves a journal, settles a receipt or reconnects the platform.
 function createC2ConfigControl({ installation, getBindings, getHeld = () => new Map(),
   assertWriterLock, store = null, activateRoute = null, probeRunner = assertRunnerExecutable,
-  isFrozen = () => false, validateConnectionAddition = null, activateConnection = null, log = () => {} } = {}) {
+  isFrozen = () => false, validateConnectionAddition = null, activateConnection = null,
+  onApplied = null, log = () => {} } = {}) {
   if (!installation?.cfg?._path || typeof getBindings !== 'function' ||
       typeof getHeld !== 'function' || typeof isFrozen !== 'function' ||
       typeof assertWriterLock !== 'function' ||
@@ -294,6 +295,11 @@ function createC2ConfigControl({ installation, getBindings, getHeld = () => new 
         log(`group ${route.chatId}: online activation failed: ${error?.message || String(error)}`)
       })
     }
+    // The service now runs this configuration (console, chat command and
+    // attach flows all end here). An observer cannot undo the change.
+    if (typeof onApplied === 'function') {
+      try { onApplied() } catch (error) { log(`after configuration change: ${error?.message || String(error)}`) }
+    }
     return true
   }
 
@@ -334,4 +340,4 @@ function createC2ConfigControl({ installation, getBindings, getHeld = () => new 
     appliedResets: () => [...appliedResets] }
 }
 
-module.exports = { createC2ConfigControl }
+module.exports = { createC2ConfigControl, sessionIdentity, RESET_KEYS, GLOBAL_TASK_KEYS }

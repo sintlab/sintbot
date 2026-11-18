@@ -1,5 +1,28 @@
 [
   {
+    "version": "1.4.26",
+    "date": "2026-11-18",
+    "name": "Codex upgrades in the console, configuration history and stability",
+    "items": [
+      {
+        "t": "Upgrade Codex and refresh models from the console",
+        "d": "After a model card confirms the sign-in, the model list is read again and the card says which models were added or removed; /model in a group waits for the new list (up to 8 seconds). The Codex model card shows the version of the Codex program on this Mac and, when a newer one exists and it was installed globally with npm, upgrades it in one click. It will not upgrade while a group is running a Codex task."
+      },
+      {
+        "t": "Configuration history and restore",
+        "d": "The service stores a copy of the configuration when it starts and after every change in the console, keeping the latest 50. sintbot config history lists which settings each copy changed, never their values; sintbot config restore <version> puts one back while the service is stopped."
+      },
+      {
+        "t": "Steadier",
+        "d": "A malformed request address no longer stops the service; a Feishu request that gets no answer for 30 seconds is abandoned instead of holding the group; previews check where a file really is before serving it; a queued message reads the group's current settings when it starts; the console accepts only sensible concurrency and turn-time values; password-free access is given only to local requests that do not come through a reverse proxy."
+      },
+      {
+        "t": "Follow-ups that cite the last reply after an idle compaction (experimental)",
+        "d": "When Claude Code compacts its context while idle, the next turn carries the reply that was already sent, so a group message such as \"1 and 3\" still lands on the right items. It is kept in memory only and is gone after a restart."
+      }
+    ]
+  },
+  {
     "version": "1.4.25",
     "date": "2026-11-18",
     "name": "A cleaner console",

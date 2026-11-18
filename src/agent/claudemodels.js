@@ -96,6 +96,7 @@ function probeModels(bin = 'claude', { timeoutMs = 20000, cwd = os.tmpdir(), spa
     const env = { ...process.env }
     delete env.ANTHROPIC_BASE_URL; delete env.ANTHROPIC_AUTH_TOKEN; delete env.ANTHROPIC_MODEL; delete env.CLAUDECODE
     let child, buf = '', settled = false, timer = null
+    const dec = new (require('node:string_decoder').StringDecoder)('utf8') // 型号说明是中文时可能被切在两次管道读之间,逐块 toString 会把两半都变成 U+FFFD
     const done = (v) => {
       if (settled) return
       settled = true
@@ -113,7 +114,7 @@ function probeModels(bin = 'claude', { timeoutMs = 20000, cwd = os.tmpdir(), spa
     child.on('error', () => done(null))
     child.on('close', () => done(null))
     child.stdout.on('data', (d) => {
-      buf += d.toString('utf8')
+      buf += dec.write(d)
       let i
       while ((i = buf.indexOf('\n')) >= 0) {
         const line = buf.slice(0, i); buf = buf.slice(i + 1)

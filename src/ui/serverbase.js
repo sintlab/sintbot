@@ -10,6 +10,7 @@ const crypto = require('node:crypto')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
+const { StringDecoder } = require('node:string_decoder')
 const { loadConfig, migrateModelSettings, applyProxyEnv, deriveNoProxy, DEFAULTS, resolveSecret } = require('../config')
 const verify = require('../core/verify') // 凭据最近一次验证的记录:模型测试 / 平台预检写,概览读
 const projectsroot = require('../projectsroot') // 项目根目录围栏:目录浏览 / 保存绑定 / 风格提炼三处同一份判据
@@ -20,6 +21,7 @@ const { normalizeTz, isValidTz, tzOffsetMin, tzParts } = require('../core/time')
 // providers on the Codex CLI, not Claude. Same module the daemon/CLI use.
 const { runTurn, probeVersion, isClosedRunnerResult, isClosedRunnerError } = require('../agent/runner')
 const codexstatus = require('../agent/codexstatus') // codex 订阅登录态 + 用量(卡片「验证登录」)
+const { createCodexCli } = require('../agent/codexcli') // the Codex program on this machine: version and upgrade
 const { codexCatalogWindows, windowForProvider } = require('../agent/modelwindows')
 const { isDeepSeek, deepSeekCatalog } = require('../modelcatalog')
 const { assertCardCredentials } = require('../agent/claudecode')
@@ -209,9 +211,9 @@ function lanIPv4() {
 // daemon: switch a group's model, clear its session, stop its turn — in real time.
 // 「配了访问密码吗」在配置读不出来时怎么判(纯函数,可测)。
 // ⚠ 只绑环回:退成「没配」—— 让本机还能打开控制台去修坏掉的配置(fail-safe 往能修的方向倒)。
-// ⚠ 对外绑定:退成「配了」—— 否则一份写坏的配置会让页面给任何局域网访客注入免密 token(2026-09-07 通读
-//   逮到;安全判定读不到信息时必须拒绝而不是放行)。此时本机浏览器仍免密(localBypass 按 TCP 源地址判,
-//   与这里无关),LAN 访客会看到登录框、而 /api/login 因读不到密码返回 400 —— 修好配置即恢复。
+// ⚠ 对外绑定:退成「配了」—— 安全判定读不到信息时必须拒绝而不是放行(2026-09-07 通读逮到)。对外绑定时页面
+//   注入令牌已不看这一项(pageToken:非本机一律不给),它只管设置页「需密码」的显示;本机浏览器仍免密,
+//   LAN 访客看到登录框、而 /api/login 因读不到密码返回 400 —— 修好配置即恢复。
 function authConfiguredFrom(getAuth, loopbackBind) {
   try { return !!getAuth() } catch { return !loopbackBind }
 }
@@ -225,7 +227,7 @@ function bindNoticeText(workdir, platform = 'feishu', cmd = '/help') {
   return `✅ 本群已绑定项目「${path.basename(String(workdir || '')) || '(未命名)'}」\n${platform === 'wecom' ? '@我 派单(只有 @ 我的消息我才收得到)' : platform === 'slack' ? '在频道里 @我 派单(不 @ 我的消息不处理)' : '直接发消息或 @我 派单'};${cmd} 查看命令`
 }
 
-function createUiServer({ configPath, getLiveState = null, getConnHealth = null, onConfigChange = null, onHostChange = null, control = null, updater = null, host = '127.0.0.1', log = () => {}, issuesPath = null, sessionsPath = null, auditPath = null, ledgerPath = null, inboxDismissPath = null, fetchImpl = null, cdpImpl = null, onTakeoverClaim = null, onTakeoverExpire = null, onTakeoverEnd = null, takeoverNow = null, wecomExec = null, verifyFile = null, setupMode = null, cronRecoveryEnabled = false, runtimePolicy = null, cronTools = null, wecomAttach = null, getWecomChats = null, slackAttach = null, getSlackChats = null, publicReachOptions = null } = {}) {
+function createUiServer({ configPath, getLiveState = null, getConnHealth = null, onConfigChange = null, onHostChange = null, control = null, updater = null, host = '127.0.0.1', log = () => {}, issuesPath = null, sessionsPath = null, auditPath = null, ledgerPath = null, inboxDismissPath = null, fetchImpl = null, cdpImpl = null, onTakeoverClaim = null, onTakeoverExpire = null, onTakeoverEnd = null, takeoverNow = null, wecomExec = null, verifyFile = null, setupMode = null, cronRecoveryEnabled = false, runtimePolicy = null, cronTools = null, wecomAttach = null, getWecomChats = null, slackAttach = null, getSlackChats = null, publicReachOptions = null, codexCli = null } = {}) {
   // Legacy scheduling rules are injected by its compatibility wrapper only.
   // The durable console cannot acquire those rules through this base module.
   const unsupportedCron = () => { throw new Error('当前控制台未接入定时任务') }
@@ -303,6 +305,10 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
     const a = String((req.socket && req.socket.remoteAddress) || '')
     return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1'
   }
+  // 本机且没经过反代:本机浏览器不会带 X-Forwarded-*,nginx 一定带;伪造这两个头只会让自己失去本机资格,方向安全。
+  const isLocalNoProxy = (req) => isLoopbackReq(req) && !req.headers['x-forwarded-for'] && !req.headers['x-forwarded-proto']
+  // 页面(首页 / 接管页)注入免密令牌的唯一判据,两处共用、不许各写一份。规则与由来见首页路由处。
+  const pageToken = (req) => (isLocalNoProxy(req) && !(loopbackBind && authConfigured())) ? token : ''
 
   const cfgFile = () => configPath || path.join(process.cwd(), 'sbot.config.json')
   const readRaw = () => {
@@ -499,6 +505,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
   const disbandPending = new Map() // chatId -> { token, readyAt, expiresAt, users, names }
   let codexStatusCache = null // { at, login, usage } — codex 订阅登录态+额度缓存(供 /api/state 回填 + verify 60s 去抖)
   let claudeStatusCache = null // { at, login } — Claude 订阅登录态(`claude auth status --json`),同上回填
+  const cxCli = codexCli || createCodexCli() // injected only by tests and previews (never install for real there)
   let codexModelsCache = null // { at, val } — codex model/list 探测缓存(10 分钟)
   // 审计本落点。注入 auditPath 只为可测:单测里的「飞书登录成功」若写进真实审计本,出事时排查者 grep 到的就是假记录。
   const audit = createLedger(auditPath || path.join(os.homedir(), '.sbot', 'audit.jsonl'), log)
@@ -860,7 +867,8 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
 
   // ── request handling ──────────────────────────────────────────────────────
   const sendJSON = (res, code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(obj)) }
-  const body = (req) => new Promise((resolve) => { let b = ''; req.on('data', (c) => { b += c; if (b.length > 1e6) req.destroy() }); req.on('end', () => { try { resolve(b ? JSON.parse(b) : {}) } catch { resolve({}) } }) })
+  // 按 UTF-8 流式解码:逐块转字符串会把跨两次读取的多字节字符拆成 U+FFFD(群消息 / 项目名 / 风格档里的中文被静默写坏)
+  const body = (req) => new Promise((resolve) => { const dec = new StringDecoder('utf8'); let b = ''; req.on('data', (c) => { b += dec.write(c); if (b.length > 1e6) req.destroy() }); req.on('end', () => { b += dec.end(); try { resolve(b ? JSON.parse(b) : {}) } catch { resolve({}) } }) })
 
   // 安装命令执行(操作台专用,等价一个开放终端):白名单 env(剔 provider 密钥,npx postinstall
   // 等捞不到 key)+ Windows UTF-8 码页(execShellCommand,防中文乱码)+ audit(命令/结果各一行)。
@@ -896,7 +904,12 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
   let wecomJob = { phase: 'idle', notice: '' }, wecomAbort = null
   let slackJob = { phase: 'idle', notice: '' }, slackAbort = null
   const server = http.createServer(async (req, res) => {
-    const url = new URL(req.url, 'http://localhost')
+    // 请求目标先过一道,不合格一律 400:① 带反斜杠 / 控制字符 / 空格 —— URL 解析器把 `\` 当 `/`、吞掉制表与换行,
+    //   `/api\login` 就落到 /api/login,而反代的精确匹配(location = /api/login)认不出这种写法,两边认法不一致 = 侧门;
+    // ② 解析不了(如 `//[`)—— new URL 在 try 外抛错 = 未处理的 rejection,整个进程直接退出。
+    const badTarget = () => { res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('bad request target') }
+    if (/[\\\x00-\x20\x7f]/.test(req.url || '')) return badTarget()
+    let url; try { url = new URL(req.url, 'http://localhost') } catch { return badTarget() }
     const p = url.pathname
     try { res.setHeader(publicReach.header, publicReach.instanceId) } catch {}
     try {
@@ -910,7 +923,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       const takeoverSess = takeoverSid ? takeoverStore.session(takeoverSid) : null
       const isMintPath = p === '/api/browser/link' || p === '/api/browser/link/attach'
       const viaTakeover = p.startsWith('/api/browser/') && !isMintPath && !!takeoverSess
-      const localNoProxy = isLoopbackReq(req) && !req.headers['x-forwarded-for'] && !req.headers['x-forwarded-proto']
+      const localNoProxy = isLocalNoProxy(req)
       // ⚠ 还要带 X-Sbot-Local 头:自定义头逼出 CORS 预检,而控制台不答预检 ⇒ 本机网页的跨站 POST(no-cors text/plain)到不了签票
       //   (文件头钉的不变量:环回绑定不是安全边界)。本机进程(群 agent 的 sbot browser link)加个头不费事。对抗审查 🟡3。
       const viaLocalMint = isMintPath && localNoProxy && String(req.headers['x-sbot-local'] || '') === '1'
@@ -1066,27 +1079,20 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         return sendJSON(res, 401, { error: '密码错误' })
       }
       if (req.method === 'GET' && (p === '/' || p === '/index.html')) {
-        // The page is the token delivery channel. Deliver the token (免密) when it's safe
-        // without a password:
-        //   - no password set, OR
-        //   - a password exists only because we're bound to a LAN address, and THIS request
-        //     came in over loopback (same machine). Pure-local access must not be gated by
-        //     the LAN password — the "127.0.0.1 免密" invariant (FR9.4a) should survive
-        //     exposing the console to the LAN.
-        // A password on a loopback-ONLY bind is a deliberate local lock, so it still prompts.
-        // Any request that must authenticate gets an empty token → the login form.
-        // ⚠ 再加一道:带着反代头(X-Forwarded-*)的请求一律不算本机 —— 本机浏览器不会带,nginx 一定带。
-        //   隧道对端哪天被写成 127.0.0.1:4600,也不会退化成「公网全员免密」;伪造这两个头只会让自己失去免密,方向安全。
-        const localBypass = !loopbackBind && isLoopbackReq(req) && !req.headers['x-forwarded-for'] && !req.headers['x-forwarded-proto']
-        const injectTok = (authConfigured() && !localBypass) ? '' : token
+        // 页面就是令牌的投递通道(pageToken,接管页同一份):只给「TCP 环回来、且不带 X-Forwarded-For / -Proto」的请求,
+        // 唯一例外是只绑环回又配了密码 = 有意上的本机锁,照样要登录。其余一律空令牌 → 登录框。
+        //   · 对外绑定 + 密码:本机浏览器仍免密(「127.0.0.1 免密」FR9.4a 不因对局域网开放而丢),局域网 / 经反代的要登录;
+        //   · 外来请求不因「没配密码」放行:对外绑定必须有密码只在启动时查,配置却是每次现读 —— 运行中删掉密码时
+        //     局域网 / 经隧道的访客看到登录框,本机仍免密,好进去把密码设回来;
+        //   · 带反代头的一律不算本机:隧道对端哪天被写成本机地址,只绑环回也不会退化成「公网全员免密」。
+        const injectTok = pageToken(req)
         return fs.readFile(CONSOLE_HTML, 'utf8', (e, html) => e ? (res.writeHead(500), res.end('console.html missing')) : (res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }), res.end(html.replace('__SBOT_TOKEN__', injectTok).replace('__SBOT_VERSION__', PKG_VERSION).replace('__SBOT_FEISHU_LOGIN__', feishuLoginInfo().ready ? '1' : '').replace('/*__LIVE_ACTIVITY__*/', () => LIVE_ACTIVITY_JS).replace(MODELNAME_SLOT, () => MODELNAME_SRC))))
       }
       // 接管浏览器页。群成员的一次性链接是 /browser#k=<票>:票在 URL 片段里,服务端根本收不到 ⇒ 不进任何日志、链接预览的
       //   裸 GET 也抓不走;页面脚本读片段、人点「开始接管」后 POST /api/browser/claim 换 cookie。这里只分发页面:
       //   与首页同一套免密 / 令牌规则(管理员从控制台进来);既没令牌也没有效 cookie 又没票的人看到的是「去登录」。
       if (req.method === 'GET' && p === '/browser') {
-        const localBypass = !loopbackBind && isLoopbackReq(req) && !req.headers['x-forwarded-for'] && !req.headers['x-forwarded-proto']
-        const injectTok = (authConfigured() && !localBypass) ? '' : token
+        const injectTok = pageToken(req)
         const viaCookie = !!takeoverSess
         return fs.readFile(BROWSER_HTML, 'utf8', (e, html) => e ? (res.writeHead(500), res.end('browser.html missing')) : (res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }), res.end(html.replace(/__SBOT_TOKEN__/g, injectTok).replace(/__SBOT_TAKEOVER__/g, viaCookie ? '1' : ''))))
       }
@@ -1156,6 +1162,45 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         const val = live ? { source: 'live', models: live } : { source: 'preset', models: codexstatus.PRESET_MODELS }
         codexModelsCache = { at: Date.now(), val }
         return sendJSON(res, 200, val)
+      }
+      // Probe the model list again now (model card, after a confirmed sign-in).
+      // Lists are cached for ten minutes and a stale one is answered first, so a
+      // model the CLI just gained would only show on a later use. A separate
+      // request from the sign-in check, which answers first. Answers
+      // { ok, count, added, removed, first }; without the service's live list
+      // (unit tests, embedding) nothing is probed: ok false, unavailable true.
+      if (p === '/api/models/refresh' && req.method === 'POST') {
+        const { kind } = await body(req)
+        if (kind !== 'codex' && kind !== 'claude') return sendJSON(res, 400, { error: '未知的型号清单' })
+        const c = runtimePolicy && runtimePolicy.modelCatalog
+        if (!c || typeof c.refresh !== 'function') return sendJSON(res, 200, { ok: false, unavailable: true, count: 0, added: [], removed: [], first: false })
+        const r = await c.refresh(kind)
+        // The model card's own dropdown list follows the list just probed.
+        if (r.ok && kind === 'codex') {
+          const raw = typeof c.raw === 'function' ? await c.raw('codex') : null
+          codexModelsCache = raw && raw.data ? { at: Date.now(), val: { source: 'live', models: raw.data } } : null
+        }
+        return sendJSON(res, 200, r)
+      }
+      // The Codex program on this machine (Codex model card): version, and an
+      // upgrade that runs one fixed install command taking nothing from the
+      // request. Refused while a group is running or about to start a Codex
+      // turn (the install replaces the files a turn is launched from); every
+      // attempt is audited.
+      if (p === '/api/codex/cli' && req.method === 'GET') return sendJSON(res, 200, await cxCli.info())
+      if (p === '/api/codex/cli/upgrade' && req.method === 'POST') {
+        const cfg = loadConfig(configPath); applyProxyEnv(cfg)
+        const lv = getLiveState ? getLiveState() : null
+        const busyOn = Object.entries(cfg.groups || {}).filter(([id, g]) => {
+          const pv = cfg.providers[(control && control.providerOf && control.providerOf(id)) || (g && g.provider) || cfg.defaultProvider]
+          const st = lv && lv.groups && lv.groups[id]
+          return pv && pv.runner === 'codex' && st && (st.busy || st.waitingForCapacity)
+        }).map(([id, g]) => (g && g.name) || id.slice(-8))
+        if (busyOn.length) return sendJSON(res, 409, { error: `有群正在用 Codex 处理任务（${busyOn.slice(0, 3).join('、')}），等它结束再升级` })
+        const r = await cxCli.upgrade()
+        audit.append({ kind: 'codex-cli-upgrade', ok: !!r.ok, from: r.from || '', to: r.to || '', error: r.ok ? null : String(r.error || '').slice(0, 200), ts: Date.now() })
+        if (r.ok) { codexstatus.clearCache(); codexModelsCache = null }
+        return sendJSON(res, r.ok ? 200 : 500, r)
       }
       if (p === '/api/usage' && req.method === 'GET') { const cfg = loadConfig(configPath); return sendJSON(res, 200, await getUsage(cfg.providers, { bin: cfg.agent.bin })) }
       // 模型卡「额度」行的 ↻:只刷这一个 provider 且绕过两层缓存(见 usage.js refreshUsage)。
@@ -1486,7 +1531,17 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       }
       if (p === '/api/agent' && req.method === 'POST') {
         const patch = await body(req); const raw = readRaw(); raw.agent = raw.agent || {}
-        for (const k of ['permissionMode', 'maxConcurrent', 'maxTurnTimeMins']) if (k in patch) raw.agent[k] = patch[k]
+        if ('permissionMode' in patch) raw.agent.permissionMode = patch.permissionMode
+        // 并发上限 / 单轮超时:0 = 不限,否则只收区间内整数。超时 ≥35792 分钟的毫秒数溢出 32 位定时器,Node 当 1ms 处理;
+        // 非数字会让超时静默失效。存前挡住,别让坏值落盘。
+        for (const [k, max, what] of [['maxConcurrent', 64, '并发上限须为 0–64 之间的整数(0 = 不限)'], ['maxTurnTimeMins', 1440, '单轮超时须为 0–1440 之间的整数(分钟,最长 24 小时;0 = 不限)']]) {
+          if (!(k in patch)) continue
+          // 页面每次保存都带着这两项:与已存的值相同 = 没动它,原样留着,别让一个早先存下的越界值挡住其他设置的保存
+          if (typeof patch[k] === 'number' && patch[k] === raw.agent[k]) continue
+          const n = Number(patch[k])
+          if (typeof patch[k] === 'boolean' || patch[k] === null || patch[k] === '' || !Number.isInteger(n) || n < 0 || n > max) return sendJSON(res, 400, { error: what })
+          raw.agent[k] = n
+        }
         // 机器人自称(顶层 brand):空或默认名就不落盘,和安装向导 --full 的写法一致
         if ('brand' in patch) { const b = String(patch.brand || '').trim().slice(0, 40); if (b && b !== 'SintBot') raw.brand = b; else delete raw.brand }
         if ('autocompactTokens' in patch) return sendJSON(res, 400, { error: '请在模型卡片中设置压缩策略' })

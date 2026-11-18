@@ -18,6 +18,16 @@ const lark = require('@larksuiteoapi/node-sdk')
 const { createWatchdog } = require('./wswatchdog')
 const { scanTables, cleanCell, mdTablesToText } = require('../core/mdtable')
 
+// REST 调用超时。两处 new lark.Client 都没传 httpInstance ⇒ 用 SDK 共享的 axios 实例,其 timeout
+// 默认 0 = 永不放弃:请求被接下却不应答时,等建卡 / 发消息的那一步永远不返回,该群这一轮收不了尾。
+// axios 的 Node 适配器把它落成 req.setTimeout —— 按 socket **空闲**计时,不是总时长,
+// 所以一直在传字节的大文件上传 / 下载不会被掐断。WSClient 默认也用这个实例,一并受益。
+const HTTP_TIMEOUT_MS = 30_000
+function ensureHttpTimeout() {
+  const d = lark.defaultHttpInstance && lark.defaultHttpInstance.defaults
+  if (d && !d.timeout) d.timeout = HTTP_TIMEOUT_MS // 别人有意设过的值不覆盖
+}
+
 // lark SDK failures bury the actionable message (missing scope + the grant link,
 // error code) inside the axios response body — surface it, or operators only see
 // "Request failed with status code 400" (hit live: 99991672 缺 im:chat 权限).
@@ -542,6 +552,7 @@ function answerCardElements(text, { milestones = [], footer = '', footerDetail =
 function createFeishuPlatform({ appId, appSecret, botOpenId = null, onlyWhenMentioned = false, log = () => {}, onConn = () => {}, ws = {}, card = {}, client: suppliedClient = null } = {}) {
   if (!appId || !appSecret) throw new Error('feishu: appId and appSecret required')
 
+  ensureHttpTimeout()
   const client = suppliedClient || new lark.Client({ appId, appSecret, loggerLevel: lark.LoggerLevel.warn })
   // 流式卡片推送节流窗(ms)。缺省 1500 = 每 1.5s 最多刷一次卡;显式 0 ⇒ 逐帧推(旧行为)。
   const cardThrottleMs = Number(card.throttleMs) === 0 ? 0 : Math.max(0, Number(card.throttleMs) || 1500)
@@ -1056,6 +1067,7 @@ function feishuClient(appId, appSecret) {
   // toast/endpoint/CLI), so the SDK's own console logging is pure noise (loggerLevel
   // doesn't gate it; it even dumps caught 4xx from the precheck's probes all over
   // `sbot doctor`). A no-op logger keeps it quiet.
+  ensureHttpTimeout()
   return new lark.Client({ appId, appSecret, logger: SILENT_LOGGER })
 }
 // ── 应用身份(控制台「设置 → 飞书应用 · 身份」)────────────────────────────
@@ -1902,4 +1914,4 @@ function boardUsageNoteNodes() {
   ]
 }
 
-module.exports = { createFeishuPlatform, createCardThrottle, createCardWriter, assertCardOk, ERR_STREAM_DEAD, STREAM_WINDOW_MS, answerCardElements, parseText, shouldHandleGroup, feishuClient, fetchBotOpenId, fetchBotInfo, fetchAppInfo, fetchAppIdentity, normalizeBotInfo, normalizeAppInfo, identityCheck, APP_INFO_SCOPE_HINT, fetchChats, createChat, fetchChatMembers, addChatMembers, deleteChat, sendChatText, sendChatImage, sendChatFile, sendChatCard, updateCardEntity, uploadImage, resolveSendPath, larkErrMsg, feishuHint, feishuPrecheck, fetchAdminCandidates, resolveContactToOpenId, fetchOrgUsers, fetchChatHistory, historyAtMark, replyMessage, editMessage, recallMessage, downloadResource, reactMessage, normalizeEmoji, createBoardDoc, fetchDocUrl, shareDocWithChat, addChatTabDoc, uploadBoardImage, createBoardNodes, createBoardDiagram, listBoardNodes, deleteBoardNodes, boardTextNode, boardUsageNoteNodes, subscribeBoard, listBoardComments, resolveBoardComment, downloadBoardMedia, boardPreviewImageKey }
+module.exports = { HTTP_TIMEOUT_MS, createFeishuPlatform, createCardThrottle, createCardWriter, assertCardOk, ERR_STREAM_DEAD, STREAM_WINDOW_MS, answerCardElements, parseText, shouldHandleGroup, feishuClient, fetchBotOpenId, fetchBotInfo, fetchAppInfo, fetchAppIdentity, normalizeBotInfo, normalizeAppInfo, identityCheck, APP_INFO_SCOPE_HINT, fetchChats, createChat, fetchChatMembers, addChatMembers, deleteChat, sendChatText, sendChatImage, sendChatFile, sendChatCard, updateCardEntity, uploadImage, resolveSendPath, larkErrMsg, feishuHint, feishuPrecheck, fetchAdminCandidates, resolveContactToOpenId, fetchOrgUsers, fetchChatHistory, historyAtMark, replyMessage, editMessage, recallMessage, downloadResource, reactMessage, normalizeEmoji, createBoardDoc, fetchDocUrl, shareDocWithChat, addChatTabDoc, uploadBoardImage, createBoardNodes, createBoardDiagram, listBoardNodes, deleteBoardNodes, boardTextNode, boardUsageNoteNodes, subscribeBoard, listBoardComments, resolveBoardComment, downloadBoardMedia, boardPreviewImageKey }

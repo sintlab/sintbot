@@ -84,6 +84,7 @@ function brainLabel(name, brain) {
   return [name, brain?.model ? modelName(brain.model) : '', brain?.effort || '', brain?.speed === 'fast' ? 'Fast' : '']
     .filter(Boolean).join(' · ')
 }
+const MAX_TIMER_MS = 2 ** 31 - 1 // the longest delay setTimeout can represent
 // The brain a turn actually runs with: a scheduled (cron) turn never runs
 // Fast, nobody is waiting for it and Fast costs more quota.
 function turnBrain(brain, msg) {
@@ -645,6 +646,10 @@ async _durableV2ModelCommand(msg, want, group) {
     const { name, provider } = this._resolveProvider(msg.chatId, group)
     const names = this._modelNames()
     const words = String(want || '').split(/\s+/).map(w => w.trim()).filter(Boolean)
+    // The typed /model waits (bounded) for every listed backend's stale model
+    // list, so a model the CLI just gained is on the card and its name is
+    // recognised on this first use. Card clicks keep using the cached list.
+    await Promise.all(names.map(n => this._modelCatalog(n, this.cfg.providers[n], { fresh: true })))
     if (!words.length) {
       const cat = await this._modelCatalog(name, provider)
       const cur = this._brain(group, name, provider)
@@ -801,9 +806,9 @@ _modelNames() {
       .filter(([, p]) => p && !p.hidden && ['claude', 'codex'].includes(p.runner || 'claude'))
       .map(([n]) => n)
   }
-async _modelCatalog(name, provider) {
+async _modelCatalog(name, provider, opts) {
     if (!this.durableV2ModelCatalog) return null
-    try { return await this.durableV2ModelCatalog(name, provider) } catch { return null }
+    try { return await this.durableV2ModelCatalog(name, provider, opts) } catch { return null }
   }
 _modelOpts(names, name, cat, brain) {
     return { names, name,
@@ -1935,6 +1940,11 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
         resumed: !!this.store.getSession(chatId), freshRetried: false,
         ...(cohort.receiptIds.length > 1
           ? { batchReceiptIds: cohort.receiptIds } : {}) })
+      // The turn reads the group's settings as they are now, not the copy
+      // taken when its message arrived: an edit that does not wait for a
+      // running turn (speed) replaces the group object while this job queued.
+      const liveGroup = this.cfg.groups?.[chatId]
+      if (liveGroup) for (const item of cohort.jobs) item.group = liveGroup
       const job = cohort.anchor
       const { name, provider } = this._resolveProvider(chatId, job.group)
       if (!provider || (provider.baseUrl && !provider.apiKey)) {
@@ -2180,14 +2190,16 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
           // Timers and Date.now need not tick together. An early callback (or
           // a backward wall-clock adjustment) is not proof of elapsed time.
           if (elapsedAt < timeoutDeadlineAt) {
-            capTimer = setTimeout(onHardDeadline, timeoutDeadlineAt - elapsedAt)
+            capTimer = setTimeout(onHardDeadline, Math.min(timeoutDeadlineAt - elapsedAt, MAX_TIMER_MS))
             return
           }
           rt.v2TimeoutProof = { receiptId, turnToken, generation,
             deadlineAt: timeoutDeadlineAt, elapsedAt }
           controller.abort()
       }
-      capTimer = timeoutDeadlineAt !== null ? setTimeout(onHardDeadline, timeoutMs) : null
+      // A delay past the timer maximum fires after 1 ms; the deadline check
+      // above re-arms an early callback, so the clamp keeps the same deadline.
+      capTimer = timeoutDeadlineAt !== null ? setTimeout(onHardDeadline, Math.min(timeoutMs, MAX_TIMER_MS)) : null
       const input = prepareC2RunnerInput({ prompt,
         appendSystemPrompt: SYSTEM_APPENDIX, msg: job.msg, group: job.group,
         provider, config: this.cfg, brain: { model: rt.v2Brain.model, effort: rt.v2Brain.effort,
@@ -2217,6 +2229,10 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
         onSteerReady, onSteerLanded,
         log: this.log })
       rt.v2Compacted = false // 「进度可能已折叠」只带一轮
+      // The handed-back reply belongs to that same turn only; and this turn's
+      // own reply is not known until its terminal delivery completes.
+      rt.v2HandbackReply = null
+      rt.v2LastReply = ''
       let started
       try { started = this.durableV2StartTurn(input) }
       catch (error) { started = Promise.reject(error) }
@@ -2482,9 +2498,14 @@ async completeDurableV2CardTurn({ chatId, receiptId, turnToken, effectId,
       this._observeActivity('sending', { chatId, receiptId })
       const completed = await path.complete({ payload, replyText, paused,
         footer, footerDetail, milestones })
+      const groupReply = redact(quotaFailure ? T.quotaFailure : replyText || '', { pii: job.group?.redactPii !== false })
+      const finishStatus = quotaFailure || closedFailure ? 'error' : payload.quiet || projected.display.silent ? 'silent' : 'answered'
+      // The group-visible text of a delivered answer, in memory only: a
+      // successful idle compaction hands it to the next turn.
+      rt.v2LastReply = finishStatus === 'answered' ? groupReply : ''
       this._observeActivity('finish', { chatId, receiptId,
-        status: quotaFailure || closedFailure ? 'error' : payload.quiet || projected.display.silent ? 'silent' : 'answered',
-        reply: redact(quotaFailure ? T.quotaFailure : replyText || '', { pii: job.group?.redactPii !== false }),
+        status: finishStatus,
+        reply: groupReply,
         err: quotaFailure ? T.quotaFailure : closedFailure ? terminalReplyText(payload) : '',
         tokens: rt.v2UsageDecision?.tokens || null, sessionId: projected.display.sessionId })
       const after = authority.snapshot()
@@ -2642,7 +2663,20 @@ classifyDurableV2UnresolvedTurn({ chatId, receiptId, turnToken, effectId,
     // Reinject current supported context each turn. No legacy feature menu,
     // external-message commands or v1 manifest refresh scheduler is included.
     return turnPrompt({ lines: batch?.length > 1 ? batch.map(line) : [line(msg)],
-      cancelled: null, compacted: rt?.v2Compacted === true, manifest, updated: false })
+      cancelled: null, compacted: rt?.v2Compacted === true, manifest, updated: false,
+      ...this._handbackReply(rt, msg.chatId, group, providerName, provider) })
+  }
+
+  // The reply kept by a successful idle compaction, for the session, backend
+  // and model it was compacted on. Anything else (a new conversation, another
+  // backend or model) gets no field at all, so the prompt input is unchanged.
+  // The core decides whether and how the text is rendered (turn_prompt).
+  _handbackReply(rt, chatId, group, providerName, provider) {
+    const held = rt?.v2HandbackReply
+    if (!held || !held.text || held.sid !== (this.store.getSession(chatId) || null) ||
+        held.provider !== providerName ||
+        held.model !== (this._brain(group, providerName, provider).model || '')) return {}
+    return { deliveredReply: held.text }
   }
 
   handleMessage() { throw new Error('legacy Engine execution path is not enabled') }
@@ -2695,7 +2729,7 @@ classifyDurableV2UnresolvedTurn({ chatId, receiptId, turnToken, effectId,
     const chatId = rt.chatId
     const brain = this._brain(group, name, provider) // 可能抛:要在挂句柄之前
     const controller = new AbortController()
-    const rec = { controller, sid, provider: name, boundary: null, startedAt: Date.now(), why: '', lateKill: null, exited: null, skip: false, closed: false }
+    const rec = { controller, sid, provider: name, model: brain.model || '', boundary: null, startedAt: Date.now(), why: '', lateKill: null, exited: null, skip: false, closed: false }
     rt.v2Compacting = rec
     this.log(`group ${chatId}: 空闲整理开始 — 上下文约 ${fmtWan(ctx)},过了整理线 ${fmtWan(plan.at)}`)
     const cap = setTimeout(() => { if (!rec.why) rec.why = '超时'; controller.abort() }, plan.maxMs)
@@ -2767,6 +2801,9 @@ classifyDurableV2UnresolvedTurn({ chatId, receiptId, turnToken, effectId,
       resetAt: null, elapsedMs: now - rec.startedAt, now, live })
     if (out.status === 'compacted' && live) {
       rt.v2Compacted = true // 下一轮带「进度可能已折叠为摘要」
+      // 摘要常把已经发出的回复写成「还没回」、编号清单丢项:上一轮发进群的原文留给下一轮(只在内存,重启即丢)。
+      rt.v2HandbackReply = rt.v2LastReply
+        ? { sid: rec.sid, provider: rec.provider, model: rec.model, text: rt.v2LastReply } : null
       let locked = false
       try { locked = this.durableV2AssertWriterLock() === true } catch {}
       const stats = this.store.getSessionStats(chatId)

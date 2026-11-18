@@ -3,7 +3,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { createHash } = require('node:crypto')
 
-const EXPECTED_SHA256 = 'a7ed0aae5a3a6cde65b16792ef201be46aee9e92cf17f9c3c2ec84f5ff832d23'
+const EXPECTED_SHA256 = 'e2d352e272741d6647e923035b9c982e000a8abdacf8f834ae8a01b3daea453a'
 let bytes
 try {
   bytes = fs.readFileSync(path.join(__dirname, 'privatecore.wasm'))

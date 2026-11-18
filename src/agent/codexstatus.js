@@ -9,6 +9,7 @@
 // machine. Both return best-effort and never throw.
 
 const { spawn } = require('node:child_process')
+const { StringDecoder } = require('node:string_decoder')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
@@ -100,8 +101,9 @@ function appServerRaw(bin, method, params, timeoutMs = 12000) {
     send({ jsonrpc: '2.0', id: INIT_ID, method: 'initialize', params: { clientInfo: { name: 'sbot', title: 'sbot', version: '0.1.0' }, capabilities: { experimentalApi: true } } })
 
     let buf = ''
+    const dec = new StringDecoder('utf8') // 多字节字符可能被切在两次管道读之间,逐块 toString 会把两半都变成 U+FFFD
     child.stdout.on('data', (chunk) => {
-      buf += chunk.toString('utf8')
+      buf += dec.write(chunk)
       let nl
       while ((nl = buf.indexOf('\n')) >= 0) {
         const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1)

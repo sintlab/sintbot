@@ -1,4 +1,4 @@
-# Install SintBot 1.4.25
+# Install SintBot 1.4.26
 
 English · [简体中文](./zh-CN/install.md)
 
@@ -16,7 +16,7 @@ For Slack, follow the [Slack connection and usage guide](./platforms/slack.md); 
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-The installer checks the environment, installs `sintbot@1.4.25` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.25`. No sudo is needed.
+The installer checks the environment, installs `sintbot@1.4.26` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.26`. No sudo is needed.
 
 To preview, append `-s -- --dry-run`. To choose another location, set `SINTBOT_INSTALL_DIR` and adjust the executable paths below.
 
@@ -191,11 +191,13 @@ Busy follow-ups default on for both Codex and Claude Code. Set `steer: false` to
 
 When the reply card moves below a confirmed follow-up, its existing text is shown immediately and subsequent output continues from that point. Moving the card does not restart the task.
 
-On Claude Code versions advertising compact, an idle group can compact its session after a normal turn once context reaches half the configured compaction window. New work stops compaction first. Compaction takes one concurrency slot and starts only when another slot remains free. A value of 0 leaves normal compaction to the executor and disables this idle step. Fresh quota events update usage immediately; while events remain fresh, supplemental quota requests are limited to once every 30 minutes. Idle compaction is experimental in this release: successful compaction and cache behavior still await real-model validation.
+On Claude Code versions advertising compact, an idle group can compact its session after a normal turn once context reaches half the configured compaction window. New work stops compaction first. Compaction takes one concurrency slot and starts only when another slot remains free. A value of 0 leaves normal compaction to the executor and disables this idle step. On the turn after a successful idle compaction, the reply already delivered to the group is handed back to the model unchanged (only the end of a long one), so a follow-up that answers by number, such as "1 and 3", still connects; that reply is held in memory only and is not handed back after a service restart. Fresh quota events update usage immediately; while events remain fresh, supplemental quota requests are limited to once every 30 minutes. Idle compaction is experimental in this release: successful compaction and cache behavior still await real-model validation.
 
 ## 6. Console
 
 Model and thinking depth are chosen per group: on the group card, the Model row picks the backend and model and the next row picks the depth, from lists read live from the local Codex and Claude Code. Subscription model cards no longer carry a model or depth; a third-party endpoint keeps its model on the model card. After the upgrade, each model card's existing model and depth move into its groups with the same effective values and no session reset, after a configuration backup. Model cards distinguish requested settings from runtime reports; expand Capacity and runtime details for reference limits. Codex context and per-model compaction each offer Executor default or Custom. Numeric inputs appear only for Custom. Changes apply next turn without resetting the session; known catalog context limits are enforced. Compaction means a threshold for Codex and a window for Claude Code, and may start earlier. Explicit legacy global compaction values are converted into independent settings for existing models, preserving per-model overrides. New models use executor defaults. Reading does not rewrite the file; the converted settings are persisted on the next normal configuration save.
+
+In a model card's panel, Check login or Verify login re-reads the available models once the login is confirmed and shows which were added and which are no longer offered; `/model` in a group also fetches the latest list first. The Codex model card's panel also shows the version of the Codex program on this machine, with an Upgrade button when a newer one exists: after you confirm, the latest version is reinstalled globally and every group uses it from its next turn. It does not upgrade while a group is running a Codex task, and the button is offered only for a Codex installed globally with npm.
 
 The overview combines group projects and concurrency. Each row shows the runner, state and elapsed time, project folder, model and configured reasoning effort, and the latest reported context usage. Select a group to view its tasks, then expand a task for tools, reply and usage. Context is a session sample, not cumulative token consumption; unknown capacity and older samples are labeled. Row icons provide console messages, stop and new-session controls according to the current group state.
 
@@ -226,6 +228,18 @@ If a group stays paused, first restart: a group whose records can recover reopen
 ```
 
 Sealing keeps the old journal unchanged under `incidents/` in the data directory and gives the group a new journal; messages left unfinished before the seal are never processed again. Start the service again to reopen the group. When the service runs in the background (for example under the desktop app), **Seal and continue** on the console overview's "Needs attention" card performs the same seal and the service restarts by itself; it waits until other groups have no task. The service still starts when every group is paused, so the console stays available. A preflight fails while any group would stay paused. Never delete journals or resend to get around a paused group. Run only one connected process per Feishu app. This release does not register a background service.
+
+Every time the service starts, and after every setting changed while it runs, the configuration in use is stored unchanged under `config-history/` in the data directory. The latest 50 are kept and only you can read the files. To list the stored versions and which settings changed in each (setting names only, never values):
+
+```bash
+"$HOME/.local/share/sintbot/bin/sintbot" config history
+```
+
+To go back to one, stop the service first, then run the command below with a version from that list, or the beginning of one. The current configuration is stored before the restore, so the restore can itself be undone; affected groups must have settled records, and a group whose backend or project directory changed starts a new conversation. It takes effect at the next start. The command refuses to run while the service is running.
+
+```bash
+"$HOME/.local/share/sintbot/bin/sintbot" config restore VERSION --config "$HOME/.sbot/config.json"
+```
 
 [Illustrated website guide](https://sintbot.com/guide/install/) · [AI-assisted installation](./AI-ASSISTED-INSTALL.md)
 

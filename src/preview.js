@@ -209,9 +209,14 @@ function resolveRequestPath({ serveRoot, urlPath, token, entry = 'index.html', s
   if (single && !(parts.length === 1 && parts[0] === entry)) return { ok: false, code: 404, reason: 'not-entry' }
   const abs = path.resolve(serveRoot, ...parts)
   if (abs !== serveRoot && !abs.startsWith(serveRoot + path.sep)) return { ok: false, code: 404, reason: 'escape' }
+  // ⚠ 段级判定只看请求的写法:解码后带 `/` 的段(`x%2f..%2f.env` → `x/../.env`)能过段级,再在
+  // resolve 里折叠成 `.env`。故对**将要服务的落点**再判一次;排在 escape 之后,绝对路径覆盖仍报 escape。
+  if (isDenied(path.relative(serveRoot, abs))) return { ok: false, code: 404, reason: 'denied' }
   let real
   try { real = realpathSync(abs) } catch { return { ok: false, code: 404, reason: 'missing' } }
   if (real !== serveRoot && !real.startsWith(serveRoot + path.sep)) return { ok: false, code: 404, reason: 'symlink-escape' }
+  // 软链落点也要判:根内一个叫 pub.txt 的软链指向 .env,名字和 abs 都无害,真身才是被拒的那个
+  if (isDenied(path.relative(serveRoot, real))) return { ok: false, code: 404, reason: 'denied' }
   let st
   try { st = statSync(real) } catch { return { ok: false, code: 404, reason: 'missing' } }
   if (st.isDirectory()) return { ok: false, code: 404, reason: 'directory' } // 无目录列表

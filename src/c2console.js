@@ -16,6 +16,8 @@ const READ_PATHS = ['/api/wecom/chats', '/api/wecom/attach', '/api/slack/channel
   '/api/feishu/admin-candidates', '/api/feishu/org-users', '/api/feishu/resolve-contact',
   '/api/feishu/chats', '/api/feishu/chat-members', '/api/update', '/api/claude/models',
   '/api/groups/model-options',
+  // Version of the Codex program on this machine (model card).
+  '/api/codex/cli',
   // The console's own conversations (src/platform/local.js).
   '/api/local/history',
   // Counts only, for the desktop shell: also answered to a loopback request
@@ -38,6 +40,11 @@ const WRITE_PATHS = ['/api/wecom/attach', '/api/wecom/attach/cancel', '/api/weco
   // changes what a group runs waits for that group and starts a new session.
   '/api/providers/add', '/api/provider-key', '/api/providers/hidden', '/api/providers/order',
   '/api/default-provider', '/api/claude/verify',
+  // Probe a backend's model list again now; writes no config and no journal.
+  '/api/models/refresh',
+  // Upgrade the machine's Codex program: one fixed install command, refused
+  // while a group runs a Codex turn (serverbase).
+  '/api/codex/cli/upgrade',
   // One headless trial reply outside every journal and session (like a
   // one-off agent run); it does not take a group concurrency slot.
   '/api/test',
@@ -402,7 +409,7 @@ function createC2Console(options = {}) {
   const ui = createUiServer({
     getWecomChats: options.getWecomChats, wecomAttach: options.wecomAttach,
     getSlackChats: options.getSlackChats, slackAttach: options.slackAttach, configPath, host, log, getConnHealth, updater: options.updater || null,
-    onHostChange: options.onHostChange,
+    onHostChange: options.onHostChange, codexCli: options.codexCli || null,
     getLiveState: facade.getLiveState, control: facade.control, runtimePolicy: facade,
     issuesPath: path.join(stateDir, 'issues.jsonl'),
     sessionsPath: path.join(stateDir, 'ui-sessions.json'),

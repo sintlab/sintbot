@@ -10,6 +10,7 @@
 // module only adapts it to HTTP: arguments in, captured notices out.
 const http = require('node:http')
 const path = require('node:path')
+const { StringDecoder } = require('node:string_decoder')
 const { spawnSync } = require('node:child_process')
 const { runConnect, runLocalSetup, runWecomSetup, runSlackSetup, qrPage, probeRunners: connectProbe, EXIT_INTERRUPTED } = require('./connect')
 
@@ -324,9 +325,12 @@ function createSetupServer(options) {
   }
   const readBody = (req) => new Promise((resolve, reject) => {
     let size = 0, raw = ''
+    // Decode as one UTF-8 stream: a character split across two reads must
+    // not become two replacement characters in a project name or path.
+    const decoder = new StringDecoder('utf8')
     if (Number(req.headers['content-length']) > BODY_LIMIT) { const e = new Error('请求过大'); e.status = 413; return reject(e) }
-    req.on('data', chunk => { size += chunk.length; if (size > BODY_LIMIT) { const e = new Error('请求过大'); e.status = 413; reject(e) } else raw += chunk })
-    req.on('end', () => { try { resolve(raw ? JSON.parse(raw) : {}) } catch { reject(new Error('请求不是 JSON')) } })
+    req.on('data', chunk => { size += chunk.length; if (size > BODY_LIMIT) { const e = new Error('请求过大'); e.status = 413; reject(e) } else raw += decoder.write(chunk) })
+    req.on('end', () => { raw += decoder.end(); try { resolve(raw ? JSON.parse(raw) : {}) } catch { reject(new Error('请求不是 JSON')) } })
     req.on('error', reject)
   })
   let boundPort = port

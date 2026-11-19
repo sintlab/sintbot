@@ -37,14 +37,34 @@ function buildUpgradeNotice(lastVersion, currentVersion, changelog = [], brand =
   return L.join('\n')
 }
 
-function buildUpgradeNoticeParts(lastVersion, currentVersion, changelog = [], brand = DEFAULT_BRAND) {
-  const span = upgradeSpan(lastVersion, currentVersion, changelog)
+// `lang: 'en'` = the notice for an English conversation. Which versions are listed still comes from
+// `changelog` (CHANGELOG.json, the single source); their names and items come from `changelogEn`
+// (CHANGELOG.en.json, matched by version). A version without an English entry is listed by its
+// number alone: an English conversation gets no Chinese line.
+function buildUpgradeNoticeParts(lastVersion, currentVersion, changelog = [], brand = DEFAULT_BRAND, { lang = 'zh', changelogEn = [] } = {}) {
+  let span = upgradeSpan(lastVersion, currentVersion, changelog)
   if (!span) return null
+  const en = lang === 'en'
+  if (en) {
+    const english = new Map((Array.isArray(changelogEn) ? changelogEn : []).filter((e) => e && e.version).map((e) => [String(e.version), e]))
+    span = span.map((e) => english.get(String(e.version)) || { version: e.version })
+  }
   const one = span.length === 1 ? span[0] : null
   const body = span.map((e) => [
     `**v${e.version}${e.name ? ' · ' + e.name : ''}**`,
     ...(e.items || []).filter((it) => it && it.t).map((it) => `· ${it.t}`),
   ].join('\n')).join('\n\n')
+  if (en) {
+    return {
+      tone: 'upgrade',
+      label: 'Upgrade',
+      title: `${brand || DEFAULT_BRAND} upgraded to v${currentVersion}`,
+      subtitle: `v${lastVersion} → v${currentVersion}` +
+        (one && one.name ? ` · ${one.name}` : (span.length > 1 ? ` · ${span.length} versions` : '')),
+      body,
+      footer: 'Details in the console: Settings → Version history',
+    }
+  }
   return {
     tone: 'upgrade',
     title: `${brand || DEFAULT_BRAND} 已升级到 v${currentVersion}`,

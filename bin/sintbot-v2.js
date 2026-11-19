@@ -11,7 +11,8 @@ const { secureDataDir } = require('../src/core/datadir')
 const { StateStore } = require('../src/core/store')
 const { createFeishuPlatform, feishuClient } = require('../src/platform/feishu')
 const { createWecomPlatform } = require('../src/platform/wecom')
-const { createSlackPlatform } = require('../src/platform/slack')
+const { createSlackPlatform, slackHomeLanguage } = require('../src/platform/slack')
+const { chatLang } = require('../src/chatlang')
 const { GROUP_COMMANDS } = require('../src/runtimefacts')
 const { createMultiPlatform } = require('../src/platform/multi')
 const { createLocalPlatform } = require('../src/platform/local')
@@ -37,9 +38,13 @@ async function startService(rest) {
     if (preflightOnly || values.ui !== true) {
       throw new Error('No configuration yet. Run `sintbot start --ui` and connect Feishu, WeCom or Slack in the browser (or `sintbot connect` in the terminal)')
     }
-    await runSetupMode({ configFile: setupConfig, dataDir: values['data-dir'],
+    const chosen = await runSetupMode({ configFile: setupConfig, dataDir: values['data-dir'],
       host: values['ui-host'] || '127.0.0.1', port: Number(values['ui-port'] || 4600),
       open: values['no-open'] !== true })
+    // A proxy chosen (or cleared) on the setup page wins over the terminal's
+    // proxy variables for the service started below; it is in the saved
+    // configuration, which applyProxyEnv applies once the variables are gone.
+    require('../src/slackproxy').followSetupProxyChoice(chosen)
   }
   // Groups added to the configuration since the last start are registered
   // below, after the writer lock is held; existing journals stay as mapped.
@@ -98,6 +103,7 @@ async function runSetupMode({ configFile, dataDir, host, port, open }) {
     await setup.close()
   }
   process.stderr.write('Setup · configuration written; starting the service\n')
+  return setup.session.proxyChosen()
 }
 
 // Model and depth used to live on model cards; they now belong to each group.
@@ -164,8 +170,8 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
   // /hud reads the group's model quota; /issue appends to the console's log.
   const usageProbe = require('../src/usage').createUsageProbe({
     bin: cfg.agent?.bin || 'claude',
-    codexUsage: async () => { const status = require('../src/agent/codexstatus')
-      return status.formatUsage(await status.rateLimits('codex')) } })
+    codexUsage: async (_provider, opts) => { const status = require('../src/agent/codexstatus')
+      return status.formatUsage(await status.rateLimits('codex'), opts?.lang) } })
   const issues = require('../src/core/issues').createIssues(path.join(stateDir, 'issues.jsonl'),
     { withFileLock: require('../src/core/store').withFileLock,
       log: message => process.stderr.write(`C2 multi-group · ${message}\n`) })
@@ -359,6 +365,10 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
         }
         // Slack on the durable route: reserved identities, plain replies, one
         // attempt per message. People type the group commands with `!`.
+        // The language of the adapter's own words is read from the live
+        // configuration (`cfg` is replaced in place when the console saves),
+        // never from the connection's `config`: a change applies to the next
+        // message without a restart.
         const slackAdapter = config => createSlackPlatform({ botToken: config.slack.botToken,
           appToken: config.slack.appToken, botUserId: config.slack.botUserId || '',
           onlyWhenMentioned: config.slack.onlyWhenMentioned !== false,
@@ -366,6 +376,7 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
           commands: GROUP_COMMANDS, commandAlias: config.slack.commandAlias || '!',
           umbrellaCommand: config.slack.umbrellaCommand || '/sint', ws: config.slack.ws || {},
           durable: true, inboxDir: path.join(stateDir, 'slack-inbox'), presence: config.slack.presence !== false,
+          languageOf: chatId => chatLang(cfg.groups?.[chatId], 'slack'), homeLanguage: () => slackHomeLanguage(cfg.groups),
           log: message => process.stderr.write(`Slack · ${message}\n`) })
         if (platformsConfigured(cfg).slack) adapters.slack = slackAdapter(cfg)
         const platform = createMultiPlatform({ adapters,
@@ -609,10 +620,20 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
     if (!(switchJob?.state === 'switching' && switchJob.to === version)) {
       const announce = require('../src/upgradeannounce')
       announce.announceUpgradeOnStart({ store, cfg, platform: liveTransport?.platform,
-        changelog: announce.readChangelog(), currentVersion: version,
+        changelog: announce.readChangelog(), changelogEn: announce.readChangelogEn(), currentVersion: version,
         heldGroups: (started.held || []).map(item => item.chatId),
         log: message => process.stderr.write(`SintBot · ${message}\n`) })
     }
+    // Slack: a round a force-kill or a seal ended without an answer leaves ⏳
+    // (and a queued thread's 「已排队」) on people's messages. Show them it did
+    // not finish, once; display only, nothing runs again.
+    void require('../src/slackleftover').markSlackLeftovers({ stateDir, cfg,
+      adapter: liveTransport?.platform.get('slack') || null,
+      incidents: incidentQuarantine.incidents || [],
+      held: (started.held || []).map(item => item.chatId),
+      pendingOf: chatId => journals.get(chatId)?.snapshot().receipts.pending || [],
+      languageOf: chatId => chatLang(cfg.groups?.[chatId], 'slack'),
+      log: message => process.stderr.write(`Slack · ${message}\n`) }).catch(() => {})
     // A console upgrade that switched to this version is done once every
     // group is connected; then the daily version check starts.
     if (!started.held?.length) updater?.confirmStarted()

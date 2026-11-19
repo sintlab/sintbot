@@ -47,12 +47,17 @@ function translateSlackNotice(value) {
     '这里只列出机器人已加入的频道。先在 Slack 的目标频道里发 /invite @机器人名，再刷新。': 'Only channels the bot has joined are listed. In the Slack channel you want, send /invite @your-bot-name, then refresh.',
     '应用缺少列出频道的权限（channels:read / groups:read），补上后需重新安装': 'The app lacks the scopes to list channels (channels:read / groups:read). Add them and reinstall.',
     '读取 Slack 频道失败，请检查网络或代理后重试': 'Could not read Slack channels. Check your network or proxy and retry.',
+    '代理地址要以 http:// 开头，例如 http://127.0.0.1:7890': 'The proxy address must start with http://, for example http://127.0.0.1:7890.',
+    '代理例外列表格式无效': 'The proxy exception list is not valid.',
+    '代理地址里的 *** 只代表原来那个代理的用户名和密码；换了代理地址，请重新填写用户名和密码。': 'The *** in the proxy address stands only for the saved proxy’s user name and password. For a different proxy address, enter its user name and password again.',
+    '机器人看不到这个私聊：只能绑定和机器人本身的私聊。在 Slack 里打开机器人、给它发一句话，再绑定那个私聊': 'The bot cannot see this direct message. Only a direct message with the bot itself can be bound: open the bot in Slack, send it a message, then bind that conversation.',
+    '机器人还不在这个频道里（私有频道会显示为找不到频道）：先在 Slack 的这个频道里发 /invite @机器人名 把它请进来': 'The bot is not in this channel yet (a private channel shows as not found). In that Slack channel, send /invite @your-bot-name first.',
   }
   if (Object.prototype.hasOwnProperty.call(exact, line)) return exact[line]
   const kinds = { app: ['app-level token', 'xapp-', 'Basic Information → App-Level Tokens'], bot: ['bot token', 'xoxb-', 'OAuth & Permissions → Bot User OAuth Token'] }
-  let m = /^请粘贴(应用级令牌|Bot Token)（x(?:app|oxb)- 开头），在应用设置的 .+。$/.exec(line)
+  let m = /^请粘贴\s?(应用级令牌|Bot Token)（x(?:app|oxb)- 开头），在应用设置的 .+。$/.exec(line)
   if (m) { const k = kinds[m[1] === 'Bot Token' ? 'bot' : 'app']; return 'Paste the ' + k[0] + ' (starts with ' + k[1] + '). It is under ' + k[2] + ' in the app settings.' }
-  m = /^这里要填(应用级令牌|Bot Token)（x(?:app|oxb)- 开头），你贴的是\s?(.+)。它在应用设置的 .+。$/.exec(line)
+  m = /^这里要填\s?(应用级令牌|Bot Token)（x(?:app|oxb)- 开头），你贴的是\s?(.+)。它在应用设置的 .+。$/.exec(line)
   if (m) {
     const k = kinds[m[1] === 'Bot Token' ? 'bot' : 'app']
     const pasted = /^应用级令牌/.test(m[2]) ? 'the app-level token (starts with xapp-), so the two fields are swapped'
@@ -77,6 +82,8 @@ function translateSlackNotice(value) {
   if (m) return 'Connected to the Slack workspace “' + m[1] + '”.'
   m = /^已连接项目 (.+)，可以直接发任务。命令以 ! 开头，例如 !status。$/.exec(line)
   if (m) return 'Connected to project ' + m[1] + '. Send a task any time. Commands start with !, for example !status.'
+  m = /^已连接项目 (.+)，在这个频道里 @我 发任务。命令以 ! 开头，例如 !status。$/.exec(line)
+  if (m) return 'Connected to project ' + m[1] + '. @mention me in this channel to send a task. Commands start with !, for example !status.'
   return null
 }
 

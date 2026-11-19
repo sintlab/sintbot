@@ -4,7 +4,10 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { resolveSendPath } = require('./platform/feishu')
 const { redact } = require('./core/redact')
+const { isWecomDmChatId } = require('./platform/wecom')
 const ACTIONS = ['send-msg', 'send-file', 'send-image']
+// The agent reads these refusals: a single chat is not a group.
+const where = chatId => isWecomDmChatId(chatId) ? '企业微信单聊' : '企业微信群'
 
 function createWecomToolServer({ socketPath, getConfig, getPlatform, canSend = () => true }) {
   const peers = new Set()
@@ -23,7 +26,7 @@ function createWecomToolServer({ socketPath, getConfig, getPlatform, canSend = (
         const request = JSON.parse(raw.slice(0, raw.indexOf('\n')))
         if (!canSend()) throw new Error('服务尚未就绪或正在维护')
         const cfg = getConfig(), group = cfg.groups?.[request.chatId]
-        if (!group || group.platform !== 'wecom' || group.paused || !ACTIONS.includes(request.action)) throw new Error('当前企业微信群或动作不可用')
+        if (!group || group.platform !== 'wecom' || group.paused || !ACTIONS.includes(request.action)) throw new Error(`当前${where(request.chatId)}或动作不可用`)
         const adapter = getPlatform(request.chatId)
         if (!adapter) throw new Error('企业微信连接不可用')
         let ack
@@ -67,7 +70,7 @@ function requestWecomTool(socketPath, request) {
 async function runWecomAction(args, { env = process.env, stdout = process.stdout } = {}) {
   if (args[0] === '--help' || args[0] === '-h') { stdout.write('wecom send-msg <text> | send-file <relative-path> | send-image <relative-path>\n'); return }
   if (args.length !== 2 || !ACTIONS.includes(args[0])) throw new Error('请选择 send-msg、send-file 或 send-image，并提供一个参数')
-  if (!env.SBOT_CHAT_ID || env.SBOT_PLATFORM !== 'wecom' || !env.SBOT_WECOM_SOCKET) throw new Error('此动作只能在当前企业微信群任务中执行')
+  if (!env.SBOT_CHAT_ID || env.SBOT_PLATFORM !== 'wecom' || !env.SBOT_WECOM_SOCKET) throw new Error(`此动作只能在当前${where(env.SBOT_CHAT_ID)}任务中执行`)
   await requestWecomTool(env.SBOT_WECOM_SOCKET, { chatId: env.SBOT_CHAT_ID, action: args[0], value: args[1] })
   stdout.write('发送已确认\n')
 }

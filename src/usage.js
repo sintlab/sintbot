@@ -25,6 +25,12 @@ const LAST_GOOD_TTL_MS = 10 * 60 * 1000
 const LAST_GOOD = new Map() // kind|baseUrl|sha256(key)[:16] -> { val, ts }
 
 const CREDENTIALS_VALUE = Object.freeze({ label: '额度', value: '凭据失效' })
+// The same words for a conversation whose language is English (io.lang = 'en';
+// the group's /hud). The console and every other caller keep the Chinese ones.
+const CREDENTIALS_VALUE_EN = Object.freeze({ label: 'credentials', value: 'no longer valid' })
+const LABELS = Object.freeze({ zh: Object.freeze({ quota: '额度', balance: '余额', subscription: '订阅额度' }),
+  en: Object.freeze({ quota: 'usage', balance: 'balance', subscription: 'subscription usage' }) })
+const labelsFor = lang => (lang === 'en' ? LABELS.en : LABELS.zh)
 
 // One request → { status, body }. Network error / timeout ⇒ status null (the core
 // files it under `transient`). Non-JSON bodies travel as text so the core can still
@@ -52,7 +58,7 @@ const balanceKind = (base = '') =>
 
 // 核心的 windows[] → 与 Claude 订阅额度同一种一行:`5h:42% │ 7d:10% (5d)`。
 // 复用 claudeusage.formatClaudeUsage,窗口名映射:session=5h · weekly=7d · weekly_scoped=模型名。
-function formatWindows(windows, now = Date.now()) {
+function formatWindows(windows, now = Date.now(), lang = 'zh') {
   const { formatClaudeUsage } = require('./agent/claudeusage')
   const limits = (Array.isArray(windows) ? windows : []).map((w) => ({
     kind: w.kind === 'weekly' ? 'weekly_all' : w.kind,
@@ -60,7 +66,7 @@ function formatWindows(windows, now = Date.now()) {
     resetsAt: w.resetsAt,
     scopeName: w.scopeName || '',
   }))
-  return formatClaudeUsage(limits, now)
+  return formatClaudeUsage(limits, now, lang)
 }
 
 const CURRENCY_SIGN = { CNY: '¥', RMB: '¥', USD: '$' }
@@ -71,11 +77,11 @@ function formatBalance(balance) {
 }
 
 // 核心的成功结果 → 卡片一行;窗口优先(额度),否则余额;两者皆无 ⇒ null。
-function render(parsed, now) {
-  const windows = formatWindows(parsed.windows, now)
-  if (windows) return { label: '额度', value: windows }
+function render(parsed, now, lang = 'zh') {
+  const windows = formatWindows(parsed.windows, now, lang)
+  if (windows) return { label: labelsFor(lang).quota, value: windows }
   const balance = formatBalance(parsed.balance)
-  if (balance) return { label: '余额', value: balance }
+  if (balance) return { label: labelsFor(lang).balance, value: balance }
   return null
 }
 
@@ -119,15 +125,16 @@ const PROBES = { glm: probeGlm, minimax: probeMinimax, deepseek: probeDeepseek }
 const keyHash = (key) => crypto.createHash('sha256').update(String(key)).digest('hex').slice(0, 16)
 
 // 单个 provider → { label, value } | null。`io`:bin(cfg.agent.bin,登录态 claude 的兜底要用)
-// 与可测注入(fetchImpl / now / timeoutMs)。
+// 与可测注入(fetchImpl / now / timeoutMs)。io.lang = 'en':英文会话的 /hud,标签与窗口名用英文。
 async function providerUsage(provider, io = {}) {
   const key = provider.apiKey
   const base = provider.baseUrl || ''
+  const lang = io.lang === 'en' ? 'en' : 'zh'
   // Claude 订阅登录形态(无 baseUrl、非 codex):额度走 oauth/usage(cc-hud 同源通道,
   // v0.11.3;凭据取本机 Claude Code 登录态,拿不到/未登录 ⇒ 走 claudeusage 的兜底,仍可能 null)。
   if (!base && provider.runner !== 'codex') {
-    const v = await require('./agent/claudeusage').usageLine(io.bin ? { bin: io.bin } : {})
-    return v ? { label: '订阅额度', value: v } : null
+    const v = await require('./agent/claudeusage').usageLine({ ...(io.bin ? { bin: io.bin } : {}), ...(lang === 'en' ? { lang } : {}) })
+    return v ? { label: labelsFor(lang).subscription, value: v } : null
   }
   if (!key) return null
 
@@ -136,15 +143,17 @@ async function providerUsage(provider, io = {}) {
   if (!probe) return null // volcano / claude: no public balance API
   const now = typeof io.now === 'function' ? io.now : Date.now
   const ctx = { fetchImpl: io.fetchImpl || globalThis.fetch, timeoutMs: io.timeoutMs || REQUEST_TIMEOUT_MS, now }
-  const goodKey = `${kind}|${base}|${keyHash(key)}`
+  // The last good line is kept per language: its words differ.
+  const goodKey = `${kind}|${base}|${keyHash(key)}` + (lang === 'en' ? '|en' : '')
 
   const parsed = await probe(base, key, ctx)
   if (parsed.ok) {
-    const v = render(parsed, now())
+    const v = render(parsed, now(), lang)
     if (v) LAST_GOOD.set(goodKey, { val: v, ts: now() })
     return v
   }
-  if (parsed.error === 'credentials') { LAST_GOOD.delete(goodKey); return { ...CREDENTIALS_VALUE } }
+  // Credentials that no longer work void the remembered line in every language.
+  if (parsed.error === 'credentials') { const plain = `${kind}|${base}|${keyHash(key)}`; LAST_GOOD.delete(plain); LAST_GOOD.delete(plain + '|en'); return { ...(lang === 'en' ? CREDENTIALS_VALUE_EN : CREDENTIALS_VALUE) } }
   if (parsed.error === 'transient') {
     const last = LAST_GOOD.get(goodKey)
     if (last && now() - last.ts < LAST_GOOD_TTL_MS) return last.val
@@ -216,18 +225,21 @@ async function refreshUsage(name, provider, { probe = providerUsage, now = Date.
 // `bin` = cfg.agent.bin:登录态 claude 的额度兜底要起它(见 claudeusage),不传就是 PATH 上的 claude。
 function createUsageProbe({ codexUsage = async () => null, probe = providerUsage, ttl = 60_000, failTtl = 10_000, now = Date.now, bin } = {}) {
   const cache = new Map() // provider name + '|' + baseUrl -> { v, ts }
-  return async (name, provider) => {
+  // The third argument is given by an English conversation only ({ lang: 'en' }):
+  // its line is worded and cached apart from the Chinese one.
+  return async (name, provider, { lang = 'zh' } = {}) => {
+    const en = lang === 'en'
     const isCodex = !!provider && provider.runner === 'codex'
     if (!isCodex && !hasUsageApi(provider)) return { supported: false, value: null }
     // 缓存键带上 baseUrl:控制台热改端点(deepseek → minimax)后名字没变,只按名字缓存会让
     // 接下来 60 秒把上一家的余额当成这一家的报出去 —— 换了端点就是换了账,不许串味。
-    const key = name + '|' + ((provider && provider.baseUrl) || '')
+    const key = name + '|' + ((provider && provider.baseUrl) || '') + (en ? '|en' : '')
     const c = cache.get(key)
     if (c && now() - c.ts < (c.v ? ttl : failTtl)) return { supported: true, value: c.v }
     let v = null
     try {
-      if (isCodex) v = await codexUsage(provider)
-      else { const u = await probe(provider, bin ? { bin } : {}); v = u ? `${u.label} ${u.value}` : null }
+      if (isCodex) v = await (en ? codexUsage(provider, { lang }) : codexUsage(provider))
+      else { const u = await probe(provider, { ...(bin ? { bin } : {}), ...(en ? { lang } : {}) }); v = u ? `${u.label} ${u.value}` : null }
     } catch { v = null }
     cache.set(key, { v: v || null, ts: now() })
     return { supported: true, value: v || null }

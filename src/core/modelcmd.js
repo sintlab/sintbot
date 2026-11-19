@@ -20,11 +20,15 @@ const EFFORT_WORDS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'
 // 「速度」这一类:fast = 开 Fast;标准 / standard = 回到标准('' = 不带速度字段)。能不能开再按目标型号的清单查(speedsFor)。
 const SPEED_WORDS = { fast: 'fast', standard: '', 标准: '' }
 const speedOf = (w) => (Object.prototype.hasOwnProperty.call(SPEED_WORDS, w) ? SPEED_WORDS[w] : undefined)
-// 群里看到的速度名:Fast 用官方叫法;标准就叫标准
-const speedName = (s) => (s === 'fast' ? 'Fast' : '标准')
+// 群里看到的速度名:Fast 用官方叫法;标准就叫标准(英文会话 lang = 'en':standard,`/model standard` 认)
+const speedName = (s, lang = 'zh') => (s === 'fast' ? 'Fast' : lang === 'en' ? 'standard' : '标准')
 // Fast 的额度代价:清单里只有「2x speed, increased usage」这类说明、没有倍数,倍数取官方文档(learn.chatgpt.com Speed / Pricing:
 // 订阅自带额度按标准的 2.5 倍扣,买的点数 2 倍)。官方改了倍数只改这一处。
 const FAST_COST = '额度按 2.5 倍扣'
+const FAST_COST_EN = 'uses quota at 2.5x'
+// 给人看的类别名:中文默认;英文会话传 lang = 'en'(只影响回执里的字,不影响认词)。
+const WHAT = { provider: ['后端', 'backend'], effort: ['深度', 'effort'], speed: ['速度', 'speed'], model: ['型号', 'model'] }
+const whatName = (kind, lang = 'zh') => WHAT[kind][lang === 'en' ? 1 : 0]
 const VERSION_RE = /^\d+(?:[.-]\d+)*$/
 const VARIANT_RE = /^[[(][a-z0-9]+[\])]$/i
 
@@ -54,7 +58,7 @@ function joinVersionWords(words, isOther) {
  *   speed:'fast' = 开 Fast,'' = 回到标准;没写这一类 ⇒ 没有这个字段
  *   model 原样保留大小写(查清单时再归一成清单里的写法);型号类写了不止一个 ⇒ models(调用方先逐个认,再判重)
  */
-function parseModelWords(words, providerNames = []) {
+function parseModelWords(words, providerNames = [], lang = 'zh') {
   const names = new Map(providerNames.map((n) => [String(n).toLowerCase(), n]))
   const out = {}
   const isOther = (w) => { const lw = w.toLowerCase(); return names.has(lw) || EFFORT_WORDS.includes(lw) || speedOf(lw) !== undefined }
@@ -62,14 +66,14 @@ function parseModelWords(words, providerNames = []) {
     const lw = w.toLowerCase()
     if (names.has(lw)) {
       const n = names.get(lw)
-      if (out.provider && out.provider !== n) return { error: { kind: 'dup', what: '后端', a: out.provider, b: n } }
+      if (out.provider && out.provider !== n) return { error: { kind: 'dup', what: whatName('provider', lang), a: out.provider, b: n } }
       out.provider = n
     } else if (EFFORT_WORDS.includes(lw)) {
-      if (out.effort && out.effort !== lw) return { error: { kind: 'dup', what: '深度', a: out.effort, b: lw } }
+      if (out.effort && out.effort !== lw) return { error: { kind: 'dup', what: whatName('effort', lang), a: out.effort, b: lw } }
       out.effort = lw
     } else if (speedOf(lw) !== undefined) {
       const sp = speedOf(lw)
-      if (out.speed !== undefined && out.speed !== sp) return { error: { kind: 'dup', what: '速度', a: speedName(out.speed), b: speedName(sp) } }
+      if (out.speed !== undefined && out.speed !== sp) return { error: { kind: 'dup', what: whatName('speed', lang), a: speedName(out.speed, lang), b: speedName(sp, lang) } }
       out.speed = sp
     } else {
       // 型号这一类先都收下,由调用方按清单逐个认:两个词里有认不出的 ⇒ 报「认不出」(多半是打错 / 隐藏的后端名),
@@ -116,10 +120,11 @@ function speedsFor(cat, modelId) {
 
 // Fast 这一档给人看的一句(群里回执、模型卡、控制台同一口径):清单说明里的「2x speed」翻成「约 2 倍速」+ 额度代价。
 //   清单没写倍数就只说代价。cat / modelId 缺 ⇒ 只说代价。
-function fastNote(cat, modelId) {
+function fastNote(cat, modelId, lang = 'zh') {
   const m = cat && modelId && Array.isArray(cat.models) ? cat.models.find((x) => x.id === modelId) : null
   const t = m && Array.isArray(m.speeds) ? m.speeds.find((x) => x && x.id === 'fast') : null
   const k = t && /(\d+(?:\.\d+)?)\s*x\s*speed/i.exec(String(t.desc || ''))
+  if (lang === 'en') return (k ? `about ${k[1]}x speed, ` : '') + FAST_COST_EN
   return (k ? `约 ${k[1]} 倍速，` : '') + FAST_COST
 }
 
@@ -145,16 +150,16 @@ function recommendEffort(cat, modelId) {
 //   只调深度不补型号(补了就换脑、开新对话,与「只调深度接着聊」冲突)。返回 { model, effort, filled: ['型号','深度'] }。
 //   速度**从不补**(默认不开 Fast);反过来,换到 / 换成没有 Fast 的型号而那一家开着 Fast ⇒ speed = ''
 //   (回到标准)并 speedDropped —— 否则存着一个必被静默丢掉的档,群卡和页脚还写着 Fast。只在清单取得到时判(取不到不猜)。
-function fillPicks({ switching = false, model, effort, speed, currentModel = '', currentEffort = '', currentSpeed = '', third = false, cat = null } = {}) {
+function fillPicks({ switching = false, model, effort, speed, currentModel = '', currentEffort = '', currentSpeed = '', third = false, cat = null, lang = 'zh' } = {}) {
   const filled = []
   const rec = cat && cat.ok !== false && cat.recommended ? cat.recommended : null
-  if (switching && model === undefined && !currentModel && !third && rec && rec.model) { model = rec.model; filled.push('型号') }
+  if (switching && model === undefined && !currentModel && !third && rec && rec.model) { model = rec.model; filled.push(whatName('model', lang)) }
   const next = model === undefined ? currentModel : model
   if (effort === undefined && cat && cat.ok !== false && (switching || model !== undefined)) {
     const effs = effortsFor(cat, next)
     if (!currentEffort || (effs.length && !effs.includes(currentEffort))) {
       const e = recommendEffort(cat, next)
-      if (e && e !== currentEffort) { effort = e; if (!currentEffort) filled.push('深度') }
+      if (e && e !== currentEffort) { effort = e; if (!currentEffort) filled.push(whatName('effort', lang)) }
     }
   }
   let speedDropped = false
@@ -163,4 +168,4 @@ function fillPicks({ switching = false, model, effort, speed, currentModel = '',
   return { model, effort, filled, ...(speed !== undefined ? { speed } : {}), ...(speedDropped ? { speedDropped } : {}) }
 }
 
-module.exports = { parseModelWords, resolveModel, effortsFor, speedsFor, fastNote, speedName, modelChoices, recommendEffort, fillPicks, EFFORT_WORDS, SPEED_WORDS, FAST_COST }
+module.exports = { parseModelWords, resolveModel, effortsFor, speedsFor, fastNote, speedName, whatName, modelChoices, recommendEffort, fillPicks, EFFORT_WORDS, SPEED_WORDS, FAST_COST }

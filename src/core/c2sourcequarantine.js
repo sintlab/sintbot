@@ -54,6 +54,7 @@ function loadC2IncidentQuarantine(stateDir, { fs = require('node:fs'), path = re
   const { taskId } = require('./enginecheckpoint')
   const byChat = new Map()
   const settled = new Map()
+  const incidents = []
   const fail = name => { throw new Error(`Sealed incident record is invalid: ${name}; preserve it and review`) }
   let entries = []
   try { entries = fs.readdirSync(root, { withFileTypes: true }) }
@@ -76,6 +77,13 @@ function loadC2IncidentQuarantine(stateDir, { fs = require('node:fs'), path = re
     const ids = byChat.get(record.chatId) || new Set()
     for (const item of record.pending) ids.add(item.sourceId)
     byChat.set(record.chatId, ids)
+    incidents.push(Object.freeze({ chatId: record.chatId,
+      sealedAt: Number.isSafeInteger(record.sealedAt) ? record.sealedAt : 0,
+      sourceIds: Object.freeze(record.pending.map(item => item.sourceId)),
+      // Where the sealed journal lies, read only through a copy (display only).
+      dir: path.join(root, entry.name),
+      journal: typeof record.journal === 'string' && /^[A-Za-z0-9._-]{1,200}$/.test(record.journal)
+        ? record.journal : null }))
     if (record.completedReceiptIds?.length) {
       const done = settled.get(record.chatId) || new Set()
       for (const id of record.completedReceiptIds) done.add(id)
@@ -88,7 +96,8 @@ function loadC2IncidentQuarantine(stateDir, { fs = require('node:fs'), path = re
     if (!done || typeof message.msgId !== 'string' || !message.msgId) return false
     return done.has(taskId({ source: 'message', chatId: message.chatId, sourceId: message.msgId }))
   }
-  return Object.freeze({ sourceIds,
+  // Each seal's unsettled source messages, for display only (a Slack ⚠️).
+  return Object.freeze({ sourceIds, incidents: Object.freeze(incidents),
     rejects: message => !!byChat.get(message?.chatId)?.has(message?.msgId) || settledBefore(message) })
 }
 

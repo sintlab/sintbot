@@ -90,11 +90,11 @@ const fmtDurDecimal = (ms) => {
 }
 const QUOTA_SEP = ' │ '
 
-function formatClaudeUsage(limits, now = Date.now()) {
+function formatClaudeUsage(limits, now = Date.now(), lang = 'zh') {
   if (!Array.isArray(limits) || !limits.length) return null
   const reset = (l) => (l.resetsAt && l.resetsAt > now && l.resetsAt - now < 9 * 864e5) ? ` (${fmtDurDecimal(l.resetsAt - now)})` : ''
   // 窗口名:session=5h(官方就是 5 小时滚动窗)· weekly_all=7d · weekly_scoped=该模型名
-  const label = (l) => l.kind === 'session' ? '5h' : l.kind === 'weekly_all' ? '7d' : l.kind === 'weekly_scoped' ? (l.scopeName || '顶级模型') : ''
+  const label = (l) => l.kind === 'session' ? '5h' : l.kind === 'weekly_all' ? '7d' : l.kind === 'weekly_scoped' ? (l.scopeName || (lang === 'en' ? 'top model' : '顶级模型')) : ''
   const parts = []
   for (const l of limits) {
     const lb = label(l)
@@ -389,22 +389,24 @@ function startRefreshIfDue(account, { bin, now, log, spawn, supportsFlag, buildE
 
 // 过期/缺凭据时的那条腿:(必要时)后台让 CLI 刷新 → 读缓存(只信本进程刷成功后的)→ 核心判 →
 // 一行人话;任何一步不行 ⇒ null。调用方不会被挡住:这里只 await 一次文件读。
-async function cachedUsageFallback({ home = os.homedir(), bin = 'claude', now = Date.now, log = warn,
+async function cachedUsageFallback({ home = os.homedir(), bin = 'claude', now = Date.now, lang = 'zh', log = warn,
   spawn = require('node:child_process').spawn, readFile = fs.promises.readFile, stat = fs.promises.stat, tmpdir = os.tmpdir,
   supportsFlag = null, buildEnv = null, timeoutMs = FALLBACK_TIMEOUT_MS, killGraceMs = FALLBACK_KILL_GRACE_MS,
   intervalMs = FALLBACK_INTERVAL_MS, flagProbeMs = FALLBACK_FLAG_PROBE_MS } = {}) {
   const account = path.join(home, '.claude', '.credentials.json')
   startRefreshIfDue(account, { bin, now, log, spawn, tmpdir, timeoutMs, killGraceMs, intervalMs, flagProbeMs,
     supportsFlag: supportsFlag || supportsUsageFlag, buildEnv: buildEnv || require('./claudecode').buildEnv })
+  // 上一次解析出的一行按语言各存一份(英文会话 lang = 'en' 的窗口名不同)。
+  const good = lang === 'en' ? account + '\nen' : account
   const doneAt = FALLBACK.doneAt.get(account)
-  if (!doneAt) return FALLBACK.inflight ? (FALLBACK.lastGood.get(account) || null) : null
+  if (!doneAt) return FALLBACK.inflight ? (FALLBACK.lastGood.get(good) || null) : null
   const raw = await readClaudeJson(path.join(home, '.claude.json'), { readFile, stat })
   if (!raw) return null
   const body = raw.fetchedAtMs != null || raw.fetchedAt != null ? raw : { ...raw, fetchedAt: doneAt }
   const parsed = require('./privatecore').usageParse('claude', 'cached', null, body, now())
-  if (!parsed.ok) return FALLBACK.inflight ? (FALLBACK.lastGood.get(account) || null) : null
-  const line = formatClaudeUsage(windowsToLimits(parsed.windows), now())
-  if (line) FALLBACK.lastGood.set(account, line)
+  if (!parsed.ok) return FALLBACK.inflight ? (FALLBACK.lastGood.get(good) || null) : null
+  const line = formatClaudeUsage(windowsToLimits(parsed.windows), now(), lang)
+  if (line) FALLBACK.lastGood.set(good, line)
   return line
 }
 function resetFallback() { FALLBACK.inflight = null; FALLBACK.lastAt.clear(); FALLBACK.doneAt.clear(); FALLBACK.lastGood.clear(); FALLBACK.flags = null; FALLBACK.file = null }
@@ -414,21 +416,24 @@ const settleFallback = () => (FALLBACK.inflight ? FALLBACK.inflight.then(() => u
 // 拉一次 → 一行人话;拿不到 null。走 fetchRaw ⇒ 与告警共享那份缓存。
 // 缓存口径与 fetchRaw 一致:成功 60s、失败 10s(两层都压死一分钟就白搭下层的重试了)。
 // 凭据缺失/过期 ⇒ 走 cachedUsageFallback(见上),不再直接 null。
+// lang = 'en':英文会话的那一行(窗口名不同),另存一格;原始数据(fetchRaw 的 RAW)两种语言共用,不多拉一次。
 const CACHE = { at: 0, val: null }
+const CACHE_EN = { at: 0, val: null }
 const TTL = 60_000
-async function usageLine({ ttl = TTL, now = Date.now, readToken = readAccessToken, fallback = cachedUsageFallback, home, bin, ...io } = {}) {
-  if (CACHE.at && now() - CACHE.at < (CACHE.val ? ttl : FAIL_TTL_MS)) return CACHE.val
+async function usageLine({ ttl = TTL, now = Date.now, readToken = readAccessToken, fallback = cachedUsageFallback, home, bin, lang = 'zh', ...io } = {}) {
+  const cache = lang === 'en' ? CACHE_EN : CACHE
+  if (cache.at && now() - cache.at < (cache.val ? ttl : FAIL_TTL_MS)) return cache.val
   let val = null
   const token = readToken()
   if (token || eventFresh(now())) { // 令牌读不到(钥匙串偶发)但有新鲜的额度事件,照样出数
     const data = token ? await fetchRaw(token, { ttl, now, log: io.log, curl: io.curl, sleep: io.sleep }) : null
-    val = formatClaudeUsage(mergeEvent(parseLimits(data), RAW.at, now()), now())
+    val = formatClaudeUsage(mergeEvent(parseLimits(data), RAW.at, now()), now(), lang)
   } else {
-    try { val = await fallback({ now, ...(home ? { home } : {}), ...(bin ? { bin } : {}), ...io }) } catch { val = null }
+    try { val = await fallback({ now, ...(home ? { home } : {}), ...(bin ? { bin } : {}), ...(lang === 'en' ? { lang } : {}), ...io }) } catch { val = null }
   }
-  CACHE.at = now(); CACHE.val = val
+  cache.at = now(); cache.val = val
   return val
 }
-function clearCache() { CACHE.at = 0; CACHE.val = null; RAW.at = 0; RAW.data = null }
+function clearCache() { CACHE.at = 0; CACHE.val = null; CACHE_EN.at = 0; CACHE_EN.val = null; RAW.at = 0; RAW.data = null }
 
 module.exports = { usageLine, fetchRaw, clearCache, clearEvents, noteRateLimit, eventFresh, mergeEvent, parseCredentials, parseLimits, formatClaudeUsage, readAccessToken, fetchCurl, fetchNative, readCurlResult, fmtDurDecimal, cachedUsageFallback, readCachedUtilization, readClaudeJson, supportsUsageFlag, resetFallback, settleFallback, QUOTA_SEP, TIMEOUT_MS, FAIL_TTL_MS, RETRY_WAIT_MS, FALLBACK_ARGS, FALLBACK_FLAGS, FALLBACK_TIMEOUT_MS, FALLBACK_KILL_GRACE_MS, FALLBACK_INTERVAL_MS, FALLBACK_FLAG_PROBE_MS }

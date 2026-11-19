@@ -298,8 +298,8 @@ const PRESET_MODELS = [
 // (10080min) with `secondary: null`, so the old positional `primary='5h'` mislabeled a
 // weekly window as "5h". Read windowMins instead: ~300 ⇒ "5h", 10080 ⇒ "周".
 // 窗口名(v0.11.8 起用于紧凑格式 `7d:12%`,故周窗口标 7d 而非「周」,与 Claude 卡一致)
-function windowLabel(mins) {
-  if (!mins) return '窗口'
+function windowLabel(mins, lang = 'zh') {
+  if (!mins) return lang === 'en' ? 'window' : '窗口'
   if (mins >= 1440) return `${Math.round(mins / 1440)}d`
   return `${Math.round(mins / 60)}h`
 }
@@ -311,11 +311,11 @@ function windowLabel(mins) {
 // ⚠ **百分比是「已用」不是「剩余」** —— 这里是群内 /hud 对 codex 群的实际渲染,与
 // claudeusage.formatClaudeUsage / console 的 fmtUsage / usage.js 的 minimax 行必须同口径,
 // 漏改任何一处就会出现同一个数字两种含义(98% 既可能是快满也可能是还剩很多)。
-function formatUsage(u) {
+function formatUsage(u, lang = 'zh') {
   if (!u) return null
   const dur = (ms) => { const trim = (v) => (v < 10 ? String(Number(v.toFixed(1))) : String(Math.round(v))); const h = ms / 3600e3; if (h >= 24) return `${trim(h / 24)}d`; if (h >= 1) return `${trim(h)}h`; return `${Math.max(1, Math.round(ms / 60e3))}m` }
   const reset = (w) => { if (!w || w.resetsAt == null) return ''; const ms = w.resetsAt > 1e9 ? w.resetsAt * 1000 - Date.now() : w.resetsAt * 1000; return (ms > 0 && ms < 9 * 864e5) ? ` (${dur(ms)})` : '' }
-  const win = (w) => w ? `${windowLabel(w.windowMins)}:${Math.min(100, Math.max(0, Math.round(w.usedPercent || 0)))}%${reset(w)}` : ''
+  const win = (w) => w ? `${windowLabel(w.windowMins, lang)}:${Math.min(100, Math.max(0, Math.round(w.usedPercent || 0)))}%${reset(w)}` : ''
   const parts = [win(u.primary), win(u.secondary)].filter(Boolean)
   if (u.credits && u.credits.hasCredits && u.credits.balance != null) parts.push(`credits ${u.credits.balance}`)
   return parts.join(' │ ') || null

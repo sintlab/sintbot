@@ -8,7 +8,13 @@ const { isSlackChatId, isSlackMessageId, slackMessageRef, slackChannelOf } = req
 const RECEIPT_ID = /^[0-9a-f]{32}$/
 const FEISHU_CHAT_ID = /^oc_[A-Za-z0-9_-]{1,124}$/
 const FEISHU_MESSAGE_ID = /^om_[A-Za-z0-9_-]{1,124}$/
+const { chatLang, pick } = require('../chatlang')
 const NOTICE_TEXT = '上一轮没有完成（模型出错或服务中断），请重新发送原请求。'
+const NOTICE_TEXT_EN = 'The last round did not finish (a model error or a service interruption). Please send your request again.'
+// The notice in the conversation's own language, read from the live
+// configuration at the moment it is sent. `platform` is the sender's own: a
+// conversation whose entry does not say speaks that platform's default.
+const noticeFor = (cfg, chatId, platform) => pick(chatLang(cfg.groups?.[chatId], platform), NOTICE_TEXT, NOTICE_TEXT_EN)
 
 // A deliberately narrow recovery sender for a previously accepted Feishu
 // message. The ordinary platform.reply() can fall back to a second send after
@@ -61,7 +67,7 @@ function createFeishuRecoverySender({ cfg, platform, client } = {}) {
     try {
       const response = await client.im.message.reply({
         path: { message_id: receipt.sourceId },
-        data: { msg_type: 'text', content: JSON.stringify({ text: NOTICE_TEXT }) },
+        data: { msg_type: 'text', content: JSON.stringify({ text: noticeFor(cfg, receipt.chatId) }) },
       })
       const id = response?.data?.message_id ?? response?.message_id
       return response?.code === 0 && typeof id === 'string' &&
@@ -118,7 +124,7 @@ function createLocalRecoverySender({ cfg, platform } = {}) {
       throw new Error('C2 local recovery target differs from durable receipt')
     }
     try {
-      const id = local.notice(receipt.chatId, NOTICE_TEXT, receipt.sourceId)
+      const id = local.notice(receipt.chatId, noticeFor(cfg, receipt.chatId), receipt.sourceId)
       return isLocalMessageId(id) ? id : null
     } catch { return null }
   }
@@ -164,7 +170,7 @@ function createWecomRecoverySender({ cfg, platform } = {}) {
     }
     try {
       adapter.openOutbound?.()
-      const id = await adapter.pushOnce(receipt.chatId, NOTICE_TEXT)
+      const id = await adapter.pushOnce(receipt.chatId, noticeFor(cfg, receipt.chatId))
       return isWecomMessageId(id) ? id : null
     } catch { return null }
   }
@@ -208,11 +214,15 @@ function createSlackRecoverySender({ cfg, platform } = {}) {
         target.replyCtx?.messageId !== receipt.sourceId) {
       throw new Error('C2 Slack recovery target differs from durable receipt')
     }
+    let id = null
     try {
-      const response = await adapter.replyOnce({ chatId: receipt.chatId, messageId: receipt.sourceId }, NOTICE_TEXT, { notice: true })
-      const id = response?.code === 0 ? response.data?.message_id : null
-      return isSlackMessageId(id) ? id : null
-    } catch { return null }
+      const response = await adapter.replyOnce({ chatId: receipt.chatId, messageId: receipt.sourceId }, noticeFor(cfg, receipt.chatId, 'slack'), { notice: true })
+      id = response?.code === 0 ? response.data?.message_id : null
+    } catch {}
+    // Display only: a ⏳ left by the interrupted turn becomes ⚠️ beside the
+    // notice. Best effort, never awaited, never part of the receipt outcome.
+    try { adapter.presence?.unfinished?.(receipt.chatId, [receipt.sourceId]) } catch {}
+    return isSlackMessageId(id) ? id : null
   }
   return Object.freeze({ resolveTarget, send })
 }
@@ -239,4 +249,4 @@ function createRoutedRecoverySender({ cfg, senders } = {}) {
   })
 }
 
-module.exports = { createWecomRecoverySender, createSlackRecoverySender, createFeishuRecoverySender, createLocalRecoverySender, createRoutedRecoverySender }
+module.exports = { NOTICE_TEXT, NOTICE_TEXT_EN, createWecomRecoverySender, createSlackRecoverySender, createFeishuRecoverySender, createLocalRecoverySender, createRoutedRecoverySender }

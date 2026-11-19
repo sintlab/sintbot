@@ -98,8 +98,21 @@ class C2DurableIngress {
     (this.#gate !== null && this.#gate.isClosed() !== false) }
   snapshot() { return this.#journal.snapshot() }
 
-  enqueueMessage({ receipt, flags, front = false } = {}) {
+  // `busy`: facts for the core's busy route of a message that arrives while a
+  // task runs ({ followups, waitable, thread, turnThreads }). The core answers "join",
+  // "queue" or "refuse" (with `refusal`: "full" or "unavailable"); a refusal is never committed, so the message gets no
+  // receipt. `accept(route)` says whether the caller can carry the route out
+  // right now; a route it cannot is not committed either. Nothing of the
+  // facts is stored: the durable queue keeps the shape older releases read.
+  // `preflight` (sync) checks the caller's side once the route is known and
+  // before anything is committed; if it throws, nothing is committed.
+  enqueueMessage({ receipt, flags, front = false, busy = null, accept = null, preflight = null } = {}) {
     if (this.blocked) throw new Error('C2 ingress closed pending startup recovery')
+    if (busy !== null && (!busy || typeof busy !== 'object' || Array.isArray(busy)) ||
+        accept !== null && (typeof accept !== 'function' || accept.constructor?.name === 'AsyncFunction') ||
+        preflight !== null && (typeof preflight !== 'function' || preflight.constructor?.name === 'AsyncFunction')) {
+      throw new TypeError('C2 ingress busy facts invalid')
+    }
     exactKeys(receipt, RECEIPT_KEYS, 'message receipt')
     exactKeys(flags, FLAGS, 'queue flags')
     if (receipt.source !== 'message' || typeof receipt.sourceId !== 'string' ||
@@ -130,18 +143,34 @@ class C2DurableIngress {
     for (const key of FLAGS) job[key] = flags[key]
     const receipts = { pending: [...before.receipts.pending, structuredClone(receipt)],
       completed: before.receipts.completed }
+    const ROUTES = ['join', 'queue', 'refuse']
     const prepared = this.#host.prepare({ id, domain: 'queue', scope: receipt.chatId,
       ...(before.state.lanes.queue?.[receipt.chatId] ? {} : { seed: { queue: [] } }),
-      payload: { type: 'enqueue', job, front }, receipts,
+      payload: { type: 'enqueue', job, front, ...(busy ? { busy } : {}) }, receipts,
       validate: result => {
         const lane = result.state?.lanes?.queue?.[receipt.chatId]
+        const route = result.decision?.route
+        const refused = route === 'refuse'
         if (!lane || !Array.isArray(lane.queue) ||
-            lane.queue.filter(item => item.id === job.id).length !== 1 ||
+            (busy ? !ROUTES.includes(route) : route !== undefined) ||
+            (refused ? !['full', 'unavailable'].includes(result.decision.refusal)
+              : result.decision?.refusal !== undefined) ||
+            lane.queue.filter(item => item.id === job.id).length !== (refused ? 0 : 1) ||
+            refused && !isDeepStrictEqual(lane.queue, before.state.lanes.queue?.[receipt.chatId]?.queue || []) ||
             result.effects.length !== 0) {
           throw new Error('C2 ingress returned invalid queue result')
         }
       } })
-    return prepared.commit()
+    const route = prepared.result.decision.route
+    if (busy && (route === 'refuse' || accept && accept(route) !== true)) {
+      prepared.cancel()
+      return { route, refusal: prepared.result.decision.refusal ?? null, staged: false, cursor: before.cursor }
+    }
+    if (preflight) {
+      try { preflight() } catch (error) { prepared.cancel(); throw error }
+    }
+    const committed = prepared.commit()
+    return busy ? { ...committed, route } : committed
   }
 }
 

@@ -64,6 +64,9 @@ const isWecomChatId = (value) => typeof value === 'string' && WECOM_CHAT_ID.test
 const isWecomDmChatId = (value) => typeof value === 'string' && WECOM_DM_CHAT_ID.test(value)
 const isWecomMessageId = (value) => typeof value === 'string' && WECOM_MESSAGE_ID.test(value)
 const isWecomGroupChatId = (value) => isWecomChatId(value) && !value.startsWith('wr_dm_')
+// 会话的称呼(adapter.conversationOf):群照旧,单聊不说「本群」
+const WECOM_GROUP_WORDS = Object.freeze({ label: '企业微信群', noun: '群', here: '本群', of: '本群', recall: '撤回' })
+const WECOM_DIRECT_WORDS = Object.freeze({ label: '企业微信单聊', noun: '单聊', here: '这个单聊', of: '这个单聊的', recall: '撤回' })
 
 // A userid too long for the conversation shape (more than 60 bytes) has no id.
 function wecomDmChatId(userId) {
@@ -864,6 +867,8 @@ function createWecomPlatform(o = {}) {
   const platform = {
     skillCmd: 'sbot wecom',
     chatLabel: '企业微信群',
+    // 按会话说话:单聊里不说「本群」(引擎的群内说明、/status、/model 与核心的自知清单开头都读它)
+    conversationOf(chatId) { return isWecomDmChatId(chatId) ? WECOM_DIRECT_WORDS : WECOM_GROUP_WORDS },
     // history 有(走官方 CLI 拉近 7 天群历史);回复 / 编辑 / 撤回 / 表情 / 下载 / 画布 / 生图没有;回复是普通消息不是钉住的卡片;send-msg 渲染 markdown
     // imagen / takeoverCard 翻回 true(P2):生图完成通知与接管入口都已按平台分流(走官方命令行工具,见 bin 的 imagenWorker / cmdBrowser)
     // plainReplies:持久路径上每条回答是一条普通消息(经 replyOnce),不开流式卡片 —— 引擎只在平台这样声明、

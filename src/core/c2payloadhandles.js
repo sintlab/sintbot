@@ -121,6 +121,19 @@ class C2PayloadHandles {
     return job
   }
 
+  // The thread of each queued job (a Slack channel thread), from the live
+  // payloads, as the fact the core batches by; null when none has one. The
+  // journal never holds it.
+  queueThreads(queue) {
+    if (this.blocked || !Array.isArray(queue)) throw new Error('C2 queued payload handles closed')
+    const threads = queue.map(item => {
+      const id = typeof item?.id === 'string' ? item.id.slice('receipt:job:'.length) : ''
+      const thread = this.requireQueued(id).msg?.thread
+      return typeof thread === 'string' && thread ? thread : null
+    })
+    return threads.some(thread => thread !== null) ? threads : null
+  }
+
   takeSteer(id, chatId, effectId) {
     const snapshot = authority(this.#journal)
     const entry = snapshot.state.lanes.steer?.[chatId]?.entries.find(item => item.receiptId === id)

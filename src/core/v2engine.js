@@ -13,7 +13,7 @@ const { settleUsage, manifestPolicy, manifestHeader, manifestContext, manifestFe
   idleCompactPlan, idleCompactSettle, compactEvent, classifyError } = require('../agent/privatecore')
 const { taskId } = require('./enginecheckpoint')
 const { prepareCardTerminalPath } = require('./c2cardterminalpath')
-const { terminalReplyText } = require('./c2terminaleffectbridge')
+const { terminalReplyText, terminalNoticeText } = require('./c2terminaleffectbridge')
 const { createC2TurnProjection } = require('./c2turnprojection')
 const { prepareC2RunnerInput, prepareC2CompactionInput } = require('./c2runnerinput')
 const { continueC2Successor } = require('./c2successorbridge')
@@ -21,7 +21,8 @@ const { rejectC2Input } = require('./c2inputrejection')
 const progress = require('./turnprogress')
 const { groupBrain } = require('./brain')
 const { modelName } = require('./modelname')
-const { parseModelWords, resolveModel, effortsFor, speedsFor, fastNote, modelChoices, fillPicks, recommendEffort } = require('./modelcmd')
+const { chatLang, pick } = require('../chatlang')
+const { parseModelWords, resolveModel, effortsFor, speedsFor, fastNote, whatName, modelChoices, fillPicks, recommendEffort } = require('./modelcmd')
 const { DEFAULT_VALUE: MODEL_CARD_DEFAULT } = require('../platform/modelcard')
 // A /model card answers taps for ten minutes; older cards turn read-only.
 const MODEL_CARD_TTL_MS = 10 * 60 * 1000
@@ -46,14 +47,30 @@ const READ_ONLY_TIERS = Object.freeze([1, 3])
 // another prefix rewrites the commands named in it; an answer is never marked.
 const ENGINE_NOTICE = Object.freeze({ notice: true })
 const DURABLE_V2_COMMANDS = new Set(GROUP_COMMANDS.filter(cmd => !['/skip', '/stop'].includes(cmd)))
-function fmtWan(n) {
+// Token counts: 1.2万 / 3亿 in Chinese; 1.2k / 12k / 1.2M in English.
+function fmtWan(n, lang = 'zh') {
   n = Number(n) || 0
+  if (lang === 'en') {
+    const short = (value, unit) => `${value.toFixed(1).replace(/\.0$/, '')}${unit}`
+    if (n >= 999_950_000) return short(n / 1_000_000_000, 'B')
+    if (n >= 999_500) return short(n / 1_000_000, 'M')
+    if (n >= 10_000) return `${Math.round(n / 1000)}k`
+    if (n >= 1000) return short(n / 1000, 'k')
+    return String(n)
+  }
   if (n >= 100_000_000) return `${(n / 100_000_000).toFixed(1).replace(/\.0$/, '')}亿`
   if (n >= 10_000) return `${(n / 10_000).toFixed(1).replace(/\.0$/, '')}万`
   return String(n)
 }
-function humanDuration(ms) {
+// Durations: 2 分 5 秒 in Chinese; 2 min 5 s in English.
+function humanDuration(ms, lang = 'zh') {
   const seconds = Math.max(0, Math.round(ms / 1000))
+  if (lang === 'en') {
+    if (seconds < 60) return `${seconds} s`
+    const mins = Math.floor(seconds / 60)
+    if (mins < 60) return `${mins} min ${seconds % 60} s`
+    return `${Math.floor(mins / 60)} h ${mins % 60} min`
+  }
   if (seconds < 60) return `${seconds} 秒`
   const minutes = Math.floor(seconds / 60)
   if (minutes < 60) return `${minutes} 分 ${seconds % 60} 秒`
@@ -61,18 +78,25 @@ function humanDuration(ms) {
 }
 // The final card is an accounting line: keep seconds for short turns and
 // switch to minutes/hours before a long turn becomes an unreadable number.
-function cardDuration(ms) {
+function cardDuration(ms, lang = 'zh') {
   const seconds = Math.max(0, Math.round(ms / 1000))
+  if (lang === 'en') {
+    if (seconds < 60) return `${seconds} s`
+    const mins = Math.floor(seconds / 60)
+    if (mins < 60) return seconds % 60 ? `${mins} min ${seconds % 60} s` : `${mins} min`
+    const hrs = Math.floor(mins / 60)
+    return mins % 60 ? `${hrs} h ${mins % 60} min` : `${hrs} h`
+  }
   if (seconds < 60) return `${seconds} 秒`
   const minutes = Math.floor(seconds / 60)
   if (minutes < 60) return seconds % 60 ? `${minutes} 分 ${seconds % 60} 秒` : `${minutes} 分钟`
   const hours = Math.floor(minutes / 60)
   return minutes % 60 ? `${hours} 小时 ${minutes % 60} 分` : `${hours} 小时`
 }
-function cardModelInfo(brain) {
+function cardModelInfo(brain, lang = 'zh') {
   if (!brain) return { model: '', effort: '', speed: '' }
   const clean = value => String(value || '').replace(/\s+/g, ' ').trim()
-  return { model: clean(brain.model ? modelName(brain.model) : ''), effort: clean(brain.effort),
+  return { model: clean(brain.model ? modelName(brain.model, lang) : ''), effort: clean(brain.effort),
     speed: brain.speed === 'fast' ? 'fast' : '' }
 }
 // An example depth for /model replies: high when available, else another one.
@@ -80,8 +104,8 @@ const exEffortOf = (efforts, cur) => ((efforts || []).includes('high') && cur !=
 // "codex · GPT-6-Astra · high": what this group runs on its current backend.
 // Speed is written only when Fast is on; standard adds nothing, so a group
 // that never turned Fast on reads exactly as before.
-function brainLabel(name, brain) {
-  return [name, brain?.model ? modelName(brain.model) : '', brain?.effort || '', brain?.speed === 'fast' ? 'Fast' : '']
+function brainLabel(name, brain, lang = 'zh') {
+  return [name, brain?.model ? modelName(brain.model, lang) : '', brain?.effort || '', brain?.speed === 'fast' ? 'Fast' : '']
     .filter(Boolean).join(' · ')
 }
 const MAX_TIMER_MS = 2 ** 31 - 1 // the longest delay setTimeout can represent
@@ -100,11 +124,40 @@ function cardModelDetail(info, result) {
     .filter(Boolean).join(' ')
 }
 // Group texts name the project by its folder only, never by a machine path.
-function projectName(group) {
-  return String(group?.workdir || '').split(/[\\/]/).filter(Boolean).pop() || '（未设）'
+function projectName(group, lang = 'zh') {
+  return String(group?.workdir || '').split(/[\\/]/).filter(Boolean).pop() || pick(lang, '（未设）', '(not set)')
 }
+// How group texts name the conversation. An adapter may describe one itself
+// (conversationOf): a Slack channel or direct message, a WeCom single chat.
+// A Feishu or WeCom group keeps these words.
+const GROUP_WORDS = Object.freeze({ noun: '群', here: '本群', of: '本群', recall: '撤回' })
+// The same words in English. An adapter gives its own under the `en` key of
+// conversationOf ("this channel", "this direct message"); the Chinese keys of
+// that object also reach the model's prompt and are never translated.
+const GROUP_WORDS_EN = Object.freeze({ noun: 'group', here: 'this group', of: "this group's", recall: 'recall' })
+const wordsOf = (platform, chatId, lang = 'zh') => (lang === 'en'
+  ? { ...GROUP_WORDS_EN, ...(platform?.conversationOf?.(chatId)?.en || {}) }
+  : { ...GROUP_WORDS, ...(platform?.conversationOf?.(chatId) || {}) })
+// Everything the bot itself says in a chat, written once per language: T in
+// Chinese and T_EN in English, with the same keys, kinds and parameters (the
+// module refuses to load otherwise). textsFor(lang) picks the table; a method
+// that answers one conversation names its table T as well, so each sentence
+// below is read in that conversation's language. An agent's answer is never
+// one of these.
 const T = {
-  queued: n => n > 1 ? `⏳ 已排队 — 当前任务结束后与前面 ${n - 1} 条一并处理` : '⏳ 已排队 — 当前任务结束后处理',
+  // Says what the core decided for this message: how many queued turns start
+  // before its own, and how many earlier messages share it. Messages from
+  // different threads of one chat never share a turn.
+  queued: ({ ahead = 0, joins = 0 } = {}) => ahead > 0
+    ? `⏳ 已排队 — 前面还有 ${ahead} 件在排队，轮到后${joins > 0 ? `与同一线程的前 ${joins} 条一并处理` : '单独处理'}`
+    : joins > 0 ? `⏳ 已排队 — 当前任务结束后与前面 ${joins} 条一并处理` : '⏳ 已排队 — 当前任务结束后处理',
+  queueFull: '排队的任务已满，这条消息没有处理，请等当前任务结束后重发。',
+  busyUnavailable: '当前任务正在收尾，这条消息没有处理，请稍后重发。',
+  // The Stop of one round (Slack's button under "Working…"): that round only.
+  roundEnded: '这一轮已经结束，无需停止。',
+  roundStopped: n => n > 0 ? `已停止 — 排队的 ${n} 条接着处理` : '已停止',
+  // A stop typed as a reply in a thread whose task is not the one running.
+  threadIdle: '这个线程没有在跑的任务；还在排队的，删除那条消息就能取消。要停整个频道的任务，在频道里 @ 我发 /stop。',
   stopped: '已停止',
   noActiveTask: '没有正在运行的任务',
   unsupportedCommand: '这个命令暂不支持。只放弃手头这件发 /skip，连排队的一起取消发 /stop；其他需求直接用文字说明。',
@@ -112,19 +165,24 @@ const T = {
   // Plain text: 【】 sections and "· " items, each read in one glance, no
   // alignment. Commands go by urgency; the three cancel commands rise in what
   // they discard and describe the queue and the conversation in the same words.
-  help: ({ project, model, steer, readOnly }) => ['【这是什么】',
-    `· 本群绑着项目「${project}」，模型 ${model}`,
+  help: ({ project, model, steer, readOnly, threads = false, w = GROUP_WORDS }) => ['【这是什么】',
+    `· ${w.here}绑着项目「${project}」，模型 ${model}`,
     readOnly ? '· 直接问它，它看代码、答问题；之前聊的都记得'
-      : '· 直接说事它就干，做完在群里回你；之前聊的都记得',
-    steer ? '· 任务进行中再发的消息会补充进当前任务'
-      : '· 任务进行中再发的消息会排队，等这一轮结束再处理',
+      : `· 直接说事它就干，做完在${w.noun}里回你；之前聊的都记得`,
+    // A chat with threads (a Slack channel): each thread is its own task.
+    threads ? (steer ? '· 任务进行中，在它的线程里再发的消息会补充进当前任务；另起的消息单独排队，答案回在各自的线程里'
+      : '· 任务进行中再发的消息会排队，等这一轮结束再处理；不同线程的消息分开处理')
+      : steer ? '· 任务进行中再发的消息会补充进当前任务'
+        : '· 任务进行中再发的消息会排队，等这一轮结束再处理',
     '',
     '【命令】',
     '· /status — 跑了多久、还有没有动静、排队几条',
     '· /skip — 只放弃手头这件，排队的继续；之前聊的还记得',
-    '· /stop — 手头和排队的全取消；之前聊的还记得',
+    // Stop where it is said: in a task's thread, that task only.
+    threads ? '· /stop — 在任务的线程里发，只停那一件，排队的继续；在频道里发，手头和排队的全取消；之前聊的还记得'
+      : '· /stop — 手头和排队的全取消；之前聊的还记得',
     '· /new — 忘掉之前聊的，从头开始（要等手头任务结束）',
-    '· /model — 看或改本群模型：/model high 调深度、/model 型号 换型号（都接着当前对话）、/model 后端 换后端（开新对话）；要等手头任务结束',
+    `· /model — 看或改${w.of}模型：/model high 调深度、/model 型号 换型号（都接着当前对话）、/model 后端 换后端（开新对话）；要等手头任务结束`,
     '· /hud — 额度与本段对话的用量',
     '· /issue 一句话 — 记下问题反馈，给管理员看',
     '· /help — 这份说明',
@@ -132,14 +190,21 @@ const T = {
     '⚠ 命令单独发一条，后面别跟别的字（/issue、/model 除外）',
     // Same boundary as handleRecall: a queued message, or the task running on
     // that message alone; a steered follow-up takes its whole task with it.
-    steer ? '⚠ 撤回自己发的消息 = 取消那件事；撤回补进当前任务的那条，会连当前任务一起取消'
-      : '⚠ 撤回自己发的消息 = 取消那件事（已和别的消息合成一轮在做的除外）',
-    ...(readOnly ? ['⚠ 本群为只读模式：能看代码、答问题；要改文件需管理员放开权限'] : []),
+    steer ? `⚠ ${w.recall}自己发的消息 = 取消那件事；${w.recall}补进当前任务的那条，会连当前任务一起取消`
+      : `⚠ ${w.recall}自己发的消息 = 取消那件事（已和别的消息合成一轮在做的除外）`,
+    ...(readOnly ? [`⚠ ${w.here}为只读模式：能看代码、答问题；要改文件需管理员放开权限`] : []),
   ].join('\n'),
-  status: ({ model, project, state, doing = [], queue, session }) => ['【本群状态】', `· 模型：${model}`,
+  status: ({ model, project, state, doing = [], queue, session, w = GROUP_WORDS }) => [`【${w.of}状态】`, `· 模型：${model}`,
     `· 项目：${project}`, `· 状态：${state}`,
     ...(doing.length ? [`· 最近在做：${doing.join(' · ')}`] : []),
     `· 排队：${queue}`, `· 对话：${session}`].join('\n'),
+  // The state and conversation values of /status. "Running for long" is not
+  // "stuck": the steps and the last activity tell them apart.
+  stateRunning: ({ ms, steps = 0, aliveMs = null }) => `运行中（已跑 ${humanDuration(ms)}${steps ? ` · 已执行 ${steps} 步` : ''}${aliveMs != null ? ` · 最近动静 ${humanDuration(aliveMs)}前` : ''}）`,
+  stateWaiting: '消息已登记，等待并发名额',
+  stateIdle: '空闲',
+  sessionActive: '进行中（记着上下文）',
+  sessionNone: '未开始',
   freshSession: '✅ 已开始新的一段对话，之前聊的内容不再带着',
   newBusy: '⚠ 手头还有任务在跑 —— 等它跑完，或先发 /stop 再发 /new',
   quotaShow: (name, value) => `${name} 额度：${value}`,
@@ -150,14 +215,19 @@ const T = {
   noSession: '【对话】本段对话还没开始',
   issueUsage: '用法：/issue 后面跟一句话，说清哪里不对劲\n例：/issue 刚才发的图它没理我',
   issueLogged: id => `📝 已记下 #${id}`,
-  issueFailed: '⚠ 没记下来 —— 麻烦再说一次，或直接在群里说',
+  issueFailed: (w = GROUP_WORDS) => `⚠ 没记下来 —— 麻烦再说一次，或直接在${w.noun}里说`,
+  // The model reads this on a follow-up merged into the running task. The
+  // built-in core words it, told how the conversation is named and its
+  // language.
+  followUp: (stamp, sender, text, w = GROUP_WORDS, lang = 'zh') => turnPrompt({ followUp: { stamp, sender, text },
+    chatNoun: w.noun, ...(lang === 'en' ? { replyLang: 'en' } : {}) }),
   // /model replies list backends, models and depths on separate lines, with
   // examples taken from this group's real choices. Any unrecognised word
   // rejects the whole command and changes nothing (no fuzzy matching).
   //   o = { current, names, name, choices|null|undefined, efforts, exEffort, exModel, exProvider }
   //   choices === null: this backend's model is set in the console (third-party endpoint).
   modelInfo: (o) => {
-    const L = [`【本群模型】${o.current}`]
+    const L = [`【${(o.w || GROUP_WORDS).of}模型】${o.current}`]
     L.push(`【后端】${o.names.join(' · ')}`)
     if (o.choices === null) L.push(`【${o.name} 型号】到控制台改`)
     else if (o.choices && o.choices.length) L.push(`【${o.name} 型号】${o.choices.map((x) => modelName(x)).join(' · ')}`)
@@ -184,13 +254,13 @@ const T = {
     ? `⚠ ${modelName(model) || model} 没有「${e}」这档深度 —— 一项都没改\n【可选】${list.join(' · ')}`
     : `⚠ ${modelName(model) || model} 不支持调思考深度 —— 一项都没改`,
   modelSpeedUnsupported: model => `⚠ ${modelName(model) || model} 没有 Fast 档 —— 一项都没改`,
-  modelSame: current => `本群已经在用 ${current}，没有变化`,
+  modelSame: (current, w = GROUP_WORDS) => `${w.here}已经在用 ${current}，没有变化`,
   modelBusy: '⚠ 手头还有任务在跑 —— 等它跑完再改，或先发 /stop',
   // dropped: Fast was on and the new model has no Fast tier, so the group is
   // back at standard speed; said out loud, or it reads as still on.
   speedDropped: dropped => (dropped ? `\n· ${modelName(dropped) || dropped} 没有 Fast 档，已回到标准速度` : ''),
-  modelSwitched: (current, note, filled, dropped) => `✅ 已切到 ${current}\n⚠ 换了后端，新的一段对话从这里开始，之前聊的内容不再带着` + (note ? ` —— ${note}` : '')
-    + (filled ? `\n· 本群在这个后端还没选过${filled}，先用推荐的；要换就 /model 加名字` : '') + T.speedDropped(dropped),
+  modelSwitched: (current, note, filled, dropped, w = GROUP_WORDS) => `✅ 已切到 ${current}\n⚠ 换了后端，新的一段对话从这里开始，之前聊的内容不再带着` + (note ? ` —— ${note}` : '')
+    + (filled ? `\n· ${w.here}在这个后端还没选过${filled}，先用推荐的；要换就 /model 加名字` : '') + T.speedDropped(dropped),
   modelChanged: (current, filled, dropped) => `✅ 已改为 ${current} —— 接着当前对话，下条消息生效\n· 对话很长时新型号可能装不下，可发 /new 重开`
     + (filled ? `\n· ${filled}先用推荐的` : '') + T.speedDropped(dropped),
   effortSwitched: (effort, label) => `✅ 思考深度已调为 ${effort}（${label}）—— 接着当前对话，下条消息生效`,
@@ -217,14 +287,149 @@ const T = {
     }
     return parts.join(' · ')
   },
+  // Under a reply card: whose follow-ups joined the task it answers.
+  cardJoined: names => `\n\n↪ 已加入 ${names.join('、')} 的补充`,
 }
+// The English table. Commands are written plainly (never in backticks or
+// quotes) so a platform with another command prefix can rewrite them, and
+// every command shown is one the parser accepts.
+const upperFirst = text => text.charAt(0).toUpperCase() + text.slice(1)
+const plural = (n, one, many) => (n === 1 ? one : many)
+const T_EN = {
+  queued: ({ ahead = 0, joins = 0 } = {}) => ahead > 0
+    ? `⏳ Queued — ${ahead} ${plural(ahead, 'task is', 'tasks are')} ahead; then it runs ${joins > 0 ? `together with the ${joins} earlier ${plural(joins, 'message', 'messages')} in the same thread` : 'on its own'}`
+    : joins > 0 ? `⏳ Queued — runs after the current task, together with the ${joins} earlier ${plural(joins, 'message', 'messages')}` : '⏳ Queued — runs after the current task',
+  queueFull: 'The queue is full, so this message was not handled. Please resend it after the current task finishes.',
+  busyUnavailable: 'The current task is wrapping up, so this message was not handled. Please resend it in a moment.',
+  roundEnded: 'This round has already ended; there is nothing to stop.',
+  roundStopped: n => n > 0 ? `Stopped — the ${n} queued ${plural(n, 'message runs', 'messages run')} next` : 'Stopped',
+  threadIdle: 'No task is running in this thread. To cancel a message that is still queued, delete it. To stop everything in the channel, mention me in the channel and send /stop.',
+  stopped: 'Stopped',
+  noActiveTask: 'No task is running',
+  unsupportedCommand: 'This command is not supported yet. Send /skip to drop only the current task, or /stop to cancel it together with everything queued. For anything else, just say it in plain words.',
+  unsupportedCommandWithModel: 'This command is not supported yet. Send /help to see the available commands. For anything else, just say it in plain words.',
+  help: ({ project, model, steer, readOnly, threads = false, w = GROUP_WORDS_EN }) => ['What this is',
+    `· ${upperFirst(w.here)} is bound to project "${project}", model ${model}`,
+    readOnly ? '· Just ask: it reads the code and answers questions, and it remembers the conversation so far'
+      : `· Just say what you need: it does the work and answers in ${w.here}, and it remembers the conversation so far`,
+    threads ? (steer ? '· A message sent in the thread of a running task is added to that task; a message started elsewhere waits its turn, and each answer arrives in its own thread'
+      : '· A message sent while a task is running waits until that round ends; messages in different threads are handled separately')
+      : steer ? '· A message sent while a task is running is added to that task'
+        : '· A message sent while a task is running waits until that round ends',
+    '',
+    'Commands',
+    '· /status — how long it has been running, whether it is still active, how many are queued',
+    '· /skip — drop only the current task; queued ones go on; the conversation is kept',
+    threads ? '· /stop — sent in the thread of a task, it stops that task only and queued ones go on; sent in the channel, it cancels the current task and everything queued; the conversation is kept'
+      : '· /stop — cancel the current task and everything queued; the conversation is kept',
+    '· /new — forget the conversation so far and start over (waits for the current task to finish)',
+    `· /model — see or change ${w.of} model: /model high sets the thinking effort, /model plus a model name switches the model (both keep the conversation), /model plus a backend name switches the backend (starts a new conversation); waits for the current task to finish`,
+    '· /hud — quota and how much this conversation has used',
+    '· /issue plus one sentence — report a problem to the admin',
+    '· /help — this message',
+    '⚠ Send a command as a message of its own, with nothing after it (except /issue and /model)',
+    steer ? `⚠ ${upperFirst(w.recall)} your own message to cancel that task; if it had been added to the current task, the whole current task is cancelled`
+      : `⚠ ${upperFirst(w.recall)} your own message to cancel that task (unless it is already running in one round with other messages)`,
+    ...(readOnly ? [`⚠ ${upperFirst(w.here)} is read-only: it can read code and answer questions; changing files needs an admin to grant permission`] : []),
+  ].join('\n'),
+  status: ({ model, project, state, doing = [], queue, session, w = GROUP_WORDS_EN }) => [`${upperFirst(w.of)} status`, `· Model: ${model}`,
+    `· Project: ${project}`, `· State: ${state}`,
+    ...(doing.length ? [`· Recently: ${doing.join(' · ')}`] : []),
+    `· Queued: ${queue}`, `· Conversation: ${session}`].join('\n'),
+  stateRunning: ({ ms, steps = 0, aliveMs = null }) => `running (for ${humanDuration(ms, 'en')}${steps ? ` · ${steps} ${plural(steps, 'step', 'steps')} done` : ''}${aliveMs != null ? ` · last activity ${humanDuration(aliveMs, 'en')} ago` : ''})`,
+  stateWaiting: 'message received, waiting for a free slot',
+  stateIdle: 'idle',
+  sessionActive: 'in progress (context is kept)',
+  sessionNone: 'not started',
+  freshSession: '✅ A new conversation has started; earlier messages are no longer carried along',
+  newBusy: '⚠ A task is still running — wait for it to finish, or send /stop and then /new',
+  quotaShow: (name, value) => `${name} quota: ${value}`,
+  quotaMiss: name => `The ${name} quota could not be read just now; try again later`,
+  quotaNone: name => `Model "${name}" has no quota to look up`,
+  sessionLine: (turns, ctx, inTotal, { idleAt = 0, lastAt = '' } = {}) => `Conversation: round ${turns} · ${ctx ? `context about ${fmtWan(ctx, 'en')} tokens` : `about ${fmtWan(inTotal, 'en')} tokens processed in total`}`
+    + (idleAt > 0 ? ` (compacted when idle above ${fmtWan(idleAt, 'en')}${lastAt ? ` · last compacted ${lastAt}` : ''})` : ''),
+  noSession: 'Conversation: not started yet',
+  issueUsage: 'Usage: /issue plus one sentence that says what went wrong\nExample: /issue It ignored the image I just sent',
+  issueLogged: id => `📝 Noted as #${id}`,
+  issueFailed: (w = GROUP_WORDS_EN) => `⚠ That was not saved — please say it again, or just say it in ${w.here}`,
+  // The model reads this one, in the language of its prompt: not translated.
+  followUp: T.followUp,
+  modelInfo: (o) => {
+    const L = [`${upperFirst((o.w || GROUP_WORDS_EN).of)} model: ${o.current}`]
+    L.push(`Backends: ${o.names.join(' · ')}`)
+    if (o.choices === null) L.push(`${o.name} models: change them in the console`)
+    else if (o.choices && o.choices.length) L.push(`${o.name} models: ${o.choices.map((x) => modelName(x, 'en')).join(' · ')}`)
+    if (o.efforts && o.efforts.length) L.push(`Thinking effort: ${o.efforts.join(' · ')}`)
+    if (o.speeds && o.speeds.length) L.push(`Speed: standard · Fast (${o.fastNote})`)
+    if (o.exEffort) L.push(`· Change the effort: /model ${o.exEffort} (keeps the conversation)`)
+    if (o.speeds && o.speeds.length) L.push(o.speed === 'fast' ? '· Back to standard: /model standard (keeps the conversation)' : '· Turn on Fast: /model fast (keeps the conversation)')
+    if (o.exModel) L.push(`· Switch the model: /model ${modelName(o.exModel, 'en')} (keeps the conversation)`)
+    if (o.exProvider) L.push(`· Switch the backend: /model ${o.exProvider} (starts a new conversation)`)
+    L.push('⚠ A change waits until the current task has finished')
+    return L.join('\n')
+  },
+  modelUnknownWord: (word, o) => (o.choices === null
+    ? `⚠ "${word}" is not an available backend or effort (${o.name} models are changed in the console) — nothing was changed`
+    : `⚠ "${word}" is not an available backend, model or effort — nothing was changed`)
+    + `\nBackends: ${o.names.join(' · ')}` + (o.choices && o.choices.length ? `\n${o.name} models: ${o.choices.map((x) => modelName(x, 'en')).join(' · ')}` : '')
+    + (o.efforts && o.efforts.length ? `\nThinking effort: ${o.efforts.join(' · ')}` : '')
+    + (o.speeds && o.speeds.length ? '\nSpeed: standard · Fast' : ''),
+  modelDup: (what, a, b) => `⚠ Only one ${what} can be chosen at a time (got ${a} and ${b}) — nothing was changed`,
+  modelNoCatalog: name => `⚠ The list of ${name} models is not available just now — nothing was changed; try again later, or ask an admin to change it in the console`,
+  modelEffortUnsupported: (model, e, list) => list.length
+    ? `⚠ ${modelName(model, 'en') || model} has no "${e}" effort — nothing was changed\nAvailable: ${list.join(' · ')}`
+    : `⚠ ${modelName(model, 'en') || model} has no adjustable thinking effort — nothing was changed`,
+  modelSpeedUnsupported: model => `⚠ ${modelName(model, 'en') || model} has no Fast tier — nothing was changed`,
+  modelSame: (current, w = GROUP_WORDS_EN) => `${upperFirst(w.here)} already uses ${current}; nothing changed`,
+  modelBusy: '⚠ A task is still running — wait for it to finish before changing, or send /stop first',
+  speedDropped: dropped => (dropped ? `\n· ${modelName(dropped, 'en') || dropped} has no Fast tier; back at standard speed` : ''),
+  modelSwitched: (current, note, filled, dropped, w = GROUP_WORDS_EN) => `✅ Switched to ${current}\n⚠ The backend changed, so a new conversation starts here and earlier messages are no longer carried along` + (note ? ` — ${note}` : '')
+    + (filled ? `\n· ${upperFirst(w.here)} had no ${filled} chosen on this backend, so the recommendation is used; to change it, send /model plus the name` : '') + T_EN.speedDropped(dropped),
+  modelChanged: (current, filled, dropped) => `✅ Changed to ${current} — the conversation continues; it applies from the next message\n· A long conversation may not fit the new model; send /new to start over`
+    + (filled ? `\n· Using the recommended ${filled} for now` : '') + T_EN.speedDropped(dropped),
+  effortSwitched: (effort, label) => `✅ Thinking effort set to ${effort} (${label}) — the conversation continues; it applies from the next message`,
+  tuneSwitched: ({ effort, effortChanged, speed, label, note }) => {
+    const did = [effortChanged ? `thinking effort set to ${effort || 'none'}` : '', speed === 'fast' ? 'Fast turned on' : 'back at standard speed'].filter(Boolean).join(', ')
+    return `✅ ${upperFirst(did)} (${label}) — ` + (speed === 'fast' ? `${note}; ` : '') + 'the conversation continues; it applies from the next message'
+      + (speed === 'fast' ? '; scheduled tasks stay at standard speed' : '')
+  },
+  modelSwitchFailed: '⚠ The change did not go through — please ask an admin to check the console',
+  stopPending: 'The current task is being stopped, so this message was not handled. Please resend it in a moment.',
+  stopUnavailable: 'The current task is wrapping up and cannot be stopped right now.',
+  stoppedWithQueue: n => `Stopped — the ${n} queued ${plural(n, 'message was', 'messages were')} cancelled as well`,
+  skipped: n => n > 0 ? `Skipped the current task (${n} more queued, running next)` : 'Skipped the current task',
+  skipUnavailable: 'The current task is wrapping up and cannot be skipped right now.',
+  skipPending: 'The current task is being skipped, so this message was not handled. Please resend it in a moment.',
+  quotaFailure: 'The Codex subscription quota is used up, so this task was not completed. Please send it again once the quota is back; this request is not retried automatically.',
+  cardFooter: ({ ms, tokens }) => {
+    const parts = [`Took ${cardDuration(ms, 'en')}`]
+    const tokenLabel = n => n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n)
+    if (tokens && ((tokens.in || 0) + (tokens.cr || 0) + (tokens.cw || 0) + (tokens.out || 0)) > 0) {
+      parts.push(`tokens ↑${tokenLabel((tokens.in || 0) + (tokens.cr || 0) + (tokens.cw || 0))} ↓${tokenLabel(tokens.out || 0)}`)
+    }
+    return parts.join(' · ')
+  },
+  cardJoined: names => `\n\n↪ Follow-ups from ${names.join(', ')} were added`,
+}
+// A sentence that exists in one language only would be said in the wrong one,
+// or not at all: both tables must have the same entries of the same kind.
+function sameShape(zh, en) {
+  const keys = table => Object.keys(table).sort()
+  if (keys(zh).join() !== keys(en).join()) return false
+  return keys(zh).every(key => typeof zh[key] === typeof en[key] &&
+    ['string', 'function'].includes(typeof zh[key]) &&
+    (typeof zh[key] !== 'function' || zh[key].length === en[key].length))
+}
+if (!sameShape(T, T_EN)) throw new Error('v2engine chat texts differ between languages')
+const TEXTS = Object.freeze({ zh: Object.freeze(T), en: Object.freeze(T_EN) })
+const textsFor = lang => (lang === 'en' ? TEXTS.en : TEXTS.zh)
 // /stop with no stoppable turn is user input refused before any receipt; the
 // running turn, if any, keeps its own durable path untouched.
-function durableV2StopUnavailable(rt) {
+function durableV2StopUnavailable(rt, texts = T) {
   const idle = !rt?.v2NormalRouteActive || !rt.v2RunningJobs?.length
   return rejectC2Input('C2 v2 /stop is unsupported or closed', idle
-    ? { reason: 'stop-idle', notice: T.noActiveTask }
-    : { reason: 'stop-unavailable', notice: T.stopUnavailable })
+    ? { reason: 'stop-idle', notice: texts.noActiveTask }
+    : { reason: 'stop-unavailable', notice: texts.stopUnavailable })
 }
 
 // The binary owns quota/error and side-effect classification. This host route
@@ -284,9 +489,11 @@ function ordinaryV2Cohort(snapshot, jobs, binding, chatId, receiptId) {
   return { jobs, anchor: jobs.find(job => job.msg._c2ReceiptId === receiptId),
     receiptIds: [...binding.receiptIds] }
 }
-function v2QueueSelection(queue) {
+// `threads`: each job's thread as the host knows it (payload handles), the
+// fact the core batches by; null when the chat has none.
+function v2QueueSelection(queue, threads = null) {
   if (!Array.isArray(queue)) throw new TypeError('durable queue must be an array')
-  const result = engineQueueStep({ queue }, { type: 'dequeue' })
+  const result = engineQueueStep({ queue }, { type: 'dequeue', ...(threads ? { threads } : {}) })
   const effect = result.effects[0]
   if (!queue.length && result.effects.length === 0) return { jobs: [], anchor: null }
   if (result.effects.length !== 1 || effect.type !== 'dispatch' ||
@@ -302,11 +509,11 @@ function v2QueueSelection(queue) {
 // recall, download and reactions. Canvas, image generation and takeover cards
 // are not in this release, and neither are scheduled tasks, so the cron
 // section the core renders after the skills is cut off.
-function releaseSkillLines(platform) {
+function releaseSkillLines(platform, named = {}) {
   const features = manifestFeatures({ ...(platform?.features || {}),
     boards: false, imagen: false, takeoverCard: false })
   const lines = manifestSkills({ features: { ...features, localAnswers: true, wecomTools: platform?.skillCmd === 'sbot wecom' },
-    platformName: String(platform?.chatLabel || '飞书群').replace(/群$/, '') })
+    platformName: String(platform?.chatLabel || '飞书群').replace(/群$/, ''), ...named })
   const cron = lines.findIndex(line => line.startsWith('【定时任务】'))
   return (cron < 0 ? lines : lines.slice(0, cron))
     .map(line => line.replace(/sbot feishu/g, `${runtimeCommand()} feishu`).replace(/sbot wecom/g, `${runtimeCommand()} wecom`))
@@ -538,6 +745,25 @@ _resolveGroup(chatId) {
     return (this.cfg.groups && this.cfg.groups[chatId]) || this.defaultGroup || null
   }
 
+// The language of the bot's own words in one conversation (src/chatlang.js),
+// read from the live group each time: a changed setting applies to the next
+// sentence, and a conversation without the setting speaks its platform's
+// default (Slack English, the others Chinese).
+_chatLang(chatId) {
+    return chatLang(this._resolveGroup(chatId))
+  }
+_texts(chatId) {
+    return textsFor(this._chatLang(chatId))
+  }
+// A turn that failed ends with one of three fixed notices. The terminal path
+// compares and settles the canonical (Chinese) text; this is the wording the
+// conversation is shown, applied where the text leaves for the platform and
+// only to a failed turn, so an answer is never touched.
+_failureNoticeText(chatId, text, failed) {
+    if (!failed || this._chatLang(chatId) !== 'en') return text
+    return text === T.quotaFailure ? T_EN.quotaFailure : terminalNoticeText(text, 'en')
+  }
+
 _resolveProvider(chatId, group) {
     const name = this.store.getProvider(chatId) || group.provider || this.cfg.defaultProvider
     return { name, provider: this.cfg.providers[name] }
@@ -559,14 +785,17 @@ _durableV2GroupBusy(chatId) {
       rt?.v2QueueReceiptIds?.length || pending)
   }
 
-async _durableV2Command(msg, cmd, rest) {
+async _durableV2Command(msg, cmd, rest, platform = null) {
     const reject = (reason, notice) =>
       rejectC2Input('C2 v2 chat command answered before receipt', { reason, notice })
     const group = this._resolveGroup(msg.chatId)
+    const lang = chatLang(group)
+    const T = textsFor(lang)
     if (!group || group.paused) return reject('unsupported-command', T.unsupportedCommandWithModel)
     const { name, provider } = this._resolveProvider(msg.chatId, group)
-    const label = (n, p) => brainLabel(n, this._brain(group, n, p))
-    if (cmd === '/model') return this._durableV2ModelCommand(msg, rest, group)
+    const label = (n, p) => brainLabel(n, this._brain(group, n, p), lang)
+    const w = wordsOf(platform, msg.chatId, lang)
+    if (cmd === '/model') return this._durableV2ModelCommand(msg, rest, group, w)
     if (cmd === '/help') {
       const isCodex = provider?.runner === 'codex'
       // Read-only exactly when the manifest tells the agent so, for either
@@ -576,20 +805,21 @@ async _durableV2Command(msg, cmd, rest) {
         readOnly = READ_ONLY_TIERS.includes(manifestPolicy(group.permissionMode, isCodex,
           group.allowedTools, group.disallowedTools).tier)
       } catch {}
-      return reject('help', T.help({ project: projectName(group), model: label(name, provider),
-        steer: followupEnabled(group, provider.runner), readOnly }))
+      return reject('help', T.help({ project: projectName(group, lang), model: label(name, provider),
+        steer: followupEnabled(group, provider.runner), readOnly, w,
+        threads: typeof msg.thread === 'string' && !!msg.thread }))
     }
     if (cmd === '/status') {
       const rt = this.rts.get(msg.chatId)
       const queued = this.durableV2Runtime.snapshot().state?.lanes?.queue?.[msg.chatId]?.queue?.length || 0
-      // "Running for long" is not "stuck": steps and the last activity tell them apart.
       const busy = !!rt?.v2NormalRouteActive
       const state = busy
-        ? `运行中（已跑 ${humanDuration(Date.now() - (rt.v2StartedAt || Date.now()))}${rt.v2Steps ? ` · 已执行 ${rt.v2Steps} 步` : ''}${rt.v2AliveAt ? ` · 最近动静 ${humanDuration(Date.now() - rt.v2AliveAt)}前` : ''}）`
-        : rt?.v2AdmissionPending ? '消息已登记，等待并发名额' : '空闲'
-      return reject('status', T.status({ model: label(name, provider), project: projectName(group), state,
+        ? T.stateRunning({ ms: Date.now() - (rt.v2StartedAt || Date.now()), steps: rt.v2Steps || 0,
+          aliveMs: rt.v2AliveAt ? Date.now() - rt.v2AliveAt : null })
+        : rt?.v2AdmissionPending ? T.stateWaiting : T.stateIdle
+      return reject('status', T.status({ model: label(name, provider), project: projectName(group, lang), state,
         doing: busy && Array.isArray(rt.v2Doing) ? rt.v2Doing : [], queue: queued,
-        session: this.store.getSession(msg.chatId) ? '进行中（记着上下文）' : '未开始' }))
+        session: this.store.getSession(msg.chatId) ? T.sessionActive : T.sessionNone, w }))
     }
     if (cmd === '/new') {
       if (this._durableV2GroupBusy(msg.chatId)) return reject('new-busy', T.newBusy)
@@ -607,7 +837,8 @@ async _durableV2Command(msg, cmd, rest) {
       const lines = []
       if (this.durableV2UsageProbe && provider) {
         let usage = null
-        try { usage = await this.durableV2UsageProbe(name, provider) } catch {}
+        // The probe words its value in the conversation's language.
+        try { usage = await (lang === 'en' ? this.durableV2UsageProbe(name, provider, { lang }) : this.durableV2UsageProbe(name, provider)) } catch {}
         const value = typeof usage === 'string' ? usage : usage?.value || null
         const supported = typeof usage === 'string' ? !!usage : !!usage && usage.supported !== false
         lines.push(value ? T.quotaShow(name, value) : supported ? T.quotaMiss(name) : T.quotaNone(name))
@@ -630,7 +861,7 @@ async _durableV2Command(msg, cmd, rest) {
           sender: msg.senderName || msg.userId || '', text: rest,
           version: this.durableV2Version || '', turn: null }) || null
       } catch (error) { this.log(`issue add failed: ${error?.message || String(error)}`) }
-      return record ? reject('issue-logged', T.issueLogged(record.id)) : reject('issue-failed', T.issueFailed)
+      return record ? reject('issue-logged', T.issueLogged(record.id)) : reject('issue-failed', T.issueFailed(w))
     }
     return reject('unsupported-command', T.unsupportedCommandWithModel)
   }
@@ -640,9 +871,12 @@ async _durableV2Command(msg, cmd, rest) {
 // model card) and the write goes through the console's configuration writer.
 // Every change needs this group idle and settled; only a backend change
 // starts a new conversation.
-async _durableV2ModelCommand(msg, want, group) {
+async _durableV2ModelCommand(msg, want, group, w = null) {
     const reject = (reason, notice) =>
       rejectC2Input('C2 v2 model command answered before receipt', { reason, notice })
+    const lang = chatLang(group)
+    const T = textsFor(lang)
+    if (!w) w = wordsOf(null, msg.chatId, lang)
     const { name, provider } = this._resolveProvider(msg.chatId, group)
     const names = this._modelNames()
     const words = String(want || '').split(/\s+/).map(w => w.trim()).filter(Boolean)
@@ -653,10 +887,10 @@ async _durableV2ModelCommand(msg, want, group) {
     if (!words.length) {
       const cat = await this._modelCatalog(name, provider)
       const cur = this._brain(group, name, provider)
-      const o = this._modelOpts(names, name, cat, cur)
+      const o = this._modelOpts(names, name, cat, cur, lang)
       const concrete = cat && Array.isArray(cat.models) ? cat.models.map(m => m.id) : []
       const exModel = concrete.find(c => (o.choices || []).includes(c) && c !== cur.model) || ''
-      const text = T.modelInfo({ ...o, current: brainLabel(name, cur),
+      const text = T.modelInfo({ ...o, w, current: brainLabel(name, cur, lang),
         exEffort: exEffortOf(o.efforts, cur.effort), exModel,
         exProvider: names.find(n => n !== name) || '' })
       // Feishu gets a tap-to-pick card; the text above is its fallback.
@@ -669,13 +903,13 @@ async _durableV2ModelCommand(msg, want, group) {
       return rejectC2Input('C2 v2 model command answered before receipt', { reason: 'model-info', notice: text, card })
     }
     const sender = msg.senderName || msg.userId || 'unknown'
-    const pw = parseModelWords(words, names)
+    const pw = parseModelWords(words, names, lang)
     if (pw.error) {
       this._logModelReject(msg.chatId, words.join(' '), 'dup', sender)
       return reject('model-dup', T.modelDup(pw.error.what, pw.error.a, pw.error.b))
     }
     const out = await this._durableV2ApplyModel(msg.chatId, group, pw,
-      { sender, said: words.join(' '), source: 'command' })
+      { sender, said: words.join(' '), source: 'command', w })
     const reason = out.kind === 'reject' ? `model-${out.reason}` : out.kind === 'model' ? 'model-changed' : `model-${out.kind}`
     return reject(reason, out.text)
   }
@@ -692,9 +926,13 @@ async _durableV2ModelCommand(msg, want, group) {
 async _modelPanel(chatId, group, extra = {}) {
     const { name, provider } = this._resolveProvider(chatId, group)
     const b = this._brain(group, name, provider)
-    const current = brainLabel(name, b)
+    // The card's own labels are the platform's; an English conversation marks
+    // its state so they can follow (a Chinese one keeps the state it had).
+    const lang = chatLang(group)
+    const marked = lang === 'en' ? { lang } : {}
+    const current = brainLabel(name, b, lang)
     const mode = extra.mode || 'edit'
-    if (mode !== 'edit') return { mode, current: extra.current || current, receipt: extra.receipt, issuedAt: extra.issuedAt || 0 }
+    if (mode !== 'edit') return { mode, current: extra.current || current, receipt: extra.receipt, issuedAt: extra.issuedAt || 0, ...marked }
     const names = this._modelNames()
     const d0 = extra.draft || {}
     const known = extra.draft && names.includes(d0.p)
@@ -711,8 +949,8 @@ async _modelPanel(chatId, group, extra = {}) {
       const choices = cat && cat.ok !== false ? (cat.models || []).map(m => m.id) : []
       if (!draft.m && !third) draft.m = base.model || ''
       if (!draft.m && rec && rec.model) draft.m = rec.model
-      const options = choices.map(v => ({ value: v, label: modelName(v) }))
-      if (draft.m && !choices.includes(draft.m)) options.push({ value: draft.m, label: modelName(draft.m) })
+      const options = choices.map(v => ({ value: v, label: modelName(v, lang) }))
+      if (draft.m && !choices.includes(draft.m)) options.push({ value: draft.m, label: modelName(draft.m, lang) })
       model = { options, selected: draft.m }
     } else draft.m = ''
     const dModel = draft.m || (third ? base.model : '')
@@ -732,18 +970,23 @@ async _modelPanel(chatId, group, extra = {}) {
     const speedDropped = wantSpeed === 'fast' && !dSpeed
     if (speedList.includes('fast')) draft.s = dSpeed === 'fast' ? 'fast' : 'std'
     else delete draft.s
-    const speeds = speedList.includes('fast') ? [{ value: 'std', label: '标准', selected: dSpeed !== 'fast' }, { value: 'fast', label: 'Fast', selected: dSpeed === 'fast' }] : null
-    const speedNote = speeds ? `Fast：${fastNote(cat, dModel)} · 定时任务始终按标准` : ''
+    const speeds = speedList.includes('fast') ? [{ value: 'std', label: pick(lang, '标准', 'Standard'), selected: dSpeed !== 'fast' }, { value: 'fast', label: 'Fast', selected: dSpeed === 'fast' }] : null
+    const speedNote = !speeds ? '' : lang === 'en' ? `Fast: ${fastNote(cat, dModel, lang)} · scheduled tasks always run at standard speed`
+      : `Fast：${fastNote(cat, dModel)} · 定时任务始终按标准`
     let preview = null
     if (dp !== name || dModel !== b.model || (dEffort || '') !== (b.effort || '') || dSpeed !== (b.speed || '')) {
-      const tuned = [(dEffort || '') !== (b.effort || '') ? '深度' : '', dSpeed !== (b.speed || '') ? '速度' : ''].filter(Boolean).join('和')
-      const note = dp !== name ? '换了后端 —— 会开新对话' : dModel !== b.model ? '换了型号 —— 接着当前对话' : `只调${tuned} —— 接着当前对话`
-      preview = { to: brainLabel(dp, { model: dModel, effort: dEffort, speed: dSpeed }),
-        note: note + (speedDropped ? ' · 这个型号没有 Fast，回到标准速度' : '') }
+      const effortTuned = (dEffort || '') !== (b.effort || '')
+      const speedTuned = dSpeed !== (b.speed || '')
+      const tuned = [effortTuned ? pick(lang, '深度', 'effort') : '', speedTuned ? pick(lang, '速度', 'speed') : ''].filter(Boolean).join(pick(lang, '和', ' and '))
+      const note = lang === 'en'
+        ? (dp !== name ? 'Backend changed — a new conversation will start' : dModel !== b.model ? 'Model changed — the conversation continues' : `Only the ${tuned} ${effortTuned && speedTuned ? 'change' : 'changes'} — the conversation continues`)
+        : dp !== name ? '换了后端 —— 会开新对话' : dModel !== b.model ? '换了型号 —— 接着当前对话' : `只调${tuned} —— 接着当前对话`
+      preview = { to: brainLabel(dp, { model: dModel, effort: dEffort, speed: dSpeed }, lang),
+        note: note + (speedDropped ? pick(lang, ' · 这个型号没有 Fast，回到标准速度', ' · this model has no Fast tier; back to standard speed') : '') }
     }
     return { mode, current, draft, preview, failover: '', quota: '',
       backends: names.map(n => ({ name: n, selected: n === dp })),
-      model, efforts, speeds, speedNote, issuedAt: extra.issuedAt || 0 }
+      model, efforts, speeds, speedNote, issuedAt: extra.issuedAt || 0, ...marked }
   }
 
 // A tap on the /model card. value = the callback value { f, v?, d, t },
@@ -755,12 +998,13 @@ async _modelPanel(chatId, group, extra = {}) {
 async handleModelCard({ chatId, who = '', value = {}, option } = {}) {
     const group = this.cfg.groups && this.cfg.groups[chatId]
     if (!group) return { toast: { type: 'info', content: '这个群还没绑定项目' } }
+    const lang = chatLang(group)
     const issued = Number(value.t) || 0
     const now = Date.now()
-    if (value.f === 'x') return { toast: { type: 'info', content: '已关闭 · 模型没变' }, state: await this._modelPanel(chatId, group, { mode: 'closed' }) }
-    if (group.paused) return { toast: { type: 'warning', content: '本群已暂停 —— 恢复后再改' } }
+    if (value.f === 'x') return { toast: { type: 'info', content: pick(lang, '已关闭 · 模型没变', 'Closed · the model is unchanged') }, state: await this._modelPanel(chatId, group, { mode: 'closed' }) }
+    if (group.paused) return { toast: { type: 'warning', content: pick(lang, '本群已暂停 —— 恢复后再改', 'This group is paused — change it after it resumes') } }
     if (!issued || now - issued > MODEL_CARD_TTL_MS) {
-      return { toast: { type: 'info', content: '这张卡已过期 —— 发 /model 重新打开' }, state: await this._modelPanel(chatId, group, { mode: 'expired' }) }
+      return { toast: { type: 'info', content: pick(lang, '这张卡已过期 —— 发 /model 重新打开', 'This card has expired — send /model to open a new one') }, state: await this._modelPanel(chatId, group, { mode: 'expired' }) }
     }
     const d = value.d && typeof value.d === 'object' ? { p: String(value.d.p || ''), m: String(value.d.m || ''), e: String(value.d.e || ''), s: String(value.d.s || '') } : null
     const norm = x => (x == null || x === MODEL_CARD_DEFAULT ? '' : String(x))
@@ -773,7 +1017,7 @@ async handleModelCard({ chatId, who = '', value = {}, option } = {}) {
       return { state: await this._modelPanel(chatId, group, { draft, issuedAt: now }) }
     }
     if (value.f !== 'ok' || !d) return {}
-    const by = String(who || '').trim() || '有人'
+    const by = String(who || '').trim() || pick(lang, '有人', 'Someone')
     const before = await this._modelPanel(chatId, group)
     const { name: curName } = this._resolveProvider(chatId, group)
     const target = d.p || curName
@@ -787,12 +1031,20 @@ async handleModelCard({ chatId, who = '', value = {}, option } = {}) {
       effort: d.e && d.e !== tb.effort ? d.e : undefined,
       ...(speed !== undefined ? { speed } : {}) },
     { sender: by, said: `[模型卡] ${d.p}·${d.m || '-'}·${d.e || '-'}${d.s === 'fast' ? '·fast' : ''}`, source: 'card' })
-    if (out.kind === 'reject' && out.reason === 'busy') return { toast: { type: 'warning', content: '手头还有任务在跑 —— 等它做完再确认，或先发 /stop' } }
+    if (out.kind === 'reject' && out.reason === 'busy') return { toast: { type: 'warning', content: pick(lang, '手头还有任务在跑 —— 等它做完再确认，或先发 /stop', 'A task is still running — confirm after it finishes, or send /stop first') } }
     if (out.kind === 'reject' || out.kind === 'failed') return { toast: { type: 'error', content: String(out.text || '').split('\n')[0].replace(/^⚠\s*/, '') } }
     const g2 = (this.cfg.groups && this.cfg.groups[chatId]) || group
-    if (out.kind === 'same') return { toast: { type: 'info', content: '已经是这个了，没有变化' }, state: await this._modelPanel(chatId, g2, { issuedAt: now }) }
+    if (out.kind === 'same') return { toast: { type: 'info', content: pick(lang, '已经是这个了，没有变化', 'Already set to this; nothing changed') }, state: await this._modelPanel(chatId, g2, { issuedAt: now }) }
     const hm = fmtStamp(now, this.tz).slice(-5)
     const after = await this._modelPanel(chatId, g2)
+    if (lang === 'en') {
+      const how = out.kind === 'switched' ? 'a new conversation has started' : 'the conversation continues'
+      return {
+        toast: { type: 'success', content: `Changed to ${after.current} · ${how}` },
+        state: { mode: 'receipt', current: after.current, lang,
+          receipt: { line: `${by} changed it to ${after.current} · ${how} · ${hm}`, before: `Before: ${before.current}` } },
+      }
+    }
     const how = out.kind === 'switched' ? '已开新对话' : '接着当前对话'
     return {
       toast: { type: 'success', content: `已改为 ${after.current} · ${how}` },
@@ -810,13 +1062,13 @@ async _modelCatalog(name, provider, opts) {
     if (!this.durableV2ModelCatalog) return null
     try { return await this.durableV2ModelCatalog(name, provider, opts) } catch { return null }
   }
-_modelOpts(names, name, cat, brain) {
+_modelOpts(names, name, cat, brain, lang = 'zh') {
     return { names, name,
       choices: !cat ? undefined : cat.models === null ? null : cat.ok === false ? [] : modelChoices(cat),
       efforts: cat ? effortsFor(cat, brain && brain.model) : [],
       // Speed: only the live catalog says whether this model has a Fast tier.
       speeds: cat ? speedsFor(cat, brain && brain.model) : [], speed: (brain && brain.speed) || '',
-      fastNote: fastNote(cat, brain && brain.model) }
+      fastNote: fastNote(cat, brain && brain.model, lang) }
   }
 _logModelReject(chatId, said, reason, sender) {
     this.log(`/model rejected: ${chatId} ${JSON.stringify(String(said || '')).slice(0, 80)} ${reason} (by ${sender})`)
@@ -831,13 +1083,16 @@ _logModelReject(chatId, said, reason, sender) {
 // "unset"), undefined leaves it alone. Like depth it keeps the session; Fast
 // on a model without the tier (live catalog) refuses the whole command, and a
 // model or backend change onto such a model drops Fast and says so (fillPicks).
-async _durableV2ApplyModel(chatId, group, pw, { sender = 'unknown', said = '', source = 'command' } = {}) {
+async _durableV2ApplyModel(chatId, group, pw, { sender = 'unknown', said = '', source = 'command', w = null } = {}) {
     const reject = (reason, text) => { this._logModelReject(chatId, said, reason, sender); return { kind: 'reject', reason, text } }
+    const lang = chatLang(group)
+    const T = textsFor(lang)
+    if (!w) w = wordsOf(null, chatId, lang)
     const { name, provider } = this._resolveProvider(chatId, group)
     const names = this._modelNames()
     const target = pw.provider || name
     // The card's draft comes back from the platform: accept only a listed backend.
-    if (pw.provider && !names.includes(pw.provider)) return reject('unknown', T.modelUnknownWord(target, this._modelOpts(names, name, null, null)))
+    if (pw.provider && !names.includes(pw.provider)) return reject('unknown', T.modelUnknownWord(target, this._modelOpts(names, name, null, null, lang)))
     const tProv = this.cfg.providers[target]
     const tBrain = this._brain(group, target, tProv)
     if (pw.model === '') pw = { ...pw, model: undefined }
@@ -845,9 +1100,9 @@ async _durableV2ApplyModel(chatId, group, pw, { sender = 'unknown', said = '', s
     if (pw.models) {
       const mcat = await this._modelCatalog(target, tProv)
       const bad = pw.models.find(w => !resolveModel(w, mcat))
-      if (bad) return reject('unknown', T.modelUnknownWord(bad, this._modelOpts(names, target, mcat, tBrain)))
+      if (bad) return reject('unknown', T.modelUnknownWord(bad, this._modelOpts(names, target, mcat, tBrain, lang)))
       const ids = [...new Set(pw.models.map(w => resolveModel(w, mcat)))]
-      if (ids.length > 1) return reject('dup', T.modelDup('型号', pw.models[0], pw.models[1]))
+      if (ids.length > 1) return reject('dup', T.modelDup(whatName('model', lang), pw.models[0], pw.models[1]))
       pw = { ...pw, model: ids[0] }
       delete pw.models
     }
@@ -856,14 +1111,14 @@ async _durableV2ApplyModel(chatId, group, pw, { sender = 'unknown', said = '', s
     const cat = wantsBrain || switching ? await this._modelCatalog(target, tProv) : null
     let model
     if (pw.model !== undefined) {
-      if (cat && cat.models === null) return reject('unknown', T.modelUnknownWord(pw.model, this._modelOpts(names, target, cat, tBrain)))
+      if (cat && cat.models === null) return reject('unknown', T.modelUnknownWord(pw.model, this._modelOpts(names, target, cat, tBrain, lang)))
       if (!cat || cat.ok === false) return reject('no-catalog', T.modelNoCatalog(target))
       model = resolveModel(pw.model, cat)
-      if (!model) return reject('unknown', T.modelUnknownWord(pw.model, this._modelOpts(names, target, cat, tBrain)))
+      if (!model) return reject('unknown', T.modelUnknownWord(pw.model, this._modelOpts(names, target, cat, tBrain, lang)))
       if (model === tBrain.model) model = undefined
     }
     const f = fillPicks({ switching, model, effort: pw.effort, speed: pw.speed, currentModel: tBrain.model,
-      currentEffort: tBrain.effort, currentSpeed: tBrain.speed || '', third: !!(tProv && tProv.baseUrl), cat })
+      currentEffort: tBrain.effort, currentSpeed: tBrain.speed || '', third: !!(tProv && tProv.baseUrl), cat, lang })
     model = f.model
     const nextModel = model === undefined ? tBrain.model : model
     let effort
@@ -883,8 +1138,8 @@ async _durableV2ApplyModel(chatId, group, pw, { sender = 'unknown', said = '', s
       speed = tBrain.speed === 'fast' && model === undefined && !switching ? undefined : 'fast'
     } else if (pw.speed !== undefined) speed = pw.speed === (tBrain.speed || '') && model === undefined && !switching ? undefined : pw.speed
     else speed = f.speed
-    const current = brainLabel(name, this._brain(group, name, provider))
-    if (!switching && model === undefined && effort === undefined && speed === undefined) return { kind: 'same', text: T.modelSame(current), label: current }
+    const current = brainLabel(name, this._brain(group, name, provider), lang)
+    if (!switching && model === undefined && effort === undefined && speed === undefined) return { kind: 'same', text: T.modelSame(current, w), label: current }
     // Speed alone is read at the next turn's start and keeps the session, so
     // it may change while a task runs; anything else waits for the group.
     const speedOnly = !switching && model === undefined && effort === undefined && speed !== undefined
@@ -910,34 +1165,40 @@ async _durableV2ApplyModel(chatId, group, pw, { sender = 'unknown', said = '', s
     }
     const g2 = (this.cfg.groups && this.cfg.groups[chatId]) || group
     const after = r?.after || this._brain(g2, target, this.cfg.providers[target])
-    const label = brainLabel(target, after)
+    const label = brainLabel(target, after, lang)
     const sp = b => (b && b.speed ? '·' + b.speed : '')
     this.log(`/model: ${chatId} ${name}·${tBrain.model || '-'}·${tBrain.effort || '-'}${sp(tBrain)} → ${target}·${after.model || '-'}·${after.effort || '-'}${sp(after)} (by ${sender}, ${source})`)
-    const filled = f.filled.length ? f.filled.join('和') : ''
+    const filled = f.filled.length ? f.filled.join(pick(lang, '和', ' and ')) : ''
     // Fast was on and the model now in effect has no tier: say it went back to standard.
     const dropped = f.speedDropped && tBrain.speed === 'fast' && after.speed !== 'fast' ? (after.model || target) : ''
     if (switching) {
       let note = ''
       try {
-        const opts = { full: group.permissionMode === 'bypassPermissions', isCodex: tProv?.runner === 'codex' }
+        const opts = { full: group.permissionMode === 'bypassPermissions', isCodex: tProv?.runner === 'codex',
+          ...(lang === 'en' ? { lang } : {}) }
         const h = this.projectMemory ? this.projectMemory(group.workdir, opts) : null
         if (h?.note) note = h.note
       } catch {}
-      return { kind: 'switched', text: T.modelSwitched(label, note, filled, dropped), label, after }
+      return { kind: 'switched', text: T.modelSwitched(label, note, filled, dropped, w), label, after }
     }
     if (r?.modelChanged) return { kind: 'model', text: T.modelChanged(label, filled, dropped), label, after }
     // Speed changed (maybe with depth): kind 'tune'; a depth-only change keeps its own receipt.
     const speedChanged = r ? !!r.speedChanged : speed !== undefined && (tBrain.speed || '') !== (after.speed || '')
     if (speedChanged) {
       const effortChanged = r ? !!r.effortChanged : effort !== undefined && tBrain.effort !== after.effort
-      return { kind: 'tune', text: T.tuneSwitched({ effort: after.effort, effortChanged, speed: after.speed || '', note: fastNote(cat, after.model),
-        label: brainLabel(target, { model: after.model, effort: effortChanged ? '' : after.effort }) }), label, after }
+      return { kind: 'tune', text: T.tuneSwitched({ effort: after.effort, effortChanged, speed: after.speed || '', note: fastNote(cat, after.model, lang),
+        label: brainLabel(target, { model: after.model, effort: effortChanged ? '' : after.effort }, lang) }), label, after }
     }
-    return { kind: 'effort', text: T.effortSwitched(after.effort, brainLabel(target, { model: after.model })), label, after }
+    return { kind: 'effort', text: T.effortSwitched(after.effort, brainLabel(target, { model: after.model }, lang)), label, after }
   }
 
 async runDurableV2Message(msg, platform) {
     if (msg?.text?.trim() === '/stop') {
+      // Stop where it is said: typed as a reply in a thread it reaches that
+      // thread's running task only, like the Stop button there (the core
+      // decides which); anywhere else it stops the whole chat.
+      const scope = this._durableV2StopScope(msg)
+      if (scope !== 'all') throw await this.runDurableV2Skip(msg, { threadStop: scope })
       return this.runDurableV2Stop(msg, platform)
     }
     if (typeof msg?.text === 'string' && /^\/skip(?:\s|$)/.test(msg.text.trim())) {
@@ -973,11 +1234,12 @@ async runDurableV2Message(msg, platform) {
           platform.features?.plainReplies === true && platform.createStreamingCard === undefined)) {
       throw new Error('C2 v2 ordinary Feishu message is unsupported or closed')
     }
+    const T = this._texts(msg.chatId)
     // An unmigrated chat command is user input, not an authority fault. It is
     // refused before admission with no receipt; the service decides delivery.
     const command = /^(\/[a-z]+)(?:\s+([\s\S]*))?$/.exec(msg.text.trim())
     if (command && this.durableV2SwitchProvider && DURABLE_V2_COMMANDS.has(command[1])) {
-      throw await this._durableV2Command(msg, command[1], (command[2] || '').trim())
+      throw await this._durableV2Command(msg, command[1], (command[2] || '').trim(), platform)
     }
     if (msg.text.trim().startsWith('/')) {
       throw rejectC2Input('C2 v2 ordinary Feishu message is unsupported or closed',
@@ -1028,6 +1290,8 @@ async runDurableV2Message(msg, platform) {
       }
       this.durableV2Payloads.auditOrdinaryQueue(msg.chatId, rt.v2QueueReceiptIds || [])
       const queued = this.stageDurableV2Message(msg, platform)
+      // It waits for the slot without a notice, as in 1.4.24.
+      if (queued.staged) (rt.v2SilentReceiptIds ||= new Set()).add(queued.receiptId)
       // Preserve even the overflow source receipt, then seal rather than drop
       // an acknowledged platform message or run an unbounded in-memory queue.
       if (queue.length >= 3) {
@@ -1041,64 +1305,57 @@ async runDurableV2Message(msg, platform) {
       lane?.handoff?.[msg.chatId]?.phase === 'running' ||
       Array.isArray(queue) && queue.length > 0 ||
       rt.v2RunningJobs || rt.v2QueueReceiptIds?.length
-    if (busy && rt.v2FollowupEnabled &&
-        rt.v2SteerControl && rt.v2NormalRouteActive && !rt.v2RunnerStopVerified &&
-        !rt.v2TerminalStarted && !rt.v2StreamQuiescing && rt.v2Controller &&
-        !rt.v2Controller.signal.aborted && !rt.v2SteerClosing) {
-      this.durableV2Payloads.auditOrdinaryQueue(msg.chatId, rt.v2QueueReceiptIds || [])
-      const queued = this.stageDurableV2Message(msg, platform)
-      return this._runDurableV2Steer(rt, queued.receiptId)
-    }
-    if (busy && rt.v2NormalRouteActive &&
+    if (busy) {
+      // Where a busy message goes is the core's decision (its queue step); the
+      // host passes the facts: follow-ups open and the runner ready to take
+      // one, whether a message can wait here right now, this message's thread
+      // and the threads of the running task's messages. The core joins it to
+      // that task, lets it wait, or refuses it before any receipt (the queue
+      // is full, or the task is wrapping up). A busy message never holds the
+      // group; only a queue that disagrees with the journal is a fault.
+      const ready = !!(rt.v2FollowupEnabled && rt.v2SteerControl && rt.v2NormalRouteActive &&
+        !rt.v2RunnerStopVerified && !rt.v2TerminalStarted && !rt.v2StreamQuiescing &&
+        rt.v2Controller && !rt.v2Controller.signal.aborted && !rt.v2SteerClosing &&
+        rt.v2RunningJobs?.length > 0)
+      const consistent = rt.v2NormalRouteActive && Array.isArray(queue) &&
+        queue.every(item => !item.batch && /^receipt:job:[0-9a-f]{32}$/.test(item.id)) &&
+        isDeepStrictEqual(queue.map(item => item.id.slice('receipt:job:'.length)),
+          rt.v2QueueReceiptIds || []) &&
+        isDeepStrictEqual(this.durableV2Journal.snapshot(), before)
+      // A message can wait here with its own notice while the task runs and
+      // every waiting message has a confirmed notice or none at all (one that
+      // arrived while the chat waited for a model slot waits silently, as in
+      // 1.4.24).
+      const waitable = !!consistent &&
         lane?.turn?.[msg.chatId]?.active === rt.v2TurnToken &&
         lane?.handoff?.[msg.chatId]?.phase === 'running' &&
         rt.v2DispatchEffect?.type === 'dispatch' &&
-        rt.v2RunningJobs?.length === 1 &&
+        rt.v2RunningJobs?.length > 0 &&
         rt.v2RunnerStopVerified !== true &&
-        Array.isArray(queue) && queue.length < 2 &&
-        queue.every(item => !item.batch &&
-          /^receipt:job:[0-9a-f]{32}$/.test(item.id)) &&
-        queue.every(item => [...before.effects].some(([effectId, status]) => {
-          const descriptor = this.durableV2Journal.effectDescriptor(effectId)
-          return status === 'acked' && descriptor?.type === 'queueNotice' &&
-            descriptor.receiptId === item.id.slice('receipt:job:'.length)
-        })) &&
-        isDeepStrictEqual(queue.map(item => item.id.slice('receipt:job:'.length)),
-          rt.v2QueueReceiptIds || []) &&
-        isDeepStrictEqual(this.durableV2Journal.snapshot(), before)) {
-      try { this.durableV2Payloads.auditOrdinaryQueue(msg.chatId,
-        rt.v2QueueReceiptIds || []) }
-      catch (error) { authority.close(); throw error }
-      const queued = this.stageDurableV2Message(msg, platform)
-      let attached
-      try { attached = this.durableV2Payloads.requireQueued(queued.receiptId) }
-      catch (error) { authority.close(); throw error }
-      if (!queued.staged || queued.duplicate ||
-          attached?.msg?._c2ReceiptId !== queued.receiptId) {
-        authority.close()
-        throw new Error('C2 v2 queued follow-up lacks exact payload handle')
+        queue.every(item => this._durableV2QueueNoticeSettled(rt, before, item))
+      if (consistent) {
+        try { this.durableV2Payloads.auditOrdinaryQueue(msg.chatId, rt.v2QueueReceiptIds || []) }
+        catch (error) { authority.close(); throw error }
+        const queued = this.stageDurableV2Message(msg, platform, {
+          busy: { followups: ready, waitable, ...this._durableV2ThreadFacts(rt, msg) },
+          accept: route => route === 'join' ? ready : waitable })
+        if (queued.route === 'refuse') {
+          const full = queued.refusal === 'full'
+          throw rejectC2Input('C2 v2 busy message refused before receipt', {
+            reason: full ? 'queue-full' : 'busy-unavailable', notice: full ? T.queueFull : T.busyUnavailable })
+        }
+        if (queued.staged && queued.route === 'join') {
+          const steered = await this._runDurableV2Steer(rt, queued.receiptId)
+          if (steered) return steered
+        }
+        if (queued.staged) {
+          if (!waitable) {
+            authority.close()
+            throw new Error('C2 v2 busy message has no waiting route')
+          }
+          return this._queueDurableV2Notice(rt, msg, platform, queued.receiptId)
+        }
       }
-      try { this.durableV2Payloads.auditOrdinaryQueue(msg.chatId,
-        rt.v2QueueReceiptIds) }
-      catch (error) { authority.close(); throw error }
-      const notice = authority.prepareQueueNotice({ receiptId: queued.receiptId,
-        chatId: msg.chatId, payloadHandles: this.durableV2Payloads })
-      const noticePromise = authority.executeQueueNotice({
-        effectId: notice.effectId, receiptId: queued.receiptId, chatId: msg.chatId,
-        payloadHandles: this.durableV2Payloads,
-        assertWriterLock: this.durableV2AssertWriterLock,
-        perform: ({ target }) => platform.replyOnce(target, T.queued(notice.visibleQueue), ENGINE_NOTICE),
-        confirm: response => response?.code === 0 &&
-          /^om_[A-Za-z0-9_-]{1,124}$/.test(response?.data?.message_id || ''),
-      })
-      rt.v2QueueNoticePromise = noticePromise
-      try { await noticePromise } finally {
-        if (rt.v2QueueNoticePromise === noticePromise) rt.v2QueueNoticePromise = null
-      }
-      return { receiptId: queued.receiptId, queued: true, staged: true,
-        ingressClosed: !!authority.blocked }
-    }
-    if (busy) {
       if (rt.v2NormalRouteActive && Array.isArray(queue) && queue.length > 0) {
         try { this.durableV2Payloads.auditOrdinaryQueue(msg.chatId,
           rt.v2QueueReceiptIds || []) }
@@ -1151,7 +1408,7 @@ async runDurableV2Message(msg, platform) {
           rt.v2AdmissionPending = false
           const queued = authority.snapshot().state.lanes.queue?.[msg.chatId]?.queue
           this.durableV2Payloads.auditOrdinaryQueue(msg.chatId, rt.v2QueueReceiptIds || [])
-          receiptId = v2QueueSelection(queued).anchor
+          receiptId = v2QueueSelection(queued, this.durableV2Payloads.queueThreads(queued)).anchor
         }
         const dispatched = this.commitDurableV2InitialDispatch({ chatId: msg.chatId, receiptId })
         return await this._drainDurableV2NormalChain({ chatId: msg.chatId, receiptId,
@@ -1205,6 +1462,67 @@ _releaseDurableV2Capacity(rt, release, failed) {
     }, kept)
   }
 
+// The facts the core decides joining by: this message's thread (a Slack
+// channel thread) and those of the running task's messages. A chat without
+// threads gives null for all, so every message is in the same thread.
+_durableV2ThreadFacts(rt, msg) {
+    const of = value => typeof value?.thread === 'string' && value.thread ? value.thread : null
+    return { thread: of(msg), turnThreads: (rt.v2RunningJobs || []).map(job => of(job?.msg)) }
+  }
+
+// What a typed /stop reaches ("all", "turn" or "none"), decided by the core
+// from where it was said. A message without a thread never asks: it stops the
+// whole chat, as on every platform without threads.
+_durableV2StopScope(msg) {
+    if (typeof msg?.thread !== 'string' || !msg.thread) return 'all'
+    const rt = this.rts.get(msg.chatId)
+    const scope = engineQueueStep({ queue: [] }, { type: 'peek',
+      stop: { ...this._durableV2ThreadFacts(rt || {}, msg), reply: msg.threadReply === true } }).stop
+    if (!['all', 'turn', 'none'].includes(scope)) throw new Error('SintBot binary core returned invalid stop scope')
+    return scope
+  }
+
+// One queued message's notice, sent once: what the core decided for it.
+async _queueDurableV2Notice(rt, msg, platform, receiptId) {
+    const authority = this.durableV2Runtime
+    let attached
+    try { attached = this.durableV2Payloads.requireQueued(receiptId) }
+    catch (error) { authority.close(); throw error }
+    if (attached?.msg?._c2ReceiptId !== receiptId) {
+      authority.close()
+      throw new Error('C2 v2 queued follow-up lacks exact payload handle')
+    }
+    try { this.durableV2Payloads.auditOrdinaryQueue(msg.chatId, rt.v2QueueReceiptIds) }
+    catch (error) { authority.close(); throw error }
+    const notice = authority.prepareQueueNotice({ receiptId,
+      chatId: msg.chatId, payloadHandles: this.durableV2Payloads })
+    const noticePromise = authority.executeQueueNotice({
+      effectId: notice.effectId, receiptId, chatId: msg.chatId,
+      payloadHandles: this.durableV2Payloads,
+      assertWriterLock: this.durableV2AssertWriterLock,
+      perform: ({ target }) => platform.replyOnce(target, this._texts(msg.chatId).queued(notice), ENGINE_NOTICE),
+      confirm: response => response?.code === 0 &&
+        /^om_[A-Za-z0-9_-]{1,124}$/.test(response?.data?.message_id || ''),
+    })
+    rt.v2QueueNoticePromise = noticePromise
+    try { await noticePromise } finally {
+      if (rt.v2QueueNoticePromise === noticePromise) rt.v2QueueNoticePromise = null
+    }
+    return { receiptId, queued: true, staged: true, ingressClosed: !!authority.blocked }
+  }
+
+// A queued message is settled for waiting when its notice is confirmed, or
+// when it never had one because this process admitted it while the chat
+// waited for a model slot (it waits silently, as in 1.4.24).
+_durableV2QueueNoticeSettled(rt, snapshot, item) {
+    const receiptId = typeof item?.id === 'string' ? item.id.slice('receipt:job:'.length) : null
+    for (const [effectId, status] of snapshot.effects) {
+      const descriptor = this.durableV2Journal.effectDescriptor(effectId)
+      if (descriptor?.type === 'queueNotice' && descriptor.receiptId === receiptId) return status === 'acked'
+    }
+    return !!rt?.v2SilentReceiptIds?.has(receiptId)
+  }
+
 async _runDurableV2Steer(rt, receiptId) {
     const authority = this.durableV2Runtime
     const chatId = rt.chatId
@@ -1212,7 +1530,9 @@ async _runDurableV2Steer(rt, receiptId) {
     const identity = authority.prepareSteer({ receiptId, chatId,
       parentReceiptId: rt.v2DispatchEffect.receiptIds.at(-1),
       turnToken: rt.v2TurnToken, generation: rt.v2RunnerGeneration,
-      payloadHandles: this.durableV2Payloads })
+      payloadHandles: this.durableV2Payloads, ...this._durableV2ThreadFacts(rt, job.msg) })
+    // Another thread of the chat: the core keeps it out of this task.
+    if (!identity) return null
     this.durableV2Payloads.takeSteer(receiptId, chatId, identity.effectId)
     rt.v2QueueReceiptIds = authority.scopeState('queue', chatId).queue
       .map(item => item.id.slice('receipt:job:'.length))
@@ -1220,7 +1540,8 @@ async _runDurableV2Steer(rt, receiptId) {
     rt.v2SteerEntries.set(receiptId, entry)
     const control = rt.v2SteerControl
     const work = (async () => {
-      const text = `[${fmtStamp(job.msg.createTimeMs || Date.now(), this.tz)} ${job.msg.senderName || job.msg.userId || 'user'}] [群里新消息：关联当前任务就立即调整；独立任务先完成当前任务再处理，并分别回应] ${job.msg.text.trim()}`
+      const text = T.followUp(fmtStamp(job.msg.createTimeMs || Date.now(), this.tz), job.msg.senderName || job.msg.userId || 'user',
+        job.msg.text.trim(), wordsOf(job.platform, chatId), this._chatLang(chatId))
       const accepted = await authority.executeSteer(identity, {
         assertWriterLock: this.durableV2AssertWriterLock,
         invoke: () => control.steerDurable({ msgId: job.msg.msgId, text }) })
@@ -1245,7 +1566,7 @@ async _runDurableV2Steer(rt, receiptId) {
         const notice = authority.prepareQueueNotice({ receiptId, chatId, payloadHandles: this.durableV2Payloads })
         await authority.executeQueueNotice({ ...notice, payloadHandles: this.durableV2Payloads,
           assertWriterLock: this.durableV2AssertWriterLock,
-          perform: ({ target }) => job.platform.replyOnce(target, T.queued(notice.visibleQueue), ENGINE_NOTICE),
+          perform: ({ target }) => job.platform.replyOnce(target, this._texts(chatId).queued(notice), ENGINE_NOTICE),
           confirm: response => response?.code === 0 && /^om_[A-Za-z0-9_-]{1,124}$/.test(response?.data?.message_id || '') })
       }
       return { receiptId, queued: true, staged: true, accepted: false }
@@ -1286,7 +1607,7 @@ async runDurableV2Stop(msg, platform) {
         !rt.v2Controller || rt.v2TerminalStarted ||
         rt.v2CancelControl || rt.v2StopControl || rt.v2StreamQuiescing ||
         rt.v2TimeoutProof) {
-      throw durableV2StopUnavailable(rt)
+      throw durableV2StopUnavailable(rt, this._texts(chatId))
     }
     const group = this._resolveGroup(chatId)
     if (!group || group.paused || group.platform && !DURABLE_PLATFORMS.includes(group.platform)) {
@@ -1304,7 +1625,7 @@ async runDurableV2Stop(msg, platform) {
         rt.v2StreamQuiescing || rt.v2TimeoutProof ||
         rt.v2RunnerGeneration !== requestedGeneration ||
         rt.v2TurnToken !== requestedTurnToken) {
-      throw durableV2StopUnavailable(rt)
+      throw durableV2StopUnavailable(rt, this._texts(chatId))
     }
     const before = authority.snapshot()
     const controlReceipt = { source: 'message', chatId, sourceId: msg.msgId,
@@ -1325,11 +1646,8 @@ async runDurableV2Stop(msg, platform) {
           !/^receipt:job:[0-9a-f]{32}$/.test(item.id) ||
           before.receipts.pending.find(receipt =>
             receipt.id === item.id.slice('receipt:job:'.length))?.source !== 'message' ||
-          ![...before.effects].some(([effectId, status]) => {
-            const descriptor = this.durableV2Journal.effectDescriptor(effectId)
-            return status === 'acked' && descriptor?.type === 'queueNotice' &&
-              descriptor.receiptId === item.id.slice('receipt:job:'.length)
-          })) ||
+          // A confirmed notice, or none: it waited silently for a model slot.
+          !this._durableV2QueueNoticeSettled(rt, before, item)) ||
         !isDeepStrictEqual(queuedReceiptIds, rt.v2QueueReceiptIds || []) ||
         before.state.lanes.turn?.[chatId]?.active !== turnToken ||
         before.state.lanes.handoff?.[chatId]?.phase !== 'running' ||
@@ -1399,7 +1717,7 @@ async runDurableV2Stop(msg, platform) {
 // answered as an input rejection, here only after the cancellation has
 // committed. That reply is best effort: the durable stop acknowledgement
 // exists only for /stop, whose transition empties the queue.
-async runDurableV2Skip(msg) {
+async runDurableV2Skip(msg, { threadStop = null } = {}) {
     const authority = this.durableV2Runtime
     const chatId = msg?.chatId
     if (!this.durableV2NormalRoute || !authority ||
@@ -1416,6 +1734,7 @@ async runDurableV2Skip(msg) {
     if (!group || group.paused || group.platform && !DURABLE_PLATFORMS.includes(group.platform)) {
       throw new Error('C2 v2 /skip group control is not migrated')
     }
+    const T = textsFor(chatLang(group))
     // As for /stop, a /skip with nothing it may cancel is refused before receipt.
     const reject = (reason, notice) => rejectC2Input(reason === 'skipped'
       ? 'C2 v2 /skip answered after durable cancellation'
@@ -1430,11 +1749,29 @@ async runDurableV2Skip(msg) {
     seen.add(key)
     if (seen.size > 256) seen.delete(seen.values().next().value)
     const rt = this.rts.get(chatId)
-    if (!rt?.v2NormalRouteActive || !rt.v2RunningJobs?.length) {
-      return reject('skip-idle', T.noActiveTask)
+    // The Stop of one round names the round by one of its messages (`turnSource`,
+    // as the platform saw it running). It stops that round only, and only while
+    // that round is the one running; the queue goes on, like /skip.
+    const bound = Object.hasOwn(msg, 'turnSource')
+    if (bound) {
+      const source = typeof msg.turnSource === 'string' && /^om_[A-Za-z0-9_-]{1,124}$/.test(msg.turnSource)
+        ? taskId({ source: 'message', chatId, sourceId: msg.turnSource }) : null
+      if (!source || !rt?.v2NormalRouteActive || !rt.v2RunningJobs?.length ||
+          !(rt.v2DispatchEffect?.receiptIds || []).includes(source) && !rt.v2SteerEntries?.has(source)) {
+        return reject('skip-ended', T.roundEnded)
+      }
     }
+    // A stop typed in a thread (`threadStop`: what the core answered in this
+    // same tick) is a /skip of that thread's running task; when that thread
+    // has no running task, nothing is stopped.
+    if (threadStop && threadStop !== 'turn') return reject('stop-thread-idle', T.threadIdle)
+    if (!rt?.v2NormalRouteActive || !rt.v2RunningJobs?.length) {
+      return reject(threadStop ? 'stop-thread-idle' : 'skip-idle', threadStop ? T.threadIdle : T.noActiveTask)
+    }
+    // A round-bound stop already names its round by identity; only an
+    // unbound /skip guards a late redelivery by platform time.
     const sentAt = Number(msg.createTimeMs)
-    if (Number.isSafeInteger(sentAt) && sentAt > 0 && rt.v2RunningJobs.some(job =>
+    if (!bound && Number.isSafeInteger(sentAt) && sentAt > 0 && rt.v2RunningJobs.some(job =>
       Number(job?.msg?.createTimeMs) > sentAt)) {
       return reject('skip-stale', null)
     }
@@ -1443,13 +1780,13 @@ async runDurableV2Skip(msg) {
     const settled = new Promise(resolve => { settle = resolve })
     const waiter = { turnToken: rt.v2TurnToken, settle }
     if (rt.v2SkipWaiter || !route || !Number.isSafeInteger(waiter.turnToken)) {
-      return reject('skip-unavailable', T.skipUnavailable)
+      return reject('skip-unavailable', threadStop ? T.stopUnavailable : T.skipUnavailable)
     }
     rt.v2SkipWaiter = waiter
     try {
       if (!this.requestDurableV2Stop(chatId)) {
         if (authority.blocked) throw new Error('C2 v2 /skip closed its durable authority')
-        return reject('skip-unavailable', T.skipUnavailable)
+        return reject('skip-unavailable', threadStop ? T.stopUnavailable : T.skipUnavailable)
       }
       const queued = await Promise.race([settled, route.then(() => null)])
       if (queued === null) {
@@ -1457,10 +1794,10 @@ async runDurableV2Skip(msg) {
         // never started. Nothing was skipped and the group is not at fault;
         // only a closed authority is.
         if (authority.blocked) throw new Error('C2 v2 /skip cancellation was not durably settled')
-        return reject('skip-unavailable', T.skipUnavailable)
+        return reject('skip-unavailable', threadStop ? T.stopUnavailable : T.skipUnavailable)
       }
-      this.log(`/skip: ${chatId} (by ${msg.senderName || 'unknown'}), ${queued} queued`)
-      return reject('skipped', T.skipped(queued))
+      this.log(`/skip: ${chatId} (by ${msg.senderName || 'unknown'}${bound ? ', round Stop' : threadStop ? ', thread stop' : ''}), ${queued} queued`)
+      return reject('skipped', bound || threadStop ? T.roundStopped(queued) : T.skipped(queued))
     } finally {
       if (rt.v2SkipWaiter === waiter) rt.v2SkipWaiter = null
     }
@@ -1562,8 +1899,9 @@ async _drainDurableV2NormalChain(initial) {
         rt.v2CancelControl = null
         if (stop) {
           rt.v2QueueReceiptIds = []
+          const said = this._texts(identity.chatId)
           const text = stop.queuedReceiptIds.length
-            ? T.stoppedWithQueue(stop.queuedReceiptIds.length) : T.stopped
+            ? said.stoppedWithQueue(stop.queuedReceiptIds.length) : said.stopped
           await authority.executeStopAck({ effectId: cancelled.effectId,
             controlReceiptId: stop.controlReceiptId, chatId: identity.chatId,
             target: stop.target,
@@ -1717,7 +2055,7 @@ async _drainDurableV2NormalChain(initial) {
       ingressClosed: false }
   }
 
-stageDurableV2Message(msg, platform) {
+stageDurableV2Message(msg, platform, { busy = null, accept = null } = {}) {
     const authority = this.durableV2Runtime
     const handles = this.durableV2Payloads
     if (!authority || !handles) throw new Error('C2 v2 staging is unavailable')
@@ -1752,15 +2090,24 @@ stageDurableV2Message(msg, platform) {
         duplicate: true, ingressClosed: false }
     }
     const job = { msg: { ...msg, _c2ReceiptId: receipt.id }, platform, group }
-    handles.preflight(receipt, job)
+    // A busy message is checked once the core has placed it: a refused one
+    // never reaches the payload bound.
+    if (!busy) handles.preflight(receipt, job)
     const flags = { quiet: receipt.quiet, polled: !!msg.polled, synthetic: false,
       wantsAck: !!msg.wantsAck, resetSessionAfter: !!msg.resetSessionAfter,
       emptyRetried: false, freshRetried: false, firstResumed: false, failedOver: false }
     let result
-    try { result = authority.enqueueMessage({ receipt, flags }) }
+    try { result = authority.enqueueMessage({ receipt, flags,
+      ...(busy ? { busy, accept, preflight: () => handles.preflight(receipt, job) } : {}) }) }
     catch (error) {
       authority.close()
       throw error
+    }
+    // Not admitted (refused by the core, or a route this state cannot take):
+    // no receipt exists and nothing was written.
+    if (result.staged === false) {
+      return { receiptId: receipt.id, route: result.route, refusal: result.refusal ?? null,
+        staged: false, ingressClosed: !!authority.blocked }
     }
     try { handles.attach(receipt.id, job) }
     catch (error) {
@@ -1774,7 +2121,7 @@ stageDurableV2Message(msg, platform) {
       sourceMessageId: msg.msgId,
       text: msg.text, sender: msg.senderName || '', acceptedAt })
     return { receiptId: receipt.id, cursor: result.cursor, staged: true,
-      ingressClosed: !!authority.blocked }
+      ...(result.route ? { route: result.route } : {}), ingressClosed: !!authority.blocked }
   }
 
 _nextDurableV2NormalAnchor(chatId) {
@@ -1791,23 +2138,20 @@ _nextDurableV2NormalAnchor(chatId) {
       throw new Error('C2 v2 successor differs from durable queue')
     }
     if (!queue.length) return null
-    const taken = v2QueueSelection(queue).jobs
+    const taken = v2QueueSelection(queue, this.durableV2Payloads.queueThreads(queue)).jobs
     if (!taken.length || taken.some(item => item.synthetic || item.batch ||
         item.quiet || item.polled ||
         !/^receipt:job:[0-9a-f]{32}$/.test(item.id) ||
         snapshot.receipts.pending.find(receipt =>
           receipt.id === item.id.slice('receipt:job:'.length))?.chatId !== chatId ||
-        ![...snapshot.effects].some(([effectId, status]) => {
-          const descriptor = this.durableV2Journal.effectDescriptor(effectId)
-          return status === 'acked' && descriptor?.type === 'queueNotice' &&
-            descriptor.receiptId === item.id.slice('receipt:job:'.length)
-        }))) {
+        // A confirmed notice, or none: it waited silently for a model slot.
+        !this._durableV2QueueNoticeSettled(rt, snapshot, item))) {
       authority.close()
       throw new Error('C2 v2 successor lacks flat acknowledged queue cohort')
     }
     try { this.durableV2Payloads.auditOrdinaryQueue(chatId, ids) }
     catch (error) { authority.close(); throw error }
-    return v2QueueSelection(queue).anchor
+    return v2QueueSelection(queue, this.durableV2Payloads.queueThreads(queue)).anchor
   }
 
 commitDurableV2InitialDispatch({ chatId, receiptId } = {}) {
@@ -1823,11 +2167,11 @@ commitDurableV2InitialDispatch({ chatId, receiptId } = {}) {
     const queue = before.state?.lanes?.queue?.[chatId]?.queue
     const rt = this._rt(chatId)
     const takenIds = Array.isArray(queue)
-      ? v2QueueSelection(queue).jobs.map(item =>
+      ? v2QueueSelection(queue, handles.queueThreads(queue)).jobs.map(item =>
         typeof item?.id === 'string' ? item.id.slice('receipt:job:'.length) : null) : []
     if (typeof chatId !== 'string' || !chatId ||
         typeof receiptId !== 'string' || !/^[0-9a-f]{32}$/.test(receiptId) ||
-        !Array.isArray(queue) || v2QueueSelection(queue).anchor !== receiptId ||
+        !Array.isArray(queue) || v2QueueSelection(queue, handles.queueThreads(queue)).anchor !== receiptId ||
         !isDeepStrictEqual(queue.map(item => item.id.slice('receipt:job:'.length)),
           rt.v2QueueReceiptIds)) {
       authority.close()
@@ -1849,6 +2193,9 @@ commitDurableV2InitialDispatch({ chatId, receiptId } = {}) {
         throw new Error('C2 v2 initial dispatch host result invalid')
       }
       rt.v2QueueReceiptIds = remaining.map(item => item.id.slice('receipt:job:'.length))
+      if (rt.v2SilentReceiptIds) {
+        rt.v2SilentReceiptIds = new Set([...rt.v2SilentReceiptIds].filter(id => rt.v2QueueReceiptIds.includes(id)))
+      }
       rt.v2RunningJobs = jobs
       rt.v2TurnToken = token
       // This is only a process-local binding for the next migration step.
@@ -1904,6 +2251,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
     rt.v2Doing = []
     rt.v2AutoMilestones = []
     rt.v2CardQuotaFailure = false
+    rt.v2CardFailureNotice = false
     rt.v2CardModelInfo = null
     rt.v2CardBinding = null
     rt.v2CardAnchor = null
@@ -1953,7 +2301,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
       // Runner input, card footer and activity all use this one brain; a
       // scheduled turn runs at standard speed.
       rt.v2Brain = turnBrain(this._brain(job.group, name, provider), job.msg)
-      rt.v2CardModelInfo = cardModelInfo(rt.v2Brain)
+      rt.v2CardModelInfo = cardModelInfo(rt.v2Brain, this._chatLang(chatId))
       this._observeActivity('start', { chatId, receiptId, receiptIds: cohort.receiptIds, generation,
         sessionId: this.store.getSession(chatId), model: rt.v2Brain.model, effort: rt.v2Brain.effort,
         ...(rt.v2Brain.speed === 'fast' ? { speed: 'fast' } : {}),
@@ -1981,6 +2329,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
           for (const id of [...(rt.v2QueueReceiptIds || [])]) {
             if (!steerAlive()) break
             if (!rt.v2QueueReceiptIds?.includes(id)) continue
+            // The core declines another thread's message: it keeps its place.
             await this._runDurableV2Steer(rt, id)
           }
         }
@@ -2021,7 +2370,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
       let streamChain = Promise.resolve()
       let streamFailure = null
       const joinedLine = () => rt.v2CardJoinedNames.length
-        ? `\n\n↪ 已加入 ${rt.v2CardJoinedNames.join('、')} 的补充` : ''
+        ? this._texts(chatId).cardJoined(rt.v2CardJoinedNames) : ''
       // Card progress (same mechanism and wording as the legacy engine): deterministic
       // milestones and "recently doing" from tool calls, an early "received" card
       // and a pulse line. All of it is process-local card text; the card itself is
@@ -2057,8 +2406,8 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
               assertWriterLock: this.durableV2AssertWriterLock,
               // An early card may end as the supported quota failure; its final
               // text then uses the same fixed notice as an unopened card.
-              redactText: value => redact(rt.v2CardQuotaFailure === true
-                ? T.quotaFailure : value, { pii: job.group?.redactPii !== false }),
+              redactText: value => this._failureNoticeText(chatId, redact(rt.v2CardQuotaFailure === true
+                ? T.quotaFailure : value, { pii: job.group?.redactPii !== false }), rt.v2CardFailureNotice === true),
               sendPlainReply: typeof job.platform.replyOnce === 'function'
                 ? (target, value) => job.platform.replyOnce(target.replyCtx, value)
                 : null })
@@ -2087,7 +2436,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
             return true
           }
           if (!rt.v2CardBinding.opened) return false
-          rt.v2CardBinding.path.update((rt.v2LastCardText || progress.T.ackWorking) + joinedLine())
+          rt.v2CardBinding.path.update((rt.v2LastCardText || progress.textsFor(this._chatLang(chatId)).ackWorking) + joinedLine())
           const moved = await rt.v2CardBinding.path.relocate(anchor)
           if (moved) rt.v2CardAnchor = anchor
           return moved
@@ -2110,8 +2459,8 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
           if (event.tools && event.tools.length) {
             rt.v2Steps = (rt.v2Steps || 0) + event.tools.length
             for (const tool of event.tools) {
-              progress.pushDoing(rt.v2Doing, progress.describeTool(tool.name, tool.input))
-              pushAuto(progress.autoMilestone(tool.name, tool.input))
+              progress.pushDoing(rt.v2Doing, progress.describeTool(tool.name, tool.input, this._chatLang(chatId)))
+              pushAuto(progress.autoMilestone(tool.name, tool.input, this._chatLang(chatId)))
             }
           }
         }
@@ -2139,7 +2488,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
         if (progressClosed() || rt.v2CardBinding || rt.v2StreamRequested ||
             projection.streamSnapshot().bufferText.trim()) return
         cardTouchedAt = Date.now()
-        enqueueCardText(progress.T.ackWorking)
+        enqueueCardText(progress.textsFor(this._chatLang(chatId)).ackWorking)
       }
       const armAck = delayMs => {
         ackTimer = setTimeout(() => { ackTimer = null; tryAck() }, delayMs)
@@ -2163,15 +2512,16 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
           if (Date.now() - cardTouchedAt < pulseEvery()) return
           cardTouchedAt = Date.now()
           const sinceAlive = Date.now() - (rt.v2AliveAt || pulseFrom)
-          const stale = sinceAlive >= PULSE_STALE_MS ? progress.humanDur(sinceAlive) : ''
+          const lang = this._chatLang(chatId)
+          const stale = sinceAlive >= PULSE_STALE_MS ? progress.humanDur(sinceAlive, lang) : ''
           // Same gate as the stream frame: text that may still become NO_REPLY
           // never reaches the card.
           const buffer = projection.streamSnapshot().bufferText
           const sofar = buffer.trim()
           const body = autoBlock() + (sofar && !NO_REPLY.startsWith(sofar)
             ? progress.renderMilestones(buffer) + '\n\n' : '')
-          enqueueCardText(body + progress.T.pulse(
-            progress.humanDur(Date.now() - pulseFrom), rt.v2Doing, stale))
+          enqueueCardText(body + progress.textsFor(lang).pulse(
+            progress.humanDur(Date.now() - pulseFrom, lang), rt.v2Doing, stale))
         }, PULSE_MS)
         if (pulseTimer.unref) pulseTimer.unref()
       }
@@ -2473,9 +2823,9 @@ async completeDurableV2CardTurn({ chatId, receiptId, turnToken, effectId,
         receiptId, chatId, turnToken, generation,
         verifyGeneration, applyLocalEffect: this.durableV2ApplyLocalEffect,
         assertWriterLock: this.durableV2AssertWriterLock,
-        redactText: text => redact(quotaFailure
+        redactText: text => this._failureNoticeText(chatId, redact(quotaFailure
           ? T.quotaFailure
-          : text, { pii: job.group?.redactPii !== false }),
+          : text, { pii: job.group?.redactPii !== false }), !!(quotaFailure || closedFailure)),
         sendPlainReply: typeof job.platform.replyOnce === 'function'
           ? (target, text) => job.platform.replyOnce(target.replyCtx, text)
           : null })
@@ -2483,13 +2833,14 @@ async completeDurableV2CardTurn({ chatId, receiptId, turnToken, effectId,
         projected.display.assistantEvents === 0 && updates.length === 0
       if (!preopened) await path.open({ suppressCard })
       for (const text of updates) path.update(text)
-      const footer = T.cardFooter({ ms: Math.max(0, Date.now() - rt.v2StartedAt),
+      const footer = this._texts(chatId).cardFooter({ ms: Math.max(0, Date.now() - rt.v2StartedAt),
         tokens: rt.v2UsageDecision?.tokens || null })
       const footerDetail = job.platform.features?.cardQuota === true
         ? cardModelDetail(rt.v2CardModelInfo, rt.v2RunnerResult) : ''
       // Milestones from tool calls first, then the model's own `>> ` lines;
       // the card shows them in its "process" fold (display only).
       rt.v2CardQuotaFailure = !!quotaFailure
+      rt.v2CardFailureNotice = !!(quotaFailure || closedFailure)
       const redactMilestone = value => redact(value, { pii: job.group?.redactPii !== false })
       const milestones = [...(rt.v2AutoMilestones || []),
         ...progress.milestonesOf(payload.bufferText)]
@@ -2498,7 +2849,8 @@ async completeDurableV2CardTurn({ chatId, receiptId, turnToken, effectId,
       this._observeActivity('sending', { chatId, receiptId })
       const completed = await path.complete({ payload, replyText, paused,
         footer, footerDetail, milestones })
-      const groupReply = redact(quotaFailure ? T.quotaFailure : replyText || '', { pii: job.group?.redactPii !== false })
+      const groupReply = this._failureNoticeText(chatId, redact(quotaFailure ? T.quotaFailure : replyText || '', { pii: job.group?.redactPii !== false }),
+        !!(quotaFailure || closedFailure))
       const finishStatus = quotaFailure || closedFailure ? 'error' : payload.quiet || projected.display.silent ? 'silent' : 'answered'
       // The group-visible text of a delivered answer, in memory only: a
       // successful idle compaction hands it to the next turn.
@@ -2546,6 +2898,7 @@ async completeDurableV2CardTurn({ chatId, receiptId, turnToken, effectId,
       rt.v2StartedAt = null
       rt.v2AutoMilestones = []
       rt.v2CardQuotaFailure = false
+      rt.v2CardFailureNotice = false
       rt.v2CardBinding = null
       rt.v2StreamRequested = false
       rt.v2TimeoutProof = null
@@ -2640,8 +2993,13 @@ classifyDurableV2UnresolvedTurn({ chatId, receiptId, turnToken, effectId,
     const wecomTools = group.platform === 'wecom' && !!this.wecomSocket
     const groupTools = wecomTools || group.platform === 'feishu' && manifestFeatures(platform.features || {}).skills
     const info = group.repo && this.repoInfo ? this.repoInfo(group.workdir, group.repo) : null
+    // The conversation as its adapter names it (a Slack direct message is not a group).
+    const conversation = platform.conversationOf?.(msg.chatId) || null
+    const named = conversation ? { chatNoun: conversation.noun, chatHere: conversation.here } : {}
+    // Idle compaction later words its note for this conversation too.
+    if (rt && conversation?.noun) rt.v2ChatNoun = conversation.noun
     const manifest = [
-      ...manifestHeader({ restrictedV2: true, brand, chatLabel: platform.chatLabel || '项目群',
+      ...manifestHeader({ restrictedV2: true, brand, chatLabel: conversation?.label || platform.chatLabel || '项目群', ...named,
         chatId: msg.chatId, groupName: group.name || msg.chatId,
         workdir: group.workdir, repo: group.repo || '', repoState: info?.state || '',
         repoOrigin: info?.origin || '未知', pushDenied: policy.pushDenied,
@@ -2649,7 +3007,10 @@ classifyDurableV2UnresolvedTurn({ chatId, receiptId, turnToken, effectId,
         runtimeVersion: this.durableV2Version || '', runtimeCommand: runtimeCommand(),
         noVision: provider.vision === false, platformName: platform.chatLabel || '项目群',
         permissionTier: policy.tier, tz: this.tz, publicUrl: '', uiUrl: '', lanUrl: '' }),
-      ...manifestContext({ restrictedV2: true, brand, isCodex: provider.runner === 'codex',
+      // An English conversation also asks the model to answer members in
+      // English (the core words that line; without the field nothing changes).
+      ...manifestContext({ restrictedV2: true, brand, isCodex: provider.runner === 'codex', ...named,
+        ...(this._chatLang(msg.chatId) === 'en' ? { replyLang: 'en' } : {}),
         groupCommands: GROUP_COMMANDS, groupTools, wecomTools,
         ...(platform.commandPrefix ? { commandPrefix: platform.commandPrefix } : {}),
         ...(!groupTools && platform.features?.mediaMarker === 'path' ? { mediaByPath: true } : {}),
@@ -2658,7 +3019,7 @@ classifyDurableV2UnresolvedTurn({ chatId, receiptId, turnToken, effectId,
           { full: policy.full, isCodex: provider.runner === 'codex' }) : null,
         unredactedPii: group.redactPii === false,
         cardPinned: platform.features?.cardPinned === true, plainSend: false }),
-      ...(groupTools ? releaseSkillLines(platform) : []),
+      ...(groupTools ? releaseSkillLines(platform, named) : []),
     ].join('\n')
     // Reinject current supported context each turn. No legacy feature menu,
     // external-message commands or v1 manifest refresh scheduler is included.
@@ -2714,7 +3075,7 @@ classifyDurableV2UnresolvedTurn({ chatId, receiptId, turnToken, effectId,
         paused: group.paused === true, closing: this._closing === true,
         sessionMatch: !!(sid && stats && stats.sessionId === sid), freeSlots,
         restUntil: rt.v2CompactRest && rt.v2CompactRest.sid === sid ? rt.v2CompactRest.until : null,
-        now: Date.now() })
+        now: Date.now(), ...(rt.v2ChatNoun ? { chatNoun: rt.v2ChatNoun } : {}) })
       if (!plan.start) {
         if (plan.at > 0 && (stats?.ctx || 0) >= plan.at) this.log(`group ${chatId}: 空闲整理未起 — ${plan.reason}`)
         return
@@ -2931,4 +3292,5 @@ requestDurableV2Stop(chatId) {
 
 }
 
-module.exports = { releaseBinDir, Engine, brainLabel, turnBrain, cardModelInfo, cardModelDetail }
+module.exports = { releaseBinDir, Engine, brainLabel, turnBrain, cardModelInfo, cardModelDetail, texts: T, textsEn: T_EN, textsFor,
+  wordsOf, fmtWan, humanDuration, cardDuration, projectName }

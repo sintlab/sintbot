@@ -4,7 +4,9 @@
 // that is neither paused nor held receives one notice card (text where the
 // chat has no card capability), built from CHANGELOG.json like the console's
 // version history. First run and downgrades only record the baseline; so does
-// a start with the console's announcement preference turned off.
+// a start with the console's announcement preference turned off. A conversation
+// whose language is English gets the notice in English, with the entries of
+// CHANGELOG.en.json.
 //
 // The new baseline is recorded before anything is sent: a crash during the
 // broadcast loses the announcement instead of repeating it on the next start.
@@ -14,6 +16,8 @@ const path = require('node:path')
 const { cmpVersion } = require('./upgrade')
 const { deliverUpgradeNotice } = require('./platform/noticesend')
 const { redact } = require('./core/redact')
+const { chatLang } = require('./chatlang')
+const { chatPlatform } = require('./config')
 
 function readChangelog(file = path.join(__dirname, '..', 'CHANGELOG.json')) {
   try {
@@ -22,7 +26,9 @@ function readChangelog(file = path.join(__dirname, '..', 'CHANGELOG.json')) {
   } catch { return [] }
 }
 
-function announceUpgradeOnStart({ store, cfg = {}, platform, changelog = [], currentVersion,
+const readChangelogEn = (file = path.join(__dirname, '..', 'CHANGELOG.en.json')) => readChangelog(file)
+
+function announceUpgradeOnStart({ store, cfg = {}, platform, changelog = [], changelogEn = [], currentVersion,
   heldGroups = [], log = () => {}, deliver = deliverUpgradeNotice } = {}) {
   const skipped = state => ({ state, chats: [], done: Promise.resolve([]) })
   let last
@@ -47,7 +53,8 @@ function announceUpgradeOnStart({ store, cfg = {}, platform, changelog = [], cur
     chats.push(chatId)
     deliveries.push(Promise.resolve()
       .then(() => deliver(platform, chatId, last, currentVersion, changelog, cfg.brand,
-        { redact: s => redact(s, { pii: g.redactPii !== false }), log }))
+        { redact: s => redact(s, { pii: g.redactPii !== false }), log,
+          ...(chatLang(g, chatPlatform(cfg, chatId)) === 'en' ? { lang: 'en', changelogEn } : {}) }))
       .then(r => {
         if (r && r.result == null) log(`升级播报未送达(${chatId}):平台确认没发出去`)
         return { chatId, mode: r ? r.mode : null, delivered: !!(r && r.result != null) }
@@ -59,4 +66,4 @@ function announceUpgradeOnStart({ store, cfg = {}, platform, changelog = [], cur
   return { state: 'announced', chats, done: Promise.all(deliveries) }
 }
 
-module.exports = { announceUpgradeOnStart, readChangelog }
+module.exports = { announceUpgradeOnStart, readChangelog, readChangelogEn }

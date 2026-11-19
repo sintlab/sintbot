@@ -8,6 +8,13 @@
 # The built-in core generates the manifest the link carries; a test keeps this file identical
 # to it. Do not turn on token rotation: it cannot be turned off again, and the bot token
 # would then expire every 12 hours.
+#
+# This manifest does not declare the app as a Slack Agent. Declaring it shows Slack's own
+# "Working..." status and Stop button in channel threads, but Slack then keeps workspace
+# guests out of the app and turns every direct message into a thread, and neither can be
+# undone. To declare it anyway, remove the "# " in front of the two agent_view lines under
+# features and in front of agent_session_stopped under bot_events. (Apps created by
+# SintBot 1.4.24 already have it.)
 display_information:
   name: "SintBot"
   description: "Hand tasks to Claude Code or Codex on your own Mac, from Slack."
@@ -20,8 +27,8 @@ features:
   bot_user:
     display_name: "SintBot"
     always_online: false
-  agent_view:
-    agent_description: "Message me in a DM, or @mention me in a channel, and I do the work in the project folder on your Mac."
+  # agent_view:
+  #   agent_description: "Message me in a DM, or @mention me in a channel, and I do the work in the project folder on your Mac."
   slash_commands:
     - command: "/sint"
       description: "Control the task in this conversation"
@@ -49,7 +56,7 @@ settings:
       - message.channels
       - message.groups
       - message.mpim
-      - agent_session_stopped
+      # - agent_session_stopped
       - app_home_opened
   interactivity:
     is_enabled: true

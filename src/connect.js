@@ -18,6 +18,7 @@ const { defaultProjectsRoot, tooWideReason, realpathLenient } = require('./proje
 const { fillPicks } = require('./core/modelcmd')
 const { applyBrainChange } = require('./groupbrain')
 const { newLocalChatId, isLocalChatId } = require('./platform/local')
+const { chatLang } = require('./chatlang')
 
 const CONNECT_OPTIONS = Object.freeze({
   config: { type: 'string' }, 'data-dir': { type: 'string' }, workdir: { type: 'string' },
@@ -670,8 +671,12 @@ async function runConversationSetup(input = {}, deps = {}, platform = 'local') {
 
     // WeCom conversations are named after the project; local ones keep their title.
     const title = platform === 'wecom' || platform === 'slack' ? path.basename(workdir) : input.title || '本机对话'
+    // A Slack conversation speaks English unless it is set to Chinese
+    // (src/chatlang.js), whatever the language of the setup page: no `lang`
+    // key is written here, and the core writes the project README in English
+    // (Slack only). No other platform is touched.
     const buildFor = (chatId, credentials) => core.connectConfig({ platform, chatId, ...credentials, name: title,
-      workdir, home: d.home, provider, runners })
+      workdir, home: d.home, provider, runners, ...(platform === 'slack' ? { lang: 'en' } : {}) })
     let chatId, built
     if (platform === 'wecom') {
       // Credentials come from the form, or from a scan that creates the bot
@@ -694,46 +699,56 @@ async function runConversationSetup(input = {}, deps = {}, platform = 'local') {
         botId: bot.botId, secret: bot.secret, signal: abort.signal,
         inboxDir: path.join(stateDir, 'wecom-inbox'),
         ...(input.scan === true ? { notice: require('./wecomprovision').WECOM_SCAN_NOTICES.botReady } : {}),
-        confirm: async ({ chatId: found }) => {
+        confirm: async ({ chatId: found, chatType }) => {
           built = buildFor(found, { botId: bot.botId, secret: bot.secret })
           if (!built.ok) throw new Error(built.error)
-          return transport.confirmReply(title)
+          return transport.confirmReply(title, chatType)
         },
         onNotice: say })
       if (!built || built.config?.groups?.[chatId] === undefined) built = buildFor(chatId, { botId: bot.botId, secret: bot.secret })
     } else if (platform === 'slack') {
       // Both tokens are checked against Slack before anything is written; the
       // core words every refusal. The identity it reports is kept for display.
+      // `input.proxy` is the setup page's choice: a proxy URL, or '' for a
+      // direct connection. Everything here goes that way, and the core saves
+      // it with the connection so a later start without the terminal's proxy
+      // variables still reaches Slack. Absent, the process's own proxy is used.
       const verify = require('./slackverify')
-      const app = await (deps.verifySlackAppToken || verify.verifySlackAppToken)(input.appToken)
-      if (!app.ok) throw new Error(app.notice)
-      const bot = await (deps.verifySlackBotToken || verify.verifySlackBotToken)(input.botToken, { appId: app.appId })
-      if (!bot.ok) throw new Error(bot.notice)
-      say(bot.notice)
-      if (interrupted()) return EXIT_INTERRUPTED
-      const identity = bot.identity || {}
-      const credentials = { botToken: String(input.botToken).trim(), appToken: String(input.appToken).trim(),
-        ...(identity.appId || app.appId ? { slackAppId: identity.appId || app.appId } : {}),
-        ...(identity.teamId ? { teamId: identity.teamId } : {}),
-        ...(identity.botUserId ? { botUserId: identity.botUserId } : {}),
-        ...(identity.team ? { team: identity.team } : {}) }
-      const preflight = buildFor('oc_slack_D0PREFLIGHT', credentials)
-      if (!preflight.ok) throw new Error(preflight.error)
-      d.onSlackIdentity?.({ ...identity, appId: identity.appId || app.appId })
-      const transport = require('./slacksetuptransport')
-      // The first direct message or channel @mention binds the conversation.
-      // The core checks the binding while the setup connection is still open,
-      // so the reply in Slack only follows an accepted configuration.
-      chatId = await (deps.discoverSlackConversation || transport.discoverSlackConversation)({
-        botToken: credentials.botToken, appToken: credentials.appToken, signal: abort.signal,
-        inboxDir: path.join(stateDir, 'slack-inbox'),
-        confirm: async ({ chatId: found }) => {
-          built = buildFor(found, credentials)
-          if (!built.ok) throw new Error(built.error)
-          return transport.confirmReply(title)
-        },
-        onNotice: say })
-      if (!built || built.config?.groups?.[chatId] === undefined) built = buildFor(chatId, credentials)
+      const chosen = typeof input.proxy === 'string'
+      const net = chosen ? require('./slackproxy').slackNet({ url: input.proxy, noProxy: input.noProxy }) : null
+      const via = net ? { fetchImpl: net.fetchImpl } : {}
+      try {
+        const app = await (deps.verifySlackAppToken || verify.verifySlackAppToken)(input.appToken, via)
+        if (!app.ok) throw Object.assign(new Error(app.notice), { network: app.network === true })
+        const bot = await (deps.verifySlackBotToken || verify.verifySlackBotToken)(input.botToken, { appId: app.appId, ...via })
+        if (!bot.ok) throw Object.assign(new Error(bot.notice), { network: bot.network === true })
+        say(bot.notice)
+        if (interrupted()) return EXIT_INTERRUPTED
+        const identity = bot.identity || {}
+        const credentials = { botToken: String(input.botToken).trim(), appToken: String(input.appToken).trim(),
+          ...(identity.appId || app.appId ? { slackAppId: identity.appId || app.appId } : {}),
+          ...(identity.teamId ? { teamId: identity.teamId } : {}),
+          ...(identity.botUserId ? { botUserId: identity.botUserId } : {}),
+          ...(identity.team ? { team: identity.team } : {}),
+          ...(chosen && input.proxy ? { proxy: input.proxy, noProxy: input.noProxy || '' } : {}) }
+        const preflight = buildFor('oc_slack_D0PREFLIGHT', credentials)
+        if (!preflight.ok) throw new Error(preflight.error)
+        d.onSlackIdentity?.({ ...identity, appId: identity.appId || app.appId })
+        const transport = require('./slacksetuptransport')
+        // The first direct message or channel @mention binds the conversation.
+        // The core checks the binding while the setup connection is still open,
+        // so the reply in Slack only follows an accepted configuration.
+        chatId = await (deps.discoverSlackConversation || transport.discoverSlackConversation)({
+          botToken: credentials.botToken, appToken: credentials.appToken, signal: abort.signal,
+          inboxDir: path.join(stateDir, 'slack-inbox'), net,
+          confirm: async ({ chatId: found, chatType }) => {
+            built = buildFor(found, credentials)
+            if (!built.ok) throw new Error(built.error)
+            return transport.confirmReply(title, chatType, chatLang(built.config?.groups?.[found], 'slack'))
+          },
+          onNotice: say })
+        if (!built || built.config?.groups?.[chatId] === undefined) built = buildFor(chatId, credentials)
+      } finally { net?.close() }
     } else {
       chatId = (d.newLocalChatId || newLocalChatId)()
       built = buildFor(chatId, {})

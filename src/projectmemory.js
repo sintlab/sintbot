@@ -142,6 +142,8 @@ function probeProjectMemory(workdir, opts = {}) {
 //   保证不了 —— 清单自己都写着「上下文里没有就自己读一遍」。
 // ⚠ 用户面零工具名:不提约定文件名、更不提机器上的目录。
 const HANDOVER_NOTE = '本项目的长期约定与积累都还在,不必从头交代'
+// 英文会话(opts.lang = 'en')里的同一句,同样只陈述事实。
+const HANDOVER_NOTE_EN = "this project's standing conventions and notes are still in place, so there is no need to explain everything again"
 
 /**
  * ⭐ **消费者唯一入口**:这一轮**实际给得出去**的交接信息。自知清单与切模型通知都调它。
@@ -169,7 +171,7 @@ function probeHandover(workdir, opts = {}) {
   const landing = pm.convention.length ? (pm.convention.find((f) => f === want) || pm.convention[0]) : null
   // 探到了但一条都给不出去 ⇒ 两个消费者一致地闭嘴(清单不留光秃秃的标题,群里也不说那句话)。
   if (!landing && !memory) return null
-  return { convention: pm.convention, memory, landing, note: HANDOVER_NOTE }
+  return { convention: pm.convention, memory, landing, note: opts.lang === 'en' ? HANDOVER_NOTE_EN : HANDOVER_NOTE }
 }
 
-module.exports = { probeHandover, probeProjectMemory, probeMemoryDir, memorySlug, slugOwners, hasHandover, countBucket, CONVENTION_FILES, HANDOVER_NOTE }
+module.exports = { probeHandover, probeProjectMemory, probeMemoryDir, memorySlug, slugOwners, hasHandover, countBucket, CONVENTION_FILES, HANDOVER_NOTE, HANDOVER_NOTE_EN }

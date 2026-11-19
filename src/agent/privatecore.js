@@ -1,9 +1,9 @@
-// ABI v37 adapter for the built-in decision core. Manifest assembly still stays in JS.
+// ABI v38 adapter for the built-in decision core. Manifest assembly still stays in JS.
 const fs = require('node:fs')
 const path = require('node:path')
 const { createHash } = require('node:crypto')
 
-const EXPECTED_SHA256 = 'e2d352e272741d6647e923035b9c982e000a8abdacf8f834ae8a01b3daea453a'
+const EXPECTED_SHA256 = '998ebc68788df3312720ce05cff65e4183af1708dfe8cc1633e692523c58956e'
 let bytes
 try {
   bytes = fs.readFileSync(path.join(__dirname, 'privatecore.wasm'))
@@ -26,7 +26,7 @@ try {
 } catch (cause) {
   throw new Error('SintBot binary core cannot start on this runtime', { cause })
 }
-if (core.abi_version() !== 37) throw new Error('SintBot binary core ABI mismatch')
+if (core.abi_version() !== 38) throw new Error('SintBot binary core ABI mismatch')
 const encoder = new TextEncoder()
 const decoder = new TextDecoder('utf-8', { fatal: true })
 
@@ -771,7 +771,7 @@ function manifestPolicy(permissionMode, isCodex, allowedTools, disallowedTools) 
   return value
 }
 
-// ABI 36 JSON decisions (sintbot-core docs/ABI36_CONTRACTS.md). Each wrapper only
+// ABI 36 JSON decisions. Each wrapper only
 // checks the envelope shape the host relies on; the core owns the rules and wording.
 const isObject = value => !!value && typeof value === 'object' && !Array.isArray(value)
 
@@ -787,15 +787,28 @@ function connectManifest(basic, userName, version) {
 
 // The Slack app manifest and its prefilled "create app" link. The core owns
 // the scopes and events; the host only opens the link.
-function connectSlackManifest(name = '') {
-  const value = coreJson('connect_manifest', { platform: 'slack', name: String(name || '') }, 'build the Slack app manifest')
-  if (!isObject(value) || value.platform !== 'slack' || !isObject(value.manifest) ||
+const SLACK_CREATE_PREFIX = 'https://api.slack.com/apps?new_app=1&manifest_json='
+// The core's answer for one request. Declaring an Agent cannot be undone in
+// Slack, so the manifest, the link Slack opens and the events must all say
+// exactly what was asked (`agentView`), or the answer is refused.
+function slackManifestShapeOk(value, agentView) {
+  if (!isObject(value) || value.platform !== 'slack' || !isObject(value.manifest) || !isObject(value.manifest.features) ||
       typeof value.name !== 'string' || !value.name || typeof value.hint !== 'string' ||
-      typeof value.createUrl !== 'string' || !value.createUrl.startsWith('https://api.slack.com/apps?new_app=1&manifest_json=') ||
+      typeof value.createUrl !== 'string' || !value.createUrl.startsWith(SLACK_CREATE_PREFIX) ||
       !Array.isArray(value.scopes) || !value.scopes.every(scope => typeof scope === 'string') ||
-      !Array.isArray(value.events) || typeof value.command !== 'string') {
-    throw new Error('SintBot binary core returned an invalid Slack app manifest')
-  }
+      !Array.isArray(value.events) || typeof value.command !== 'string') return false
+  const wanted = agentView === true
+  let linked = null
+  try { linked = JSON.parse(decodeURIComponent(value.createUrl.slice(SLACK_CREATE_PREFIX.length))) } catch { return false }
+  return value.agentView === wanted && ('agent_view' in value.manifest.features) === wanted &&
+    isObject(linked) && isObject(linked.features) && ('agent_view' in linked.features) === wanted &&
+    value.events.includes('agent_session_stopped') === wanted
+}
+
+// `agentView` declares the app as a Slack Agent; it is opt-in and off by default.
+function connectSlackManifest(name = '', { agentView = false } = {}) {
+  const value = coreJson('connect_manifest', { platform: 'slack', name: String(name || ''), agentView: agentView === true }, 'build the Slack app manifest')
+  if (!slackManifestShapeOk(value, agentView)) throw new Error('SintBot binary core returned an invalid Slack app manifest')
   return value
 }
 
@@ -803,7 +816,10 @@ function connectPlan(step, { basic = false, status = null, code = null, msg = ''
   const value = coreJson('connect_plan', { step, basic: !!basic, status, code, msg: String(msg || ''), observed: isObject(observed) ? observed : {} }, `decide the connect step ${step}`)
   if (!isObject(value) || !['ok', 'stop', 'wait', 'warn'].includes(value.verdict) || typeof value.notice !== 'string' ||
       !(value.next === null || typeof value.next === 'string') ||
-      !(value.retryAfterMs === null || Number.isSafeInteger(value.retryAfterMs))) {
+      !(value.retryAfterMs === null || Number.isSafeInteger(value.retryAfterMs)) ||
+      (step === 'slack-proxy' && !(value.verdict === 'ok'
+        ? isObject(value.proxy) && typeof value.proxy.url === 'string' && typeof value.proxy.noProxy === 'string'
+        : value.verdict === 'stop' && value.notice !== '' && value.proxy === null))) {
     throw new Error('SintBot binary core returned an invalid connect decision')
   }
   return value
@@ -837,7 +853,7 @@ function usageParse(provider, source, status, body, now = Date.now()) {
   return value
 }
 
-// ABI 37 (docs/ABI37_CONTRACTS.md in the core): idle compaction rules. The host
+// ABI 37: idle compaction rules. The host
 // only spawns, stops and logs; start/skip and settle outcomes are decided here.
 function idleCompactPlan(input) {
   const value = coreJson('idle_compact_plan', input, 'plan idle compaction')
@@ -863,6 +879,45 @@ function envConflicts(input) {
   if (!isObject(value) || !Array.isArray(value.warnings) ||
       value.warnings.some(w => !isObject(w) || typeof w.key !== 'string' || typeof w.where !== 'string' || typeof w.reason !== 'string')) {
     throw new Error('SintBot binary core returned an invalid environment check')
+  }
+  return value
+}
+
+// ABI 38: Slack display rules. Each wrapper only checks the envelope shape the
+// host relies on; which messages are marked or noted, what the record says
+// and when a shared app connection is reported are decided by the core.
+const isStringList = value => Array.isArray(value) && value.every(item => typeof item === 'string')
+const LEFTOVER_EFFECT = {
+  mark: effect => typeof effect.chatId === 'string' && isStringList(effect.ids),
+  record: effect => typeof effect.key === 'string' && ['noticed', 'attempting'].includes(effect.status) &&
+    typeof effect.required === 'boolean',
+  note: effect => typeof effect.key === 'string' && typeof effect.chatId === 'string' &&
+    typeof effect.target === 'string' && ['message', 'direct'].includes(effect.wording),
+}
+
+// input.type 'scan' → { effects: [mark], stop: null | 'unreadable', need: [index] };
+// 'plan' → { effects: [mark | record | note], keep: [key], compact }.
+function leftoverStep(input) {
+  const value = coreJson('leftover_step', input, 'decide the leftover notes')
+  const effectsOk = (list, types) => Array.isArray(list) &&
+    list.every(effect => isObject(effect) && types.includes(effect.type) && LEFTOVER_EFFECT[effect.type](effect))
+  const ok = isObject(value) && (input?.type === 'scan'
+    ? effectsOk(value.effects, ['mark']) && (value.stop === null || value.stop === 'unreadable') &&
+      Array.isArray(value.need) && value.need.every(i => Number.isSafeInteger(i) && i >= 0 && i < input.sealed.length)
+    : effectsOk(value.effects, ['mark', 'record', 'note']) && isStringList(value.keep) && typeof value.compact === 'boolean')
+  if (!ok) throw new Error('SintBot binary core returned invalid leftover notes')
+  return value
+}
+
+// One greeting's count of the app's connections against the host's own.
+function sharedConnectionStep(input) {
+  const value = coreJson('shared_connection_step', input, 'check the shared app connections')
+  if (!isObject(value) || !['ok', 'wait', 'warn'].includes(value.verdict) ||
+      !['none', 'first', 'raised', 'still', 'cleared'].includes(value.change) ||
+      !Number.isSafeInteger(value.streak) || value.streak < 0 || typeof value.flagged !== 'boolean' ||
+      !(value.others === null || Number.isFinite(value.others)) ||
+      !Number.isFinite(value.recheckMs) || value.recheckMs < 0) {
+    throw new Error('SintBot binary core returned an invalid shared connection check')
   }
   return value
 }
@@ -894,7 +949,7 @@ function followupCall(name, value) {
 function followupEnabled(group, runner) { return followupCall('followup_policy', { group, runner }) }
 function claudeFollowupStep(state, event) { return followupCall('claude_followup_step', { state, event }) }
 
-const entries = { followupEnabled, claudeFollowupStep, classifyError, routeBackend, sandboxTier, appErrorOverride, appNormalizeItem, appStreamTail, appNoticeAction, appDeltaNext, appLandedAction, appCompletionAction, appCompletionNoticeAction, manifestFeatures, manifestHeader, manifestContext, manifestSkills, manifestStyleBoard, manifestImagenAsset, manifestRuntime, manifestPolicy, systemAppendix, codexEffortRejection, wecomGatePrompt, imagenPrompt, turnPrompt, compactEvent, engineQueueStep, engineSlotsStep, engineTurnStep, engineSessionStep, engineHandoffStep, engineIntakeStep, engineLifecycleStep, engineTerminalStep, engineSteerStep, engineRecoveryStep, engineFailoverStep, parseResetFields, chooseResetEpoch, codexBuildPrompt, codexBuildArgs, appUsageFromTotal, settleUsage, appBuildRequest, claudeBaseSkillAllows, claudeBuildArgs, claudePluginAllowRules, claudeNormalizeEvent, codexNormalizeEvent, codexParseError, connectManifest, connectSlackManifest, connectPlan, connectConfig, qrMatrix, usageParse, envConflicts, idleCompactPlan, idleCompactSettle }
+const entries = { followupEnabled, claudeFollowupStep, classifyError, routeBackend, sandboxTier, appErrorOverride, appNormalizeItem, appStreamTail, appNoticeAction, appDeltaNext, appLandedAction, appCompletionAction, appCompletionNoticeAction, manifestFeatures, manifestHeader, manifestContext, manifestSkills, manifestStyleBoard, manifestImagenAsset, manifestRuntime, manifestPolicy, systemAppendix, codexEffortRejection, wecomGatePrompt, imagenPrompt, turnPrompt, compactEvent, engineQueueStep, engineSlotsStep, engineTurnStep, engineSessionStep, engineHandoffStep, engineIntakeStep, engineLifecycleStep, engineTerminalStep, engineSteerStep, engineRecoveryStep, engineFailoverStep, parseResetFields, chooseResetEpoch, codexBuildPrompt, codexBuildArgs, appUsageFromTotal, settleUsage, appBuildRequest, claudeBaseSkillAllows, claudeBuildArgs, claudePluginAllowRules, claudeNormalizeEvent, codexNormalizeEvent, codexParseError, connectManifest, connectSlackManifest, connectPlan, connectConfig, qrMatrix, usageParse, envConflicts, idleCompactPlan, idleCompactSettle, leftoverStep, sharedConnectionStep }
 for (const name of Object.keys(entries)) entries[name] = guarded(entries[name])
 
-module.exports = { ...entries, engineStep, resetBinaryCore, HUMAN_BY_KIND: HUMAN }
+module.exports = { ...entries, engineStep, resetBinaryCore, HUMAN_BY_KIND: HUMAN, slackManifestShapeOk }

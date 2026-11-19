@@ -2,10 +2,31 @@
 
 const { isC2InputRejection, answerC2InputRejection, rejectC2Input } = require('./core/c2inputrejection')
 const { coordinateC2GlobalFault } = require('./core/c2globalfault')
+const { chatLang, pick } = require('./chatlang')
 
 const RECOVERING_NOTICE = '上一个任务出错，正在收尾，这条消息没有处理，请稍后重发。'
 const HELD_NOTICE = '本群上一个任务结果不明，已暂停处理，等待人工确认；其他群不受影响。'
+// A Slack channel or direct message, or a WeCom single chat, is not "本群".
+function heldNotice(platform, chatId) {
+  let here = ''
+  try { here = platform?.conversationOf?.(chatId)?.here || '' } catch {}
+  return here && here !== '本群' ? `${here}上一个任务结果不明，已暂停处理，等待人工确认；其他会话不受影响。` : HELD_NOTICE
+}
 const UPGRADING_NOTICE = 'SintBot 正在升级，这条消息没有处理，请一分钟后重发。'
+// The same notices for a conversation whose language is English
+// (`groups[chatId].lang`, src/chatlang.js). `here` is the adapter's English
+// name for the conversation ("this channel"); a group chat is "this group".
+const RECOVERING_NOTICE_EN = 'The previous task ran into an error and is being wrapped up, so this message was not handled. Please resend it in a moment.'
+const UPGRADING_NOTICE_EN = 'SintBot is being upgraded, so this message was not handled. Please resend it in a minute.'
+function heldNoticeEn(platform, chatId) {
+  let here = ''
+  try { here = platform?.conversationOf?.(chatId)?.en?.here || '' } catch {}
+  return `The outcome of the previous task in ${here || 'this group'} is unknown, so it is paused until someone confirms what happened; other conversations are not affected.`
+}
+const SERVICE_NOTICES = Object.freeze({
+  zh: Object.freeze({ recovering: RECOVERING_NOTICE, upgrading: UPGRADING_NOTICE, held: heldNotice }),
+  en: Object.freeze({ recovering: RECOVERING_NOTICE_EN, upgrading: UPGRADING_NOTICE_EN, held: heldNoticeEn }) })
+const serviceNotices = lang => (lang === 'en' ? SERVICE_NOTICES.en : SERVICE_NOTICES.zh)
 const reasonOf = error => String(error?.message || error || 'unknown').slice(0, 300)
 
 // Turns a group binding still holds: a running turn, a non-idle handoff or a
@@ -214,9 +235,12 @@ function createC2MultiGroupService({ routes, assertWriterLock,
     }
     return suspended.has(chatId) ? 'held' : 'recovered'
   }
+  // The words of this service's own notices in one conversation's language,
+  // read from the route's live group each time.
+  const noticesOf = chatId => serviceNotices(chatLang(configured.get(chatId)?.group))
   function heldReply(msg, sourceAdapter) {
     return answerC2InputRejection({ error: rejectC2Input('C2 group held',
-      { reason: 'group-held', notice: HELD_NOTICE }), msg, platform: sourceAdapter, log })
+      { reason: 'group-held', notice: noticesOf(msg?.chatId).held(sourceAdapter, msg?.chatId) }), msg, platform: sourceAdapter, log })
   }
   // Open one more group on the live transport: a newly added route or one
   // paused since startup. It runs the same recovery gate as startup; only a
@@ -329,12 +353,12 @@ function createC2MultiGroupService({ routes, assertWriterLock,
     if (quarantine?.rejects(msg)) return { quarantined: true }
     if (maintenance && started && !stopPromise) {
       return answerC2InputRejection({ error: rejectC2Input('C2 service upgrading',
-        { reason: 'upgrading', notice: UPGRADING_NOTICE }), msg, platform: sourceAdapter, log })
+        { reason: 'upgrading', notice: noticesOf(msg.chatId).upgrading }), msg, platform: sourceAdapter, log })
     }
     if (recovering.has(msg.chatId) && started && !stopPromise) {
       // The group's failed turn is being closed; nothing is admitted meanwhile.
       return answerC2InputRejection({ error: rejectC2Input('C2 group recovering',
-        { reason: 'group-recovering', notice: RECOVERING_NOTICE }), msg, platform: sourceAdapter, log })
+        { reason: 'group-recovering', notice: noticesOf(msg.chatId).recovering }), msg, platform: sourceAdapter, log })
     }
     let binding
     try {
@@ -349,21 +373,21 @@ function createC2MultiGroupService({ routes, assertWriterLock,
           // Still not settled after the bound: refuse as before, no fault.
           log(`group ${msg.chatId}: message refused; an outbound effect stayed in flight`)
           return answerC2InputRejection({ error: rejectC2Input('C2 group effect in flight',
-            { reason: 'effect-in-flight', notice: RECOVERING_NOTICE }), msg, platform: sourceAdapter, log })
+            { reason: 'effect-in-flight', notice: noticesOf(msg.chatId).recovering }), msg, platform: sourceAdapter, log })
         }
         // A turn still running under a closed authority delivers its own
         // rejection; until then this message, which has no receipt, is
         // refused. An idle closed group is closed as its own fault here.
         if (runtimesOf(binding).some(rt => rt.v2NormalRouteActive)) {
           return answerC2InputRejection({ error: rejectC2Input('C2 group closing',
-            { reason: 'group-recovering', notice: RECOVERING_NOTICE }), msg, platform: sourceAdapter, log })
+            { reason: 'group-recovering', notice: noticesOf(msg.chatId).recovering }), msg, platform: sourceAdapter, log })
         }
         return groupFault(msg.chatId, binding, new Error('C2 group ingress authority closed'))
           .then(async outcome => {
             if (outcome === 'held') return heldReply(msg, sourceAdapter)
             if (outcome === 'recovered') {
               return answerC2InputRejection({ error: rejectC2Input('C2 group recovered',
-                { reason: 'group-recovering', notice: RECOVERING_NOTICE }), msg, platform: sourceAdapter, log })
+                { reason: 'group-recovering', notice: noticesOf(msg.chatId).recovering }), msg, platform: sourceAdapter, log })
             }
             throw new Error('C2 group ingress authority closed')
           })
@@ -402,14 +426,15 @@ function createC2MultiGroupService({ routes, assertWriterLock,
     if (typeof onModelCard !== 'function' || !value || value.a !== 'mc' || !allowed(event?.chatId)) {
       return unsupported('card action')(event)
     }
-    if (maintenance) return { toast: { type: 'info', content: '正在升级，稍后再点' } }
-    if (suspended.has(event.chatId)) return { toast: { type: 'warning', content: '本群暂停处理中，请管理员处理后再改' } }
+    const lang = chatLang(configured.get(event.chatId)?.group)
+    if (maintenance) return { toast: { type: 'info', content: pick(lang, '正在升级，稍后再点', 'Upgrading; try again in a moment') } }
+    if (suspended.has(event.chatId)) return { toast: { type: 'warning', content: pick(lang, '本群暂停处理中，请管理员处理后再改', 'This group is paused; ask an admin to sort it out before changing this') } }
     const binding = bindings.get(event.chatId)
     if (!binding) return { ignored: true }
     return Promise.resolve().then(() => onModelCard({ ...event, action: { ...event.action, value } }, binding))
       .catch(error => {
         log(`model card ${event.chatId}: ${error?.message || String(error)}`)
-        return { toast: { type: 'error', content: '没改成 —— 请稍后再试' } }
+        return { toast: { type: 'error', content: pick(lang, '没改成 —— 请稍后再试', 'The change did not go through — try again later') } }
       })
   }
   function unsupported(source) {
@@ -560,4 +585,4 @@ function createC2MultiGroupService({ routes, assertWriterLock,
       [chatId, { reason: entry.reason, source: entry.source, since: entry.since }])) } }
 }
 
-module.exports = { createC2MultiGroupService }
+module.exports = { createC2MultiGroupService, serviceNotices }

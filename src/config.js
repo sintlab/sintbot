@@ -218,10 +218,10 @@ function collectSecretValues(cfg) {
 // Apply a config `proxy` block to process.env so every spawned `claude` child
 // inherits it — without clobbering a value already set in the shell. Lets the
 // operator bake the proxy split into config instead of exporting it each session.
-function applyProxyEnv(cfg) {
+function applyProxyEnv(cfg, env = process.env) {
   const p = cfg && cfg.proxy
   if (!p) return
-  const set = (k, v) => { if (v && !process.env[k]) process.env[k] = v }
+  const set = (k, v) => { if (v && !env[k]) env[k] = v }
   const https = p.https || p.http
   set('HTTP_PROXY', p.http); set('http_proxy', p.http)
   set('HTTPS_PROXY', https); set('https_proxy', https)

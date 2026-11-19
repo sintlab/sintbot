@@ -74,6 +74,9 @@ async function discoverWecomGroup({ botId, secret, signal, inboxDir, onNotice = 
 }
 
 // The reply that tells the person in WeCom the binding worked.
-const confirmReply = projectName => `已连接项目 ${projectName}，可以直接发任务。`
+// In a group only an @mention reaches the bot, so it says so there.
+const confirmReply = (projectName, chatType = 'single') => chatType === 'group'
+  ? `已连接项目 ${projectName}，在群里 @我 发任务。`
+  : `已连接项目 ${projectName}，可以直接发任务。`
 
 module.exports = { discoverWecomGroup, boundConversation, confirmReply, WECOM_GROUP_WAIT_MS, GROUP_NOTICE }

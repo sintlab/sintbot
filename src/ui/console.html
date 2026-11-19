@@ -591,7 +591,7 @@ label.f{display:block;font-size:12px;line-height:18px;font-weight:500;color:var(
 /* 卡内分区小标题(凭证 / 身份 / 访问地址) */
 .fx-sub{font-size:12px;line-height:18px;font-weight:600;color:var(--dim);margin:16px 0 8px;display:flex;align-items:center;gap:10px}
 /* 设置 → 添加企业微信:扫码二维码与手动折叠区 */
-.sa-step{display:flex;gap:10px;align-items:flex-start;margin-top:14px}.sa-num{flex:none;width:22px;height:22px;border-radius:50%;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:var(--muted)}.sa-body{flex:1;min-width:0}.sa-title{font-weight:600;font-size:13px;line-height:22px}.sa-body .hint{margin:2px 0 0}.sa-body input{flex:1;min-width:0}.sa-note:empty{display:none}.sa-note.bad{color:var(--fail)}
+.sa-step{display:flex;gap:10px;align-items:flex-start;margin-top:14px}.sa-num{flex:none;width:22px;height:22px;border-radius:50%;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:var(--muted)}.sa-body{flex:1;min-width:0}.sa-title{font-weight:600;font-size:13px;line-height:22px}.sa-body .hint{margin:2px 0 0}.sa-body input{flex:1;min-width:0}.sa-note:empty{display:none}.sa-note.bad{color:var(--fail)}.sa-check{display:flex;gap:8px;align-items:flex-start;font-size:12px;color:var(--dim);margin-top:8px;cursor:pointer}.sa-check input{margin-top:2px}#saNet:empty,#saNetHint:empty{display:none}
 .wa-actions{flex-wrap:wrap;gap:8px;margin-bottom:8px}.wa-qr{display:flex;justify-content:flex-start;margin:12px 0 4px}.wa-qr svg{display:block;width:min(200px,100%);height:auto;aspect-ratio:1;background:#fff;border:8px solid #fff;border-radius:8px;shape-rendering:crispEdges}#wecomAttachCard .hint{overflow-wrap:anywhere}.wa-off{display:none!important}
 .fx-sub::after{content:"";flex:1;height:1px;background:var(--line)}
 /* 预检结果清单 */
@@ -2177,7 +2177,7 @@ function openProviderModal(name,opts){
     reEnhance(sel);updateCustom();updateRE();
   })();
   $('#amCancel').onclick=closeModal;
-  if(isCodex){loadCodexCli();$('#cxVerify').onclick=async()=>{const cb=$('#cxVerify');cb.disabled=true;const old=cb.innerHTML;cb.innerHTML='<span class="spin"></span>验证中';
+  if(isCodex){loadCodexCli(edit?name:'');$('#cxVerify').onclick=async()=>{const cb=$('#cxVerify');cb.disabled=true;const old=cb.innerHTML;cb.innerHTML='<span class="spin"></span>验证中';
     try{const r=await api('/api/codex/verify','POST',{});const lg=r.login||{},usageText=fmtUsage(r.usage);codexStatus[cxKey]={loggedIn:lg.loggedIn,mode:lg.mode,dead:lg.dead,verified:lg.verified,text:lg.text,usageText,envWarnings:cxEnvWarn(r,cxKey)};
       if($('#cxStatus'))$('#cxStatus').innerHTML=cxStatusHtml(cxKey);
       toast(lg.loggedIn?('Codex 订阅 ✓'+(usageText?' · '+usageText:(r.usage===null?'(额度取用失败:app-server?)':''))):(lg.dead?'登录态已失效 — 机器上重新跑 codex login':'未登录 — 机器上跑 codex login'),lg.loggedIn?'ok':'err');
@@ -3025,6 +3025,16 @@ function renderGroups(){
     // 群属于哪个平台(服务端按配置 / id 形态算好):企微群没有画布、没有解散、基础技能文案不同;徽标只在配了企微 / Slack 时出(只配飞书的机器零变化)
     const isWe=g.platform==='wecom', isSl=g.platform==='slack', showPlat=!!(S.platforms&&(S.platforms.wecom||S.platforms.slack));
     const platTag=showPlat?`<span class="tag tan" title="${isWe?'企业微信群:只收 @ 机器人的消息;没有画布、表情回应与撤回即停':isSl?'Slack 频道:没有画布与表情回应,群内收发文件未接;控制面用 !命令 或 /sint':'飞书群'}">${isWe?'企业微信':isSl?'Slack':'飞书'}</span>`:'';
+    // 群内提示语言(groups[].lang,见 src/chatlang.js):SintBot 自己说的话(提示、命令回复)用中文还是英文,不管模型的回答。
+    // 没设时按平台:Slack 会话是英文,其余是中文;g.lang 是服务端算好的实际语言。
+    // ⚠ 这一版只给 Slack 会话画这一行:飞书 / 企业微信 / 本机对话的适配层自己发的那些话还没有英文,
+    //   开了只会半中半英。接口本身不分平台;旧服务没放行这个接口时(rtOff)同样不画。
+    // 两个选项各用本语言的名字,不进翻译词典。
+    const langRow=isSl&&!rtOff('/api/groups/lang')?`    <div class="kv" style="align-items:flex-start"><span class="kk">群内提示语言</span><span class="vv" style="min-width:0">
+      <select class="glang" data-g="${esc(g.chatId)}" aria-label="群内提示语言" style="width:auto;min-width:120px"><option value="zh"${g.lang==='en'?'':' selected'}>中文</option><option value="en"${g.lang==='en'?' selected':''}>English</option></select>
+      <div class="faint" style="font-size:11px;margin-top:4px;white-space:normal;line-height:1.5">只改 SintBot 自己的提示和命令回复用哪种语言，不影响模型的回答；下一条消息起生效。</div>
+    </span></div>
+`:'';
     // 权限模型两后端统一为二态:受限(unset ⇒ dontAsk / read-only,fail-closed)⇄ 完全访问
     // (bypassPermissions / danger-full-access)。只认本群自身的值(无全局默认)。
     const isBypass=g.permissionMode==='bypassPermissions'
@@ -3253,7 +3263,7 @@ ${rtOff('/api/groups/preview')?'':`    <div class="kv"><span class="kk">预览</
       </label>
       ${rt?'':`<span class="faint" style="font-size:11px">${g.redactPii===false?'当前:明文':'当前:遮盖'}</span>`}
     </span></div>
-    ${permPlug}
+${langRow}    ${permPlug}
       </div>
     ${rt?`<div class="gids"><span>${esc(g.chatId)}</span><span>${esc(g.workdir)}</span></div>`:''}
     ${rtOff('/api/groups','DELETE')?'':`<div class="acts">
@@ -3292,6 +3302,11 @@ ${rtOff('/api/groups/preview')?'':`    <div class="kv"><span class="kk">预览</
       {c.checked=false;return;}
     try{S=await api('/api/groups/redact','POST',{chatId:c.dataset.g,showPii:on});renderGroups();toast(S.runtimeCapabilities?(on?'已设为明文 · 下轮生效':'已恢复遮盖 · 下轮生效'):(on?'已设为明文 · 群内已通知':'已恢复遮盖 · 群内已通知'),'ok');}
     catch(e){c.checked=!on;toast(e.message,'err');}});
+  // 群内提示语言:只换 SintBot 自己的话,不动会话,不用等群空闲;群里不发通知。失败就按服务端现状重画。
+  $$('#groups .glang').forEach(sel=>sel.onchange=async()=>{
+    const lang=sel.value==='en'?'en':'zh';
+    try{S=await api('/api/groups/lang','POST',{chatId:sel.dataset.g,lang});renderGroups();toast(lang==='en'?'群内提示语言已改为 English，下一条消息起生效':'群内提示语言已改为中文，下一条消息起生效','ok');}
+    catch(e){toast(e.message,'err');renderGroups();}});
   $$('#groups [data-gpause]').forEach(b=>b.onclick=async()=>{
     const on=b.dataset.p!=='1';
     if(on&&!await askConfirm(S.runtimeCapabilities?'暂停本群?只有任务结束且记录全部结账后才能暂停；暂停期间不处理新消息，配置和会话保留。':'暂停本群?\n期间消息不处理(静默丢弃)、排队清空、定时任务与画布播报停发;进行中的任务会跑完。\n完全可逆:配置/会话/画布全保留,点「恢复」即原样回来。'))return;
@@ -3666,7 +3681,7 @@ async function openBind(){
   $('#mSave').onclick=async()=>{const chatId=$('#mChat').value.trim(),workdir=$('#mWd').value.trim(),provider=$('#mProv').value;
     if(!chatId||!workdir){toast('chatId 与 workdir 必填','err');return;}
     try{const r=await api('/api/groups','POST',{chatId,workdir,provider,name:pickedName,platform:plat});S=r;
-      const isEdit=boundIds.has(chatId);toast(isEdit?'已保存群项目配置':(r.notified?'已创建群项目,并已在群里发送使用指引':r.noticeQueued?'已创建群项目,使用指引已交给守护进程发往群里':'已创建群项目'),'ok');closeModal();renderAll();}catch(e){toast(e.message,'err');}};
+      const isEdit=boundIds.has(chatId);if(!isEdit&&r.slackInvite)toast('已创建群项目，但机器人还不在这个频道里，使用指引发不出去（私有频道会显示为找不到频道）。先在 Slack 的这个频道里发 /invite @机器人名 把它请进来，再 @它 派单。','err');else if(!isEdit&&r.slackDirect)toast('已创建群项目，但机器人看不到这个私聊，使用指引发不出去。只能绑定和机器人本身的私聊：在 Slack 里打开机器人、给它发一句话，再绑定那个私聊。','err');else toast(isEdit?'已保存群项目配置':(r.notified?'已创建群项目,并已在群里发送使用指引':r.noticeQueued?'已创建群项目,使用指引已交给守护进程发往群里':'已创建群项目'),'ok');closeModal();renderAll();}catch(e){toast(e.message,'err');}};
 }
 // Directory tree picker: browse one level at a time, choose a dir to
 // feed back into the workdir field. onPick(path|null) called on confirm/cancel.
@@ -4197,8 +4212,7 @@ function renderSettings(){
     ${netCard}
     <div class="card"><div class="lbl">运行限制</div>
       <div class="inline" style="align-items:flex-start">
-        <div class="field" style="flex:1;margin-bottom:0"><label class="f">并发上限</label><input id="aConc" type="number" min="0" value="${a.maxConcurrent}"/>
-          <div class="hint" style="margin-top:5px">同时运行的群任务数 · 0 = 不限</div></div>
+        ${concCapField(a.maxConcurrent,!!S.runtimeCapabilities)}
         <div class="field" style="flex:1;margin-bottom:0"><label class="f">单轮超时(分)</label><input id="aWall" type="number" min="0" value="${a.maxTurnTimeMins}"/>
           <div class="hint" style="margin-top:5px">单轮超此即中止 · 0 = 关</div></div>
         <div class="field" style="flex:1;margin-bottom:0"><label class="f">回执等待(秒)</label><input id="aAck" type="number" min="0" value="${(a.ackDelayMs??25000)/1000}"/>
@@ -4479,7 +4493,22 @@ function bindWecomAttachCard(){
 /* 设置 → 添加 Slack:Slack 没有扫码建应用,所以是三步 —— 用预填清单的链接建应用、粘贴应用级令牌、安装后粘贴 Bot Token,
    然后在 Slack 里给机器人发一句话绑定项目。两枚令牌先在服务端逐枚验证(结论和文案出自内置核心),接入任务在服务端跑,
    页面只轮询状态;令牌提交后立刻从输入框清掉,任何响应里都不回传。 */
-const SA={job:null,polling:false,loaded:false,app:null,create:null};
+const SA={job:null,polling:false,loaded:false,app:null,create:null,proxy:null};
+// Slack not reached at all (timeout, DNS, refused): say what to do about a proxy. The service checks
+// through its own route, so a proxy it lacks needs a restart with one; the attach cannot add it live.
+function saNetHint(){return SA.proxy&&SA.proxy.service?'没有连上 Slack。服务正经代理连接，请确认代理软件在运行、地址和端口没有变。':'没有连上 Slack。这台 Mac 要经代理访问 Slack 时，服务也要带着代理启动：按 Slack 接入指南「排查」一节设置代理，重启服务后再来添加。';}
+// The proxy line under the steps. `service` is the route the running service really takes (a terminal's
+// proxy wins over the saved one); `saved` is the configuration's. When the service got its proxy from
+// the terminal it was started in and nothing is saved, offer to save it (a later start by the system or
+// the desktop app would go without it), and say plainly that it is the whole service's proxy.
+const SA_PROXY_SCOPE='它会保存为 SintBot 服务的网络代理，不只用于 Slack：其他聊天平台和这台 Mac 上的模型工具也经它访问网络（飞书、企业微信和本机地址直连），服务以后由系统或桌面 App 启动时同样使用。';
+function saNetPaint(){const box=$('#saNet');if(!box)return;const px=SA.proxy;const mono=v=>`<span class="mono" data-i18n-skip>${esc(v)}</span>`;
+ if(!px||(!px.service&&!px.saved)){box.innerHTML='';return;}
+ if(px.offer){box.innerHTML=`<label class="sa-check" style="margin:0"><input type="checkbox" id="saSaveProxy"${SA.saveProxy===false?'':' checked'}><span><span>把服务正在用的代理一起保存：</span>${mono(px.service)}</span></label><p class="hint" style="margin:4px 0 0 22px">${SA_PROXY_SCOPE}</p>`;
+  $('#saSaveProxy').onchange=e=>{SA.saveProxy=e.target.checked;};return;}
+ if(px.same){box.innerHTML=`<p class="hint" style="margin:0"><span>服务经配置里保存的代理连接 Slack：</span>${mono(px.service)}</p>`;return;}
+ if(px.service){box.innerHTML=`<p class="hint" style="margin:0"><span>服务现在经启动它的终端里设置的代理连接 Slack：</span>${mono(px.service)}<span>；配置里保存的是</span>${mono(px.saved)}<span>，服务由系统或桌面 App 启动时才用它。</span></p>`;return;}
+ box.innerHTML=`<p class="hint" style="margin:0"><span>配置里保存的代理</span>${mono(px.saved)}<span>服务现在用不上（只支持 http:// 代理），连接 Slack 时直连。</span></p>`;}
 function slackConnText(c){
   if(!c)return '服务还没有连接 Slack';
   const bits=[connDetail(c)];
@@ -4520,7 +4549,8 @@ function fxSlackAttachCard(){
   <div class="field"><label for="saProvider">执行器</label><select id="saProvider">${provs.map(({name})=>`<option value="${esc(name)}"${name===S.defaultProvider?' selected':''}>${esc(name)}</option>`).join('')}</select>${provs.length?'':'<div class="hint" style="margin-top:5px">没有可用的执行器：先在「模型 · 库」里登录 Codex 或 Claude Code。</div>'}</div>
   <div class="sa-step"><div class="sa-num">1</div><div class="sa-body"><div class="sa-title">创建 Slack 应用</div>
    <p class="hint">权限和事件已经填好。在打开的页面里选择工作区，点 Next，再点 Create。</p>
-   <div class="feishu-actions" style="margin:8px 0 0"><input id="saName" value="SintBot" maxlength="35" aria-label="应用名称" spellcheck="false" autocomplete="off" style="max-width:180px"><button class="btn primary" id="saCreate">在 Slack 创建应用 ${IC.ext}</button></div></div></div>
+   <div class="feishu-actions" style="margin:8px 0 0"><input id="saName" value="SintBot" maxlength="35" aria-label="应用名称" spellcheck="false" autocomplete="off" style="max-width:180px"><button class="btn primary" id="saCreate">在 Slack 创建应用 ${IC.ext}</button></div>
+   <label class="sa-check"><input type="checkbox" id="saAgent"><span>声明为 Slack Agent（显示原生“Working…”状态；不可撤销：工作区访客不能使用，私信都会变成线程）</span></label></div></div>
   <div class="sa-step"><div class="sa-num">2</div><div class="sa-body"><div class="sa-title">粘贴应用级令牌</div>
    <p class="hint">创建后停在 Basic Information 页：往下找到 App-Level Tokens，点 Generate Token and Scopes，权限选 connections:write，生成后复制 xapp- 开头的令牌。</p>
    <div class="feishu-actions" style="margin:8px 0 0"><input id="saAppToken" type="password" placeholder="xapp-…" aria-label="应用级令牌" autocomplete="off" spellcheck="false"><button class="btn" id="saCheckApp">验证</button></div>
@@ -4528,15 +4558,18 @@ function fxSlackAttachCard(){
   <div class="sa-step"><div class="sa-num">3</div><div class="sa-body"><div class="sa-title">安装并粘贴 Bot Token</div>
    <p class="hint">打开安装页，点 Install to 加工作区名的按钮，再点 Allow；然后复制 Bot User OAuth Token（xoxb- 开头）。</p>
    <div class="feishu-actions" style="margin:8px 0 0"><a class="btn" id="saInstall" href="https://api.slack.com/apps" target="_blank" rel="noopener">打开安装页 ${IC.ext}</a><input id="saBotToken" type="password" placeholder="xoxb-…" aria-label="Bot Token" autocomplete="off" spellcheck="false"></div></div></div>
+  <div id="saNet" style="margin-top:12px"></div>
   <div class="feishu-actions"><button class="btn primary" id="saStart">连接并绑定项目</button><button class="btn wa-off" id="saCancel">取消接入</button><a class="btn wa-off" id="saOpen" href="https://slack.com/" target="_blank" rel="noopener">在 Slack 里打开机器人 ${IC.ext}</a>${guide('查看 Slack 接入指南',false)}</div>
   <p class="hint" id="saStatus" role="status" aria-live="polite" style="margin-top:8px">连接后在 Slack 里给机器人发一句话（私聊，或在已邀请它的频道里 @它）即可完成接入。令牌只保存在这台 Mac。</p>
+  <p class="hint sa-note bad" id="saNetHint"></p>
  </div>`;
 }
 function saPaint(){
  const card=$('#slackAttachCard');if(!card)return;const j=SA.job,running=!!(j&&j.phase==='running');
  if(j&&j.notice)$('#saStatus').textContent=j.notice;
+ if(j&&j.phase==='failed')$('#saNetHint').textContent=j.network?saNetHint():'';else if(running)$('#saNetHint').textContent='';
  $('#saCancel').classList.toggle('wa-off',!running);$('#saStart').disabled=running;$('#saCheckApp').disabled=running;$('#saCreate').disabled=running;
- for(const id of ['saWorkdir','saProvider','saBrowse','saName','saAppToken','saBotToken'])if($('#'+id))$('#'+id).disabled=running;
+ for(const id of ['saWorkdir','saProvider','saBrowse','saName','saAgent','saAppToken','saBotToken','saSaveProxy'])if($('#'+id))$('#'+id).disabled=running;
  const open=$('#saOpen'),link=running&&j.open&&j.open.web;open.classList.toggle('wa-off',!link);if(link)open.href=j.open.web;
  if(SA.app&&SA.app.links)$('#saInstall').href=SA.app.links.install;
  const pill=$('#saPill');if(pill)pill.outerHTML=saStatusPill();
@@ -4555,14 +4588,14 @@ function bindSlackAttachCard(){
  $('#saCancel').onclick=async()=>{try{await api('/api/slack/attach/cancel','POST',{});}catch(e){toast(e.message,'err')}};
  // 建应用的链接由核心生成(清单的权限与事件在核心里)。先同步打开一个窗口再填地址:等接口返回后再开会被浏览器当成弹窗拦掉。
  $('#saCreate').onclick=async()=>{const w=window.open('about:blank','_blank');
-  try{const r=await api('/api/slack/manifest?name='+encodeURIComponent($('#saName').value.trim()));
+  try{const r=await api('/api/slack/manifest?name='+encodeURIComponent($('#saName').value.trim())+($('#saAgent').checked?'&agentView=1':''));
    if(w)w.location.href=r.createUrl;else location.href=r.createUrl;
    say('saAppNote',r.hint,false);}
   catch(e){if(w)w.close();say('saAppNote',e.message,true);}};
  const checkApp=async()=>{const appToken=$('#saAppToken').value.trim();
   if(!appToken){say('saAppNote','请先粘贴应用级令牌',true);$('#saAppToken').focus();return null;}
   $('#saCheckApp').disabled=true;
-  try{const r=await api('/api/slack/verify','POST',{appToken});say('saAppNote',r.notice,!r.ok);
+  try{const r=await api('/api/slack/verify','POST',{appToken});say('saAppNote',r.notice,!r.ok);$('#saNetHint').textContent=r.network?saNetHint():'';
    SA.app=r.ok?{appId:r.appId,links:r.links}:null;if(r.ok&&r.links)$('#saInstall').href=r.links.install;return r.ok?r:null;}
   catch(e){say('saAppNote',e.message,true);return null;}
   finally{$('#saCheckApp').disabled=false;}};
@@ -4575,9 +4608,11 @@ function bindSlackAttachCard(){
   const appToken=$('#saAppToken').value.trim(),botToken=$('#saBotToken').value.trim();
   if(!appToken||!botToken){$('#saStatus').textContent='请先粘贴应用级令牌和 Bot Token';(appToken?$('#saBotToken'):$('#saAppToken')).focus();return;}
   $('#saAppToken').value='';$('#saBotToken').value='';
-  (async()=>{try{SA.job=await api('/api/slack/attach','POST',{workdir,provider,appToken,botToken});saPaint();void saPoll();}
+  const saveProxy=!!($('#saSaveProxy')&&$('#saSaveProxy').checked);
+  (async()=>{try{SA.job=await api('/api/slack/attach','POST',{workdir,provider,appToken,botToken,saveProxy});saPaint();void saPoll();}
    catch(e){$('#saStatus').textContent=e.message;}})();};
  if(!SA.loaded){SA.loaded=true;api('/api/slack/attach').then(j=>{if(j&&j.phase==='running'){SA.job=j;saPaint();void saPoll();}}).catch(()=>{});}
+ if(SA.proxy)saNetPaint();else api('/api/slack/proxy').then(px=>{SA.proxy=px||null;saNetPaint();}).catch(()=>{});
  saPaint();
 }
 function fxWecomCard(we){
@@ -4999,7 +5034,9 @@ function updateDaemon(){const live=S.live||{};const on=!!live.running;$('#dLed')
 // 飞书 WS 连接健康度 —— 与 server.js connHealthStatus/connHealthDetail 同口径(SSE 无重放,
 // 心跳带 conn 兜底)。connected=绿 · connecting/reconnecting=黄(自愈中)· 其它=红。
 function connStatus(c){if(!c)return 'warn';if(c.state==='connected')return 'ok';if(c.state==='connecting'||c.state==='reconnecting')return 'warn';return 'fail';}
-function connDetail(c){if(!c)return '';const label={connected:'已连接',connecting:'连接中',reconnecting:'重连中',failed:'连接失败',stopped:'已停止'}[c.state]||c.state;const bits=[label];if(c.reconnects)bits.push('重连 '+c.reconnects);if(c.rebuilds)bits.push('重建 '+c.rebuilds);if(c.state!=='connected'&&c.lastError)bits.push(String(c.lastError).slice(0,60));return bits.join(' · ');}
+function connDetail(c){if(!c)return '';const label={connected:'已连接',connecting:'连接中',reconnecting:'重连中',failed:'连接失败',stopped:'已停止'}[c.state]||c.state;const bits=[label];if(c.reconnects)bits.push('重连 '+c.reconnects);if(c.rebuilds)bits.push('重建 '+c.rebuilds);if(c.state!=='connected'&&c.lastError)bits.push(String(c.lastError).slice(0,60));if(c.state==='connected'&&c.warning)bits.push(String(c.warning).slice(0,60));return bits.join(' · ');}
+// 概览健康行的颜色:连着但带 warning(Slack 同一应用另有连接、消息会被分走)标黄;平台卡的「已连接」药丸仍按 connStatus
+function connRowStatus(c){const st=connStatus(c);return st==='ok'&&c&&c.warning?'warn':st;}
 // 在概览「健康」卡里就地更新各平台连接行(免整卡重渲染)。S.conn 是按平台名的字典 {feishu,wecom}(双平台并存,
 // 服务端 connHealthRows 同口径;旧形状的单个快照按飞书算)。行的出现/消失(daemon 起停)= 少见,才回退整卡
 // renderOverview;稳态只补 dot/文案 + 顶部汇总 pill。
@@ -5017,7 +5054,7 @@ function updateConnLive(){
     const c=d[k]; const row=document.querySelector('#ovHrows .hrow[data-hk="'+label+'"]');
     if((c&&!row)||(!c&&row)){renderOverview();return;} // 连接行出现/消失 → 整卡重画
     if(!c||!row)continue;
-    const st=connStatus(c),dt=connDetail(c);
+    const st=connRowStatus(c),dt=connDetail(c);
     row.querySelector('.dot').className='dot '+st;
     const v=row.querySelector('.v'); v.textContent=dt; v.title=dt;
     // 同步 S.health.rows + 汇总 pill,使就地补丁与整卡重渲染口径一致
@@ -5160,6 +5197,25 @@ const I18N_EN=[
   ["这里只列出机器人已加入的频道。先在 Slack 的目标频道里发 /invite @机器人名，再刷新。", "Only channels the bot has joined are listed. In the Slack channel you want, send /invite @your-bot-name, then refresh."],
   ["应用缺少列出频道的权限（channels:read / groups:read），补上后需重新安装", "The app lacks the scopes to list channels (channels:read / groups:read). Add them and reinstall."],
   ["读取 Slack 频道失败，请检查网络或代理后重试", "Could not read Slack channels. Check your network or proxy and retry."],
+  ["声明为 Slack Agent（显示原生“Working…”状态；不可撤销：工作区访客不能使用，私信都会变成线程）", "Declare it as a Slack Agent (shows Slack’s own “Working…” status; cannot be undone: workspace guests cannot use the app, and every direct message becomes a thread)"],
+  ["服务经配置里保存的代理连接 Slack：", "The service reaches Slack through the proxy saved in the configuration:"],
+  ["服务现在经启动它的终端里设置的代理连接 Slack：", "The service now reaches Slack through the proxy set in the terminal that started it:"],
+  ["；配置里保存的是", "; the configuration has"],
+  ["，服务由系统或桌面 App 启动时才用它。", ", which the service uses when the system or the desktop app starts it."],
+  ["配置里保存的代理", "The proxy saved in the configuration"],
+  ["服务现在用不上（只支持 http:// 代理），连接 Slack 时直连。", "cannot be used by the service (only http:// proxies work), so it reaches Slack directly."],
+  ["把服务正在用的代理一起保存：", "Also save the proxy the service is using now:"],
+  ["它会保存为 SintBot 服务的网络代理，不只用于 Slack：其他聊天平台和这台 Mac 上的模型工具也经它访问网络（飞书、企业微信和本机地址直连），服务以后由系统或桌面 App 启动时同样使用。", "It is saved as the SintBot service’s network proxy, not only for Slack: other chat platforms and the model tools on this Mac also reach the network through it (Feishu, WeCom and local addresses go direct), including when the system or the desktop app starts the service later."],
+  ["没有连上 Slack。服务正经代理连接，请确认代理软件在运行、地址和端口没有变。", "Slack could not be reached. The service connects through a proxy: check that the proxy app is running and its address and port have not changed."],
+  ["没有连上 Slack。这台 Mac 要经代理访问 Slack 时，服务也要带着代理启动：按 Slack 接入指南「排查」一节设置代理，重启服务后再来添加。", "Slack could not be reached. If this Mac needs a proxy to reach Slack, the service must be started with one: set the proxy as described under Troubleshooting in the Slack setup guide, restart the service, then add Slack again."],
+  ["已创建群项目，但机器人看不到这个私聊，使用指引发不出去。只能绑定和机器人本身的私聊：在 Slack 里打开机器人、给它发一句话，再绑定那个私聊。", "Group project created, but the bot cannot see this direct message, so the usage guide could not be posted. Only a direct message with the bot itself can be bound: open the bot in Slack, send it a message, then bind that conversation."],
+  ["群里那行「【管理员】…」没能确认发出(失败或超时),插话未执行;即使群里随后出现这行,它也不会被处理。Slack 私聊里发不出时，先确认这是和机器人本身的私聊", "The “[Admin] …” line could not be confirmed in the group (failed or timed out), so nothing was injected. Even if the line shows up later, it will not be processed. When nothing can be posted in a Slack direct message, first check that it is a conversation with the bot itself."],
+  ["代理地址里的 *** 只代表原来那个代理的用户名和密码；换了代理地址，请重新填写用户名和密码。", "The *** in the proxy address stands only for the saved proxy’s user name and password. For a different proxy address, enter its user name and password again."],
+  ["已创建群项目，但机器人还不在这个频道里，使用指引发不出去（私有频道会显示为找不到频道）。先在 Slack 的这个频道里发 /invite @机器人名 把它请进来，再 @它 派单。", "Group project created, but the bot is not in this channel yet, so the usage guide could not be posted (a private channel shows as not found). In that Slack channel, send /invite @your-bot-name first, then @mention it with a task."],
+  ["群里那行「【管理员】…」没能确认发出(失败或超时),插话未执行;即使群里随后出现这行,它也不会被处理", "The “[Admin] …” line could not be confirmed in the group (failed or timed out), so nothing was injected. Even if the line shows up later, it will not be processed."],
+  ["群里那行「【管理员】…」没能确认发出(失败或超时),插话未执行;即使群里随后出现这行,它也不会被处理。Slack 频道里发不出时，先确认机器人已在这个频道里：没有的话在频道里发 /invite @机器人名", "The “[Admin] …” line could not be confirmed in the group (failed or timed out), so nothing was injected. Even if the line shows up later, it will not be processed. When nothing can be posted in a Slack channel, first check that the bot is in it; if not, send /invite @your-bot-name in that channel."],
+  ["代理地址要以 http:// 开头，例如 http://127.0.0.1:7890", "The proxy address must start with http://, for example http://127.0.0.1:7890."],
+  ["代理例外列表格式无效", "The proxy exception list is not valid."],
   ["添加企业微信", "Add WeCom"],
   ["机器人名称", "Bot name"],
   ["企业微信智能机器人", "WeCom smart bot"],
@@ -5682,6 +5738,8 @@ const I18N_EN=[
   ["这台机器的 Codex 不是用 npm 全局安装的，需要在机器上手动升级","Codex on this machine was not installed globally with npm; upgrade it on the machine by hand"],
   ["没查到最新版本，请检查网络后再试","The latest version could not be looked up; check the network and try again"],
   ["已经有一次升级在进行","An upgrade is already in progress"],
+  ["这张模型卡用的是另外指定的 Codex 程序，需要在机器上手动升级","This model card uses a separately configured Codex program; upgrade it on the machine by hand"],
+  ["没找到这张模型卡指定的 Codex 程序","The Codex program this model card points to was not found"],
   ["读的是这台机器","Reads the result of"],
   ["的结果(不联网计费、不占订阅额度)。没登录就在这台机器上跑一次","on this machine (no network billing, no subscription quota used). If not signed in, run once on this machine:"],
   ["。",". "],
@@ -6027,6 +6085,10 @@ const I18N_EN=[
   ["常驻 = 该群的原型预览不再按闲置(默认 30 分钟)或时长(默认 8 小时)自动停止,直到有人手动停。\n这是「让群成员随时都能打开」的正规入口 —— 由你决定,agent 不能自己开。\n代价:那个目录会一直挂在局域网上,请用完及时停。","Keep alive = this group's prototype preview no longer stops automatically after idle time (default 30 min) or duration (default 8 h) until someone stops it by hand.\nThis is the proper way to \"let group members open it any time\" — your call; the agent cannot turn it on by itself.\nCost: that folder stays exposed on the LAN, so stop it when done."],
   ["常驻(不自动停)","Keep alive (no auto-stop)"],
   ["数据输出","Data output"],
+  ["群内提示语言","Notice language"],
+  ["只改 SintBot 自己的提示和命令回复用哪种语言，不影响模型的回答；下一条消息起生效。","Sets the language of SintBot's own notices and command replies, not the model's answers. Applies from the next message."],
+  ["群内提示语言已改为 English，下一条消息起生效","Notice language set to English. Applies from the next message."],
+  ["群内提示语言已改为中文，下一条消息起生效","Notice language set to Chinese. Applies from the next message."],
   ["明文 = 该群回复里的手机号/邮箱原样显示,不再遮盖。\n适用于成员数据本来就是查询内容的内部业务群 —— 由你决定,助手不能自己开。\n密钥类信息(token / key / 私钥)没有开关,任何群都会自动遮盖。","Plain text = phone numbers and emails in this group's replies are shown as is, no longer masked.\nFor internal business groups where member data is the subject of queries — your call; the assistant cannot turn it on by itself.\nSecrets (tokens / keys / private keys) have no switch and are always masked in every group."],
   ["明文(手机号/邮箱不遮盖)","Plain text (phone numbers/emails unmasked)"],
   ["当前:明文","Current: plain text"],
@@ -6295,6 +6357,9 @@ const I18N_EN=[
   ["运行限制","Run limits"],
   ["并发上限","Max concurrent"],
   ["同时运行的群任务数 · 0 = 不限","How many group tasks run at once · 0 = unlimited"],
+  ["同时运行的群任务数 · 1–32 · 在配置文件里改，重启服务后生效","How many group tasks run at once · 1–32 · change it in the configuration file; it takes effect after a service restart"],
+  ["并发上限须为 1–32 之间的整数","Max concurrent must be an integer from 1 to 32"],
+  ["服务运行中不能改并发上限：请在配置文件里改 agent.maxConcurrent（1–32），然后重启服务","Max concurrent cannot be changed while the service is running: set agent.maxConcurrent (1–32) in the configuration file, then restart the service"],
   ["单轮超时(分)","Turn timeout (min)"],
   ["单轮超此即中止 · 0 = 关","A turn is aborted past this · 0 = off"],
   ["回执等待(秒)","Acknowledgement wait (s)"],
@@ -6493,6 +6558,7 @@ const I18N_EN=[
   ["保存 Slack","Save Slack"],
   ["收 / 发消息权限靠长连接,预检不单独验 —— 绑定群后在群里发一条消息实测即可。","Send / receive message permissions ride on the long connection and are not checked separately — bind a group and send a message there to test it."],
   ["已连接","Connected"],
+  ["可能有另一台机器在用同一个 Slack 应用，消息会被分走","Another machine may be using the same Slack app, so messages are split between them"],
   ["连接中","Connecting"],
   ["重连中","Reconnecting"],
   ["连接失败","Connection failed"],
@@ -6669,8 +6735,8 @@ const I18N_EN_RX=[
   // Slack 接入:带动态内容的提示(核心给出的令牌结论、连接状态)
   [/^最近事件 (\d+) 秒前$/,"Last event $1 s ago"],
   [/^最近事件 (\d+) 分钟前$/,"Last event $1 min ago"],
-  [/^请粘贴(应用级令牌|Bot Token)（x(?:app|oxb)- 开头），在应用设置的 (.+)。$/,(m,kind,place)=>"Paste the "+(kind==='Bot Token'?'bot token (starts with xoxb-)':'app-level token (starts with xapp-)')+". It is under "+place+" in the app settings."],
-  [/^这里要填(应用级令牌|Bot Token)（x(?:app|oxb)- 开头），你贴的是\s?(.+)。它在应用设置的 (.+)。$/,(m,kind,pasted,place)=>"This field takes the "+(kind==='Bot Token'?'bot token (starts with xoxb-)':'app-level token (starts with xapp-)')+". You pasted "+(/^应用级令牌/.test(pasted)?'the app-level token (starts with xapp-), so the two fields are swapped':/^Bot Token/.test(pasted)?'the bot token (starts with xoxb-), so the two fields are swapped':/^用户令牌/.test(pasted)?'a user token (starts with xoxp-)':/^配置令牌/.test(pasted)?'a configuration token (starts with xoxe; it manages apps and cannot send or receive messages)':/^开了令牌轮换/.test(pasted)?'a rotating token (starts with xoxe.). SintBot needs a token without rotation; create a new app from the link on this page':'something else')+". It is under "+place+" in the app settings."],
+  [/^请粘贴\s?(应用级令牌|Bot Token)（x(?:app|oxb)- 开头），在应用设置的 (.+)。$/,(m,kind,place)=>"Paste the "+(kind==='Bot Token'?'bot token (starts with xoxb-)':'app-level token (starts with xapp-)')+". It is under "+place+" in the app settings."],
+  [/^这里要填\s?(应用级令牌|Bot Token)（x(?:app|oxb)- 开头），你贴的是\s?(.+)。它在应用设置的 (.+)。$/,(m,kind,pasted,place)=>"This field takes the "+(kind==='Bot Token'?'bot token (starts with xoxb-)':'app-level token (starts with xapp-)')+". You pasted "+(/^应用级令牌/.test(pasted)?'the app-level token (starts with xapp-), so the two fields are swapped':/^Bot Token/.test(pasted)?'the bot token (starts with xoxb-), so the two fields are swapped':/^用户令牌/.test(pasted)?'a user token (starts with xoxp-)':/^配置令牌/.test(pasted)?'a configuration token (starts with xoxe; it manages apps and cannot send or receive messages)':/^开了令牌轮换/.test(pasted)?'a rotating token (starts with xoxe.). SintBot needs a token without rotation; create a new app from the link on this page':'something else')+". It is under "+place+" in the app settings."],
   [/^连不上 Slack（(.+)）：检查网络或代理后再试一次。$/,"Could not reach Slack ($1). Check your network or proxy and try again."],
   [/^Slack 拒绝了这枚应用级令牌（(.+)）。请确认应用是用本页的链接创建的，并已开启 Socket Mode。$/,"Slack refused this app-level token ($1). Make sure the app was created from the link on this page and that Socket Mode is on."],
   [/^Slack 拒绝了这枚 Bot Token（(.+)）。$/,"Slack refused this bot token ($1)."],
@@ -7186,26 +7252,42 @@ async function refreshModelList(kind,box){
   return n;
 }
 /* 这台机器上 Codex 程序的版本：面板里一行，有新版且能升级时带「升级」按钮。可选型号是它报的，太旧就没有新型号。
-   升级会改动本机程序，先确认；做完写明从哪版到哪版，并接着重取一次可选型号。 */
-async function loadCodexCli(){
+   升级会改动本机程序，先确认；做完写明从哪版到哪版，并接着重取一次可选型号。
+   name = 这一行所在的模型卡：卡上另外指定了程序时，服务端只报那个程序的版本，不给升级。
+   升级没成功：按钮马上回来（可以再试），失败原因留在这一行下面，再重读一次版本（装到一半也可能已经换了程序）。 */
+async function loadCodexCli(name,fail){
   const box=$('#cxCli');if(!box||!runtimeAllows('GET','/api/codex/cli'))return;
-  let r=null;try{r=await api('/api/codex/cli');}catch(e){return;}
-  if(!$('#cxCli')||!r||(!r.version&&!r.why))return;
+  let r=null;try{r=await api('/api/codex/cli'+(name?'?name='+encodeURIComponent(name):''));}catch(e){return;}
+  if($('#cxCli')!==box||!r||(!r.version&&!r.why))return;
+  drawCodexCli(box,name,r,fail);
+}
+function drawCodexCli(box,name,r,fail){
   const v=r.version?'Codex 程序 '+esc(r.version):'Codex 程序';
   const canUp=r.canUpgrade&&runtimeAllows('POST','/api/codex/cli/upgrade');
-  box.innerHTML=r.newer?`${v} · 有新版 ${esc(r.latest)}${canUp?' <button class="btn" id="cxUp" style="padding:2px 10px;font-size:12px;margin-left:6px">升级</button>':''}`
-    :`${v}${r.latest?' · 已是最新':''}${r.why?' · '+esc(r.why):''}`;
+  box.innerHTML=(r.newer?`${v} · 有新版 ${esc(r.latest)}${canUp?' <button class="btn" id="cxUp" style="padding:2px 10px;font-size:12px;margin-left:6px">升级</button>':''}`
+    :`${v}${r.latest?' · 已是最新':''}${r.why?' · '+esc(r.why):''}`)
+    +(fail?`<div id="cxUpFail" style="margin-top:4px;color:var(--fail)">${esc(fail)}</div>`:'');
   box.style.color='';box.style.display='';
   const b=$('#cxUp');if(!b)return;
   b.onclick=async()=>{
     if(!await askConfirm(`把这台机器上的 Codex 程序从 ${r.version} 升级到 ${r.latest}？\n会用安装它的 npm 重新全局安装最新版，大约一分钟。所有用 Codex 的群从下一轮起用新版；有群正在用 Codex 处理任务时不会升级。`))return;
     b.disabled=true;b.innerHTML='<span class="spin"></span>升级中';
-    try{const u=await api('/api/codex/cli/upgrade','POST',{});
+    try{const u=await api('/api/codex/cli/upgrade'+(name?'?name='+encodeURIComponent(name):''),'POST',{});
       box.textContent=u.changed?`Codex 程序已从 ${u.from} 升级到 ${u.to}。`:`Codex 程序仍是 ${u.to}，没有变化。`;box.style.color='var(--ok)';
       toast('Codex 程序已升级到 '+u.to,'ok');
       await refreshModelList('codex',$('#cxModelsNote'));
-    }catch(e){box.textContent='升级没成功：'+e.message;box.style.color='var(--fail)';}
+    }catch(e){
+      if($('#cxCli')!==box)return;
+      const why='升级没成功：'+e.message;
+      drawCodexCli(box,name,r,why);await loadCodexCli(name,why);
+    }
   };
+}
+/* 设置页「并发上限」一格。发行宿主（持久处理流程）只收 1–32，而且运行中不能改：要在配置文件里改、重启后生效，
+   所以这里把范围和改法写明，免得填了才被拒；旧守护进程收 0–64，0 = 不限。服务端 /api/agent 按同一条规则校验。 */
+function concCapField(value,durable){
+  return `<div class="field" style="flex:1;margin-bottom:0"><label class="f">并发上限</label><input id="aConc" type="number" ${durable?'min="1" max="32"':'min="0"'} value="${esc(value)}"/>
+          <div class="hint" style="margin-top:5px">${durable?'同时运行的群任务数 · 1–32 · 在配置文件里改，重启服务后生效':'同时运行的群任务数 · 0 = 不限'}</div></div>`;
 }
 const RUNTIME_DISABLED_SELECTORS='.gpv,[data-rm],[data-gcfg],[data-cronnew],[data-cronadd],[data-crontgl],[data-cronrm],[data-reposave],[data-repotest],[data-iconuse],[data-iconsys],[data-iconstyle],[data-stylecollect],#amDel,#pgSend,#pgNew,#fSave,#slSave,#wSave,#bSave,#styleNew,[data-styleedit],[data-styledup],[data-styledel],#nsSave,#nsExtract,#clSave,[data-pvstop],[data-lvkill],[data-lvkillall]';
 // 持久处理流程按服务端白名单放行:前端照同一份名单判断某个动作能不能做,而不是一刀切。

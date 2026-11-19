@@ -16,10 +16,24 @@ const T = {
   // 只给文件名不给路径、不给命令内容 —— 群面零机器路径。
   pulseDoing: (list) => `最近在做:${list.join(' · ')}`,
 }
+// 英文会话(`groups[chatId].lang = 'en'`)的同一组卡片文案;键与上面一一对应。
+const T_EN = {
+  ackWorking: '⏳ Got it, working on it…',
+  pulse: (ran, doing, stale) => (doing && doing.length ? `⏳ Running for ${ran} · ${T_EN.pulseDoing(doing)}` : `⏳ Working · running for ${ran}`) + (stale ? ` · last activity ${stale} ago` : ''),
+  pulseDoing: (list) => `recently: ${list.join(' · ')}`,
+}
+const textsFor = (lang) => (lang === 'en' ? T_EN : T)
 
 // 脉搏「已跑多久」:分钟粒度够用(卡片底部那行的耗时另算到秒)。
-function humanDur(ms) {
+function humanDur(ms, lang = 'zh') {
   const s = Math.max(0, Math.round(ms / 1000))
+  if (lang === 'en') {
+    if (s < 60) return `${s} s`
+    const mins = Math.floor(s / 60)
+    if (mins < 60) return `${mins} min`
+    const hrs = Math.floor(mins / 60)
+    return mins % 60 ? `${hrs} h ${mins % 60} min` : `${hrs} h`
+  }
   if (s < 60) return `${s} 秒`
   const m = Math.floor(s / 60)
   if (m < 60) return `${m} 分钟`
@@ -62,11 +76,30 @@ function stripMilestones(text) {
 // 「最近在做」:一次工具调用 → 一句人话。只给文件名不给路径(群面零机器路径);命令内容不给
 // (那是 agent 写的,可能带机器路径);插件按名字;认不出的返回 null,不拿框架里的工具名去凑数。
 // codex 的工具名经 codexcode 映射后与 claude 同形(Bash / Write / MCP)。
+// 英文会话(lang = 'en')同一张表的英文说法:reading a.js · running a command(/status 的 Recently 一行)。
 const baseName = (p) => String(p || '').split(/[\\/]/).filter(Boolean).pop() || ''
-function describeTool(name, input = {}) {
+function describeToolEn(n, inp, file) {
+  const withFile = (verb) => (file ? `${verb} ${file}` : `${verb} a file`)
+  const mcp = /^mcp__(.+?)__/.exec(n)
+  if (mcp) return `using plugin ${mcp[1]}`
+  switch (n) {
+    case 'Read': return withFile('reading')
+    case 'Edit': case 'MultiEdit': case 'NotebookEdit': return withFile('editing')
+    case 'Write': return withFile('writing')
+    case 'Delete': return withFile('deleting')
+    case 'Bash': return 'running a command'
+    case 'Glob': case 'Grep': case 'FileSearch': return 'searching the code'
+    case 'WebFetch': case 'WebSearch': return 'looking things up on the web'
+    case 'Task': case 'Agent': return 'running a subtask'
+    case 'MCP': return `using a plugin${inp.server ? ' ' + baseName(inp.server) : ''}`
+    default: return null
+  }
+}
+function describeTool(name, input = {}, lang = 'zh') {
   const n = String(name || '')
   const inp = input && typeof input === 'object' ? input : {}
   const file = baseName(inp.file_path || inp.path || inp.notebook_path)
+  if (lang === 'en') return describeToolEn(n, inp, file)
   const withFile = (verb) => (file ? `${verb} ${file}` : `${verb}文件`)
   const mcp = /^mcp__(.+?)__/.exec(n)
   if (mcp) return `用插件 ${mcp[1]}`
@@ -91,15 +124,25 @@ function describeTool(name, input = {}) {
 const TMP_PATH_RE = /^(?:\/private)?\/tmp\/|^\/var\/folders\/|^\$TMPDIR|^%TEMP%|\\Temp\\/i
 const unquote = (s) => String(s || '').trim().replace(/^(["'])(.*)\1$/, '$2')
 const SH_ARG = '("[^"]+"|\'[^\']+\'|[^\\s;|&<>]+)'
-function autoMilestone(name, input = {}) {
+// 给人看的字按会话语言取(lang = 'en' 是英文会话);判据只有一套。
+const MILESTONE_WORDS = {
+  zh: { wrote: '写了', edited: '改了', sentFile: '已发文件', sentFileChat: '已发文件到群', sentImage: '已发图片', sentImageChat: '已发图片到群',
+    sentNotice: '已发通知到群', sentMsg: '已发消息到群', board: '已上画布', imagen: '已提交生图', preview: '已开预览',
+    pushed: '已推送远端', committed: '已提交代码', pdf: '已出 PDF' },
+  en: { wrote: 'Wrote', edited: 'Edited', sentFile: 'Sent file', sentFileChat: 'Sent a file to the chat', sentImage: 'Sent image', sentImageChat: 'Sent an image to the chat',
+    sentNotice: 'Sent a notice to the chat', sentMsg: 'Sent a message to the chat', board: 'Added to the board', imagen: 'Requested an image', preview: 'Started a preview',
+    pushed: 'Pushed to the remote', committed: 'Committed code', pdf: 'Made PDF' },
+}
+function autoMilestone(name, input = {}, lang = 'zh') {
+  const W = lang === 'en' ? MILESTONE_WORDS.en : MILESTONE_WORDS.zh
   const n = String(name || '')
   const inp = input && typeof input === 'object' ? input : {}
   // 路径里带 shell 变量(`$OUT`)或命令替换 ⇒ 名字解不出来,只报动作不报名
   const fileMs = (verb, raw) => { const p = unquote(raw); const f = baseName(p); return f && !TMP_PATH_RE.test(p) && !/[$`]/.test(p) ? `${verb} ${f}` : null }
   const target = inp.file_path || inp.path || inp.notebook_path
   switch (n) {
-    case 'Write': return fileMs('写了', target)
-    case 'Edit': case 'MultiEdit': case 'NotebookEdit': return fileMs('改了', target)
+    case 'Write': return fileMs(W.wrote, target)
+    case 'Edit': case 'MultiEdit': case 'NotebookEdit': return fileMs(W.edited, target)
     case 'Bash': break
     default: return null
   }
@@ -107,18 +150,18 @@ function autoMilestone(name, input = {}) {
   const grab = (re) => { const m = re.exec(cmd); return m ? m[1] : '' }
   let a
   // 平台基础技能的命令名不写死(sbot feishu / sbot wecom …):里程碑只认动作名
-  if ((a = grab(new RegExp('\\bsbot\\s+[a-z]+\\s+send-file\\s+' + SH_ARG)))) return fileMs('已发文件', a) || '已发文件到群'
-  if ((a = grab(new RegExp('\\bsbot\\s+[a-z]+\\s+send-image\\s+' + SH_ARG)))) return fileMs('已发图片', a) || '已发图片到群'
-  if (/\bsbot\s+[a-z]+\s+send-notice\b/.test(cmd)) return '已发通知到群'
-  if (/\bsbot\s+[a-z]+\s+send-msg\b/.test(cmd)) return '已发消息到群'
-  if (/\bsbot\s+feishu\s+board-add-(?:image|diagram|nodes)\b/.test(cmd)) return '已上画布'
-  if (/\bsbot\s+imagen\s/.test(cmd) && /--out\b/.test(cmd)) return '已提交生图'
-  if (/\bsbot\s+preview\s+start\b/.test(cmd)) return '已开预览'
-  if (/\bgit\s+(?:-C\s+\S+\s+)?push\b/.test(cmd)) return '已推送远端'
-  if (/\bgit\s+(?:-C\s+\S+\s+)?commit\b/.test(cmd)) return '已提交代码'
-  if ((a = grab(new RegExp('--print-to-pdf=' + SH_ARG)))) return fileMs('已出 PDF', a) || '已出 PDF'
-  if (/--print-to-pdf\b/.test(cmd)) return '已出 PDF'
-  if ((a = grab(new RegExp('(?:^|[\\s;&|(])cat\\s*>{1,2}\\s*' + SH_ARG)))) return fileMs('写了', a)
+  if ((a = grab(new RegExp('\\bsbot\\s+[a-z]+\\s+send-file\\s+' + SH_ARG)))) return fileMs(W.sentFile, a) || W.sentFileChat
+  if ((a = grab(new RegExp('\\bsbot\\s+[a-z]+\\s+send-image\\s+' + SH_ARG)))) return fileMs(W.sentImage, a) || W.sentImageChat
+  if (/\bsbot\s+[a-z]+\s+send-notice\b/.test(cmd)) return W.sentNotice
+  if (/\bsbot\s+[a-z]+\s+send-msg\b/.test(cmd)) return W.sentMsg
+  if (/\bsbot\s+feishu\s+board-add-(?:image|diagram|nodes)\b/.test(cmd)) return W.board
+  if (/\bsbot\s+imagen\s/.test(cmd) && /--out\b/.test(cmd)) return W.imagen
+  if (/\bsbot\s+preview\s+start\b/.test(cmd)) return W.preview
+  if (/\bgit\s+(?:-C\s+\S+\s+)?push\b/.test(cmd)) return W.pushed
+  if (/\bgit\s+(?:-C\s+\S+\s+)?commit\b/.test(cmd)) return W.committed
+  if ((a = grab(new RegExp('--print-to-pdf=' + SH_ARG)))) return fileMs(W.pdf, a) || W.pdf
+  if (/--print-to-pdf\b/.test(cmd)) return W.pdf
+  if ((a = grab(new RegExp('(?:^|[\\s;&|(])cat\\s*>{1,2}\\s*' + SH_ARG)))) return fileMs(W.wrote, a)
   return null
 }
 // 最多留 3 条、去重、最新在最后(脉搏与 /status 共用同一个列表)。
@@ -131,5 +174,5 @@ function pushDoing(list, d) {
   return list
 }
 
-module.exports = { T, humanDur, MILESTONE_MAX, milestonesOf, renderMilestones,
+module.exports = { T, T_EN, textsFor, humanDur, MILESTONE_MAX, milestonesOf, renderMilestones,
   stripMilestones, describeTool, autoMilestone, pushDoing }

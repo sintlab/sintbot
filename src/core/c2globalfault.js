@@ -22,7 +22,7 @@ function queuedReceiptIds(snapshot) {
 }
 
 // A close ID is a journal proof only when it binds the exact current pending
-// receipt and ACKed dispatch. The Rust boolean alone is deliberately not used
+// receipt and ACKed dispatch. The built-in core's boolean alone is deliberately not used
 // as evidence. Any unrelated unconfirmed effect keeps the whole fault closed.
 function activeFaultTurns(snapshot, journal, active, supplied) {
   if (!Array.isArray(supplied) || supplied.length !== active.length ||
@@ -117,7 +117,7 @@ function commitActiveFault({ journal, snapshot, turns, assertWriterLock }) {
 }
 
 // Scoped reducer boundary for a future per-chat recovery path. It is safe to
-// call from a prepare validator: even a Rust result with a valid cursor may
+// call from a prepare validator: even a built-in core result with a valid cursor may
 // only modify the failed chat's closure lanes. No sibling queue, turn, receipt
 // or effect is authorized by a scoped failure.
 function validateScopedFaultResult(before, result, chatId, turn, eventId) {

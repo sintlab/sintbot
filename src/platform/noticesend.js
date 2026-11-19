@@ -38,8 +38,10 @@ async function deliverNotice(platform, chatId, notice, { redact, log = () => {} 
   return { mode: 'text', result }
 }
 
+// options.lang 'en' (with options.changelogEn) = the notice for an English conversation.
 async function deliverUpgradeNotice(platform, chatId, lastVersion, currentVersion, changelog, brand, options) {
-  const notice = buildUpgradeNoticeParts(lastVersion, currentVersion, changelog, brand)
+  const notice = buildUpgradeNoticeParts(lastVersion, currentVersion, changelog, brand,
+    { lang: options?.lang, changelogEn: options?.changelogEn })
   if (!notice) return null
   return deliverNotice(platform, chatId, notice, options)
 }

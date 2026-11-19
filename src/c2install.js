@@ -21,6 +21,7 @@ const { isLocalChatId } = require('./platform/local')
 // A Slack conversation (src/platform/slack.js) likewise takes a reserved
 // subset of the group shape: `oc_slack_<channel id>`.
 const { isSlackChatId } = require('./platform/slack')
+const { isChatLang } = require('./chatlang')
 const MANIFEST = 'c2-groups.json'
 const SUPPORTED_RUNNERS = Object.freeze(['codex', 'claude'])
 
@@ -147,6 +148,8 @@ function resolveInstallation(cfg, configFile, stateDir, { allowAddedGroups = fal
     if (group.codexSteer !== undefined && typeof group.codexSteer !== 'boolean') {
       throw new Error('Group codexSteer must be a boolean')
     }
+    // The language of the bot's own words (src/chatlang.js). Without the setting the platform decides.
+    if (group.lang !== undefined && !isChatLang(group.lang)) throw new Error('Group lang must be "zh" or "en"')
     const provider = cfg.providers?.[group.provider || cfg.defaultProvider]
     // Paused routes keep their original metadata, but cannot execute it. They
     // must pass the full active-route checks before a later restart enables them.

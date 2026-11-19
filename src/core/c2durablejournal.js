@@ -817,7 +817,7 @@ class C2DurableJournal {
 
   // Only the process which began this dispatch attempt may assert that its
   // child never spawned. The independent status survives a crash before the
-  // Rust lane transition; it is neither an ACK nor an unknown external result.
+  // built-in core's lane transition; it is neither an ACK nor an unknown external result.
   recordRunnerNotStarted({ receiptId, chatId, turnToken, generation,
     dispatchEffectId, resolvedAt } = {}) {
     if (this.#blocked) throw new Error('C2 journal needs reopen after write failure')

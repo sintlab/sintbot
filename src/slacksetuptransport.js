@@ -21,8 +21,10 @@ function boundConversation(message) {
 // sentence to reply with. The connection is closed before the service opens
 // its own: Slack hands each event to one of an app's connections at random,
 // so two at once would lose messages.
+// `net` (fetchImpl and socket agent) is the route both tokens were checked
+// through; without it the connection uses the process's own proxy, if any.
 async function discoverSlackConversation({ botToken, appToken, signal, inboxDir, onNotice = () => {}, notice = SLACK_NOTICE,
-  confirm = null, timeoutMs = SLACK_WAIT_MS, connectWaitMs = CONNECT_WAIT_MS, createPlatform = createSlackPlatform } = {}) {
+  confirm = null, timeoutMs = SLACK_WAIT_MS, connectWaitMs = CONNECT_WAIT_MS, createPlatform = createSlackPlatform, net = null } = {}) {
   if (typeof botToken !== 'string' || !botToken.trim() || typeof appToken !== 'string' || !appToken.trim()) {
     throw new Error('请填写应用级令牌和 Bot Token')
   }
@@ -41,13 +43,15 @@ async function discoverSlackConversation({ botToken, appToken, signal, inboxDir,
       timer = setTimeout(() => finish(new Error('等待消息超时，请在 Slack 里给机器人发一句话后重试')), timeoutMs)
       adapter = createPlatform({ botToken: botToken.trim(), appToken: appToken.trim(), durable: true,
         onlyWhenMentioned: true, inboxDir, log: () => {},
+        ...(net ? { fetchImpl: net.fetchImpl, socketAgent: net.agent || null } : {}),
         onConn: snapshot => { if (snapshot?.state === 'failed') finish(new Error('Slack 连接不可用，请检查两枚令牌是否仍然有效')) } })
       Promise.resolve(adapter.start(message => {
         const bound = boundConversation(message)
         if (bound) finish(null, { ...bound, replyCtx: message.replyCtx })
       })).then(async () => {
         // The notice only follows a live connection: a message sent earlier would be lost.
-        if (await adapter.ready(connectWaitMs) !== true) return finish(new Error('连不上 Slack，请检查网络或代理后重试'))
+        // A network failure: the page points at its proxy field.
+        if (await adapter.ready(connectWaitMs) !== true) return finish(Object.assign(new Error('连不上 Slack，请检查网络或代理后重试'), { network: true }))
         if (notice) onNotice(notice)
       }).catch(() => finish(new Error('Slack 连接失败，请检查令牌和网络')))
     })
@@ -74,7 +78,19 @@ async function discoverSlackConversation({ botToken, appToken, signal, inboxDir,
   }
 }
 
-// The reply that tells the person in Slack the binding worked.
-const confirmReply = projectName => `已连接项目 ${projectName}，可以直接发任务。命令以 ! 开头，例如 !status。`
+// The reply that tells the person in Slack the binding worked. In a channel
+// only an @mention reaches the bot, so it says so there. It is sent before the
+// configuration is written, so the conversation's language (src/chatlang.js)
+// is handed in by the flow that is about to write it: English unless the
+// conversation is already set to Chinese. The Chinese is the text the setup
+// pages render (src/slacknotices.js) and so the default of this function; the
+// English is that rendering.
+const confirmReply = (projectName, chatType = 'direct', lang = 'zh') => lang === 'en'
+  ? (chatType === 'channel'
+    ? `Connected to project ${projectName}. @mention me in this channel to send a task. Commands start with !, for example !status.`
+    : `Connected to project ${projectName}. Send a task any time. Commands start with !, for example !status.`)
+  : chatType === 'channel'
+    ? `已连接项目 ${projectName}，在这个频道里 @我 发任务。命令以 ! 开头，例如 !status。`
+    : `已连接项目 ${projectName}，可以直接发任务。命令以 ! 开头，例如 !status。`
 
 module.exports = { discoverSlackConversation, boundConversation, confirmReply, SLACK_WAIT_MS, SLACK_NOTICE }

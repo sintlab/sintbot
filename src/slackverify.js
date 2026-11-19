@@ -19,6 +19,9 @@ function appIdOfAppToken(token) {
   return m ? m[1] : ''
 }
 const codeOf = error => (error && typeof error.code === 'string' && error.code) || 'request_timeout'
+// Slack was not reached at all (timeout, DNS, refused, a proxy that does not
+// answer): the page then points at its proxy field. Refusals by Slack are not.
+const unreached = code => code === 'request_timeout'
 
 // The pages of one app's settings, for the step-by-step links.
 function slackAppLinks(appId) {
@@ -44,6 +47,7 @@ async function verifySlackAppToken(appToken, { fetchImpl = null } = {}) {
   }
   const plan = core.connectPlan('slack-app-token', { observed })
   return { ok: plan.verdict === 'ok', verdict: plan.verdict, notice: plan.notice,
+    network: plan.verdict !== 'ok' && unreached(observed.socketError),
     appId: plan.verdict === 'ok' ? observed.appId : '', links: plan.verdict === 'ok' ? slackAppLinks(observed.appId) : null }
 }
 
@@ -78,7 +82,7 @@ async function verifySlackBotToken(botToken, { appId = '', fetchImpl = null } = 
   }
   const plan = core.connectPlan('slack-bot-token', { observed })
   const ok = plan.verdict === 'ok' || plan.verdict === 'warn'
-  return { ok, verdict: plan.verdict, notice: plan.notice,
+  return { ok, verdict: plan.verdict, notice: plan.notice, network: !ok && unreached(observed.authError),
     identity: ok && identity ? { team: identity.team, teamId: identity.teamId, botUserId: identity.botUserId,
       botName: identity.botName, appId: observed.botAppId || observed.appId || '', url: identity.url } : null }
 }

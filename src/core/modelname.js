@@ -5,18 +5,20 @@
 // 显示规则统一一种短写法:
 //   claude-<家族>-<主版本>[-<次版本>][-<日期>][[变体]] → 「Opus 5.5」;日期后缀不显示;变体 [1m] → 「Fable 5.1 (1M)」
 //   Claude Code 官方别名 opus / sonnet / haiku(指向当前最新)→「Opus(最新)」
+//   英文会话(lang = 'en')里别名只写「Opus」:照着打回来仍是这个别名。「Opus (latest)」不行 ——
+//   modelKey 会把字母括注当成变体(同 (1M)),照着打就认不出。
 //   deepseek / GLM / MiniMax 同一规则;GPT 等其余原样(本来就短)
 // ⚠ 控制台同一份:server 把 modelDisplayName.toString() 注入 console.html(占位 /*__SBOT_MODELNAME__*/)⇒ 这个函数必须**自包含**
 //   (不引用模块里别的变量 / 函数),改它时单测会在注入后的页面里再跑一遍同一组例子。
 
-function modelDisplayName(id) {
+function modelDisplayName(id, lang) {
   const raw = String(id == null ? '' : id).trim()
   if (!raw) return ''
   const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase()
   const title = (s) => s.split('-').map((x) => x.charAt(0).toUpperCase() + x.slice(1)).join(' ')
   const vt = (v) => (v ? ' (' + v.toUpperCase() + ')' : '')
   const al = raw.match(/^(opus|sonnet|haiku)$/i)
-  if (al) return cap(al[1]) + '(最新)'
+  if (al) return cap(al[1]) + (lang === 'en' ? '' : '(最新)')
   // 次版本最多 3 位且后面不再跟数字:带日期的老 id(claude-sonnet-4-20250514)不会被读成 4.20250514
   const cm = raw.match(/^claude-([a-z]+)-(\d+)(?:-(\d{1,3})(?!\d))?(?:-\d{4,})?(?:\[(\w+)\])?$/i)
   if (cm) return cap(cm[1]) + ' ' + cm[2] + (cm[3] ? '.' + cm[3] : '') + vt(cm[4])
@@ -52,9 +54,9 @@ function setModelNames(list) {
     if (id && name && name.length <= 60) NAMES.set(id, name)
   }
 }
-function modelName(id) {
+function modelName(id, lang) {
   const k = String(id == null ? '' : id).trim()
-  return (k && NAMES.get(k)) || modelDisplayName(k)
+  return (k && NAMES.get(k)) || modelDisplayName(k, lang)
 }
 const knownModelNames = () => Object.fromEntries(NAMES)
 

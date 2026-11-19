@@ -7,6 +7,9 @@ const core = require('./agent/privatecore')
 const { loadInstallationFromRaw } = require('./c2install')
 const { discoverSlackConversation, confirmReply } = require('./slacksetuptransport')
 const { verifySlackAppToken, verifySlackBotToken } = require('./slackverify')
+const { proxyFromEnv } = require('./core/proxy')
+const { slackProxyChoice } = require('./slackproxy')
+const { chatLang } = require('./chatlang')
 
 const PREFLIGHT_CHAT = 'oc_slack_D0PREFLIGHT'
 
@@ -19,7 +22,7 @@ const PREFLIGHT_CHAT = 'oc_slack_D0PREFLIGHT'
 function createSlackAttach({ configPath, stateDir, writeConfig, activateConnection,
   awaitConnected = async () => true, canAttach = () => true, discover = discoverSlackConversation,
   verifyApp = verifySlackAppToken, verifyBot = verifySlackBotToken,
-  buildConfig = core.connectConfig, home = os.homedir() }) {
+  buildConfig = core.connectConfig, home = os.homedir(), env = process.env }) {
   let busy = false, proof = null, activation = null
   return {
     validateConnectionAddition(before, next) {
@@ -45,10 +48,11 @@ function createSlackAttach({ configPath, stateDir, writeConfig, activateConnecti
         const workdir = input.workdir
         if (typeof workdir !== 'string' || !path.isAbsolute(workdir) || !fs.statSync(workdir).isDirectory()) throw new Error('请选择已有项目目录')
         const name = path.basename(workdir)
+        // Checked through the service's own route: its proxy, if it has one.
         const app = await verifyApp(input.appToken)
-        if (!app.ok) throw new Error(app.notice)
+        if (!app.ok) throw Object.assign(new Error(app.notice), { network: app.network === true })
         const bot = await verifyBot(input.botToken, { appId: app.appId })
-        if (!bot.ok) throw new Error(bot.notice)
+        if (!bot.ok) throw Object.assign(new Error(bot.notice), { network: bot.network === true })
         if (signal?.aborted) throw new Error('已取消接入')
         const identity = bot.identity || {}
         const credentials = { botToken: String(input.botToken).trim(), appToken: String(input.appToken).trim(),
@@ -56,7 +60,19 @@ function createSlackAttach({ configPath, stateDir, writeConfig, activateConnecti
           ...(identity.teamId ? { teamId: identity.teamId } : {}),
           ...(identity.botUserId ? { botUserId: identity.botUserId } : {}),
           ...(identity.team ? { team: identity.team } : {}) }
-        const args = { platform: 'slack', provider, runners, workdir, home, ...credentials }
+        // The service reaches Slack through a proxy from the environment it was
+        // started in. Saved with the connection when asked (a proxy already
+        // configured is kept), a later start by the system or the desktop app
+        // goes the same way. The running process already uses it, so nothing
+        // changes now (see c2configcontrol).
+        const chosen = slackProxyChoice(input.saveProxy === true ? proxyFromEnv(env) : '',
+          { env, providers: prior.providers, saved: prior.proxy })
+        const proxy = chosen.url ? { proxy: chosen.url, noProxy: chosen.noProxy } : {}
+        // A Slack conversation speaks English unless it is set to Chinese
+        // (src/chatlang.js), whatever the language of the console page: no
+        // `lang` key is written here, and the core writes the project README
+        // in English.
+        const args = { platform: 'slack', provider, runners, workdir, home, ...credentials, ...proxy, lang: 'en' }
         // Validate the entire merge before opening a connection. The
         // discovered conversation is validated again under the lock.
         const preview = buildConfig({ ...args, chatId: PREFLIGHT_CHAT, existing: prior })
@@ -64,18 +80,21 @@ function createSlackAttach({ configPath, stateDir, writeConfig, activateConnecti
         onIdentity({ team: identity.team || '', teamId: identity.teamId || '', appId: credentials.slackAppId || '',
           botName: identity.botName || '' })
         onNotice(bot.notice)
-        // The merge, named after the project. The core leaves the entry unnamed.
+        // The merge, named after the project. The core leaves the entry unnamed;
+        // the name is added here, inside the merge, because the writer's proof
+        // must equal the configuration that is written.
         const merged = (raw, chatId) => {
           const result = buildConfig({ ...args, chatId, existing: raw })
-          if (result.ok && result.config?.groups?.[chatId] && !result.config.groups[chatId].name) result.config.groups[chatId].name = name
+          const group = result.ok ? result.config?.groups?.[chatId] : null
+          if (group && !group.name) group.name = name
           return result
         }
         const chatId = await discover({ botToken: credentials.botToken, appToken: credentials.appToken, signal, onNotice,
           // Reply in Slack only once the current configuration accepts this binding.
-          confirm: async ({ chatId: found }) => {
+          confirm: async ({ chatId: found, chatType }) => {
             const check = merged(JSON.parse(fs.readFileSync(configPath, 'utf8')), found)
             if (!check.ok) throw new Error(check.error)
-            return confirmReply(name)
+            return confirmReply(name, chatType, chatLang(check.config?.groups?.[found], 'slack'))
           },
           inboxDir: path.join(stateDir, 'slack-inbox') })
         if (signal?.aborted) throw new Error('已取消接入')

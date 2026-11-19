@@ -10,6 +10,17 @@ const { engineTerminalStep } = require('../agent/privatecore')
 
 const FAILURE_NOTICE = '本次任务执行失败。若已执行过工具，请先核对实际结果，再决定是否重试。'
 const INTERRUPTED_NOTICE = '本次任务执行中断，未收到最终结果。已执行的操作可能已经生效，请核对后再决定是否重试。'
+// The same two notices for a conversation whose language is English. The
+// texts above stay the canonical ones: terminalReplyText returns them and the
+// final-reply checks compare against them. A caller rewords a notice only
+// where it hands the text to the platform (terminalNoticeText).
+const FAILURE_NOTICE_EN = 'This task failed. If any tools had already run, check what actually happened before deciding whether to retry.'
+const INTERRUPTED_NOTICE_EN = 'This task was interrupted and no final result arrived. Actions already taken may have gone through; check before deciding whether to retry.'
+// Exact match only: any other text (an answer) is returned as it is.
+function terminalNoticeText(text, lang) {
+  if (lang !== 'en') return text
+  return text === FAILURE_NOTICE ? FAILURE_NOTICE_EN : text === INTERRUPTED_NOTICE ? INTERRUPTED_NOTICE_EN : text
+}
 
 const RECEIPT_ID = /^[0-9a-f]{32}$/
 const GENERATION = /^[0-9a-f]{32}$/
@@ -164,4 +175,6 @@ function prepareTerminalEffectBridge({ runtime, payloadHandles, receiptId, chatI
   })
 }
 
-module.exports = { prepareTerminalEffectBridge, terminalReplyText }
+module.exports = { prepareTerminalEffectBridge, terminalReplyText, terminalNoticeText,
+  TERMINAL_NOTICES: Object.freeze({ zh: Object.freeze({ failure: FAILURE_NOTICE, interrupted: INTERRUPTED_NOTICE }),
+    en: Object.freeze({ failure: FAILURE_NOTICE_EN, interrupted: INTERRUPTED_NOTICE_EN }) }) }

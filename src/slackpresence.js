@@ -68,13 +68,14 @@ function withSlackPresence(activity, { getAdapter, log = () => {} } = {}) {
     } catch {}
     return activity.merge(chatId, parentReceiptId, receiptIds, state)
   }
-  // A turn whose outcome became unknown: the signals are cleared, without ✅.
+  // A turn whose outcome became unknown: its ⏳ becomes ⚠️, never ✅. The
+  // conversation is closed or held; nothing here says whether to resend.
   wrapped.unknown = value => {
     try {
       if (isSlackChatId(value?.chatId)) {
         for (const [k, ids] of running) {
           if (!k.startsWith(`${value.chatId}\0`)) continue
-          running.delete(k); signal('done', value.chatId, ids, false)
+          running.delete(k); signal('unfinished', value.chatId, ids)
         }
       }
     } catch {}

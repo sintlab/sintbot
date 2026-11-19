@@ -79,7 +79,7 @@ function feishuContext(opts, { env = process.env, loadConfig = config.loadConfig
   // Slack 群:引擎注入 SBOT_PLATFORM=slack。飞书这族动作在那儿一概走不通(文件上下行还没接到
   // Slack,docs/SLACK.md 第 3 步)。不拦的话要么打到飞书 API 报 lark 错、要么 feishu 没配时报「未配置」——
   // 两种都不说人话,agent 会转头重试。显式 --chat 指向飞书群的手工用法不拦。
-  if (!opts.chat && env.SBOT_PLATFORM === 'slack') refuse('本群在 Slack 上 —— sbot feishu 的动作(发文件/发图/读历史/回复/编辑/撤回/下载/表情)在 Slack 群暂不可用,Slack 侧文件上下行还没接。要给群成员看的文件或图片:把项目内相对路径与打开方式写进回复正文;不要重试本命令。')
+  if (!opts.chat && env.SBOT_PLATFORM === 'slack') refuse('当前会话在 Slack 上 —— sbot feishu 的动作(发文件/发图/读历史/回复/编辑/撤回/下载/表情)在 Slack 暂不可用,Slack 侧文件上下行还没接。要给成员看的文件或图片:把项目内相对路径与打开方式写进回复正文;不要重试本命令。')
   const configPath = opts.config || env.SBOT_CONFIG
   if (!findConfigPath(configPath)) refuse('feishu 未配置:找不到配置文件 — 传 --config <path> 或设置 env SBOT_CONFIG')
   const cfg = loadConfig(configPath)

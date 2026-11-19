@@ -42,7 +42,7 @@ function cardOperationIdentity({ receiptId, turnToken, generation, operation }) 
   }
   // The Feishu adapter alone supplies a one-call invoke. Hash the stable
   // operation identity with this turn generation; no card/body/target enters
-  // the Rust event or durable journal.
+  // the built-in core's event or the durable journal.
   const parts = [receiptId, turnToken, generation, operation.kind,
     operation.operationId]
   const hash = createHash('sha256').update('sbot-c2-card-operation-v1\0')
@@ -112,11 +112,30 @@ function queuedPayloads(snapshot, scope, handles) {
   return { queue, accepted }
 }
 
-function queueRunLen(queue) {
+// The core's run rule, used here only to check its results: one turn takes
+// the leading jobs that share quiet, polled and thread. `threads` is the
+// host's fact for each job (null: the chat has none), never a stored field.
+const threadAt = (threads, index) => threads?.[index] ?? null
+function queueRunLen(queue, threads = null) {
   if (!queue.length) return 0
   const { quiet, polled } = queue[0]
-  const end = queue.findIndex(item => item.quiet !== quiet || item.polled !== polled)
+  const thread = threadAt(threads, 0)
+  const end = queue.findIndex((item, index) => item.quiet !== quiet || item.polled !== polled ||
+    threadAt(threads, index) !== thread)
   return end < 0 ? queue.length : end
+}
+
+// [turns ahead, earlier jobs in the same turn] for the job at `index`.
+function queuePosition(queue, threads, index) {
+  let start = 0
+  let ahead = 0
+  while (start < queue.length) {
+    const end = start + queueRunLen(queue.slice(start), threads?.slice(start) ?? null)
+    if (index < end) return [ahead, index - start]
+    ahead++
+    start = end
+  }
+  return null
 }
 
 // The model receives top-level jobs, while a retried job may also contain
@@ -326,7 +345,11 @@ class C2DurableRuntime {
   // A visible busy receipt remains pending after its queue acknowledgement.
   // The effect descriptor and target identity are durable before any send;
   // only the same process may turn one attempted call into an ACK.
-  prepareSteer({ receiptId, chatId, parentReceiptId, turnToken, generation, payloadHandles } = {}) {
+  // `thread` and `turnThreads` (both or neither): the facts the core decides
+  // by whether this message joins the running task. When it does not, nothing
+  // is committed and null is returned: the message keeps its queue place.
+  prepareSteer({ receiptId, chatId, parentReceiptId, turnToken, generation, payloadHandles,
+    thread, turnThreads } = {}) {
     const before = this.#completionCapacity()
     const witness = this.#activeRuns.get(chatId)
     const receipt = before.receipts.pending.find(item => item.id === receiptId)
@@ -339,16 +362,35 @@ class C2DurableRuntime {
           generation, domain: 'atomicHandoff', kind: 'runnerAccepted' }))?.generation !== generation) {
       throw new Error('C2 steer lacks accepted live parent and queued receipt')
     }
+    const facts = thread !== undefined || turnThreads !== undefined
+    if (facts && (thread !== null && (typeof thread !== 'string' || !thread) ||
+        !Array.isArray(turnThreads) || !turnThreads.length ||
+        turnThreads.some(value => value !== null && (typeof value !== 'string' || !value)))) {
+      throw new TypeError('C2 steer thread facts invalid')
+    }
     const id = `sbot-c2-steer-v1:${receiptId}:${generation}:prepare`
     try {
-      const result = this.#coordinator.transition({ id, domain: 'steer', scope: chatId,
-        payload: { type: 'prepare', receiptId, parentReceiptId, turnToken, generation },
+      const prepared = this.#coordinator.prepare({ id, domain: 'steer', scope: chatId,
+        payload: { type: 'prepare', receiptId, parentReceiptId, turnToken, generation,
+          ...(facts ? { thread, turnThreads } : {}) },
         validate: candidate => {
           const effect = candidate.effects[0]
+          if (facts && candidate.decision?.joined === false) {
+            if (candidate.effects.length || !isDeepStrictEqual(candidate.state.lanes, before.state.lanes)) {
+              throw new Error('C2 steer decision invalid')
+            }
+            return
+          }
           if (candidate.effects.length !== 1 || effect.type !== 'callSteer' ||
               effect.receiptId !== receiptId || effect.turnToken !== turnToken ||
+              facts && candidate.decision?.joined !== true ||
               candidate.effectDescriptors[0].receiptId !== receiptId) throw new Error('C2 steer decision invalid')
         } })
+      if (facts && prepared.result.decision.joined === false) {
+        prepared.cancel()
+        return null
+      }
+      const result = prepared.commit()
       return { effectId: result.effects[0].effectId, receiptId, chatId,
         parentReceiptId, turnToken, generation }
     } catch (error) { this.close(); throw error }
@@ -457,10 +499,11 @@ class C2DurableRuntime {
         !isDeepStrictEqual(this.#coordinator.snapshot(), before.state)) {
       throw new Error('C2 queue notice lacks exact pending busy receipt')
     }
+    const threads = payloadHandles.queueThreads(queue)
     try {
       const prepared = this.#coordinator.prepare({ id: eventId, domain: 'queue',
         scope: chatId, payload: { type: 'prepareQueueNotice', receiptId,
-          queueIndex: index, visibleQueue },
+          queueIndex: index, visibleQueue, ...(threads ? { threads } : {}) },
         validate: candidate => {
           const effect = candidate.effects?.[0]
           const descriptor = candidate.effectDescriptors?.[0]
@@ -476,13 +519,18 @@ class C2DurableRuntime {
               candidate.decision?.receiptId !== receiptId ||
               candidate.decision.queueIndex !== index ||
               candidate.decision.visibleQueue !== visibleQueue ||
+              !isDeepStrictEqual([candidate.decision.ahead, candidate.decision.joins],
+                queuePosition(queue, threads, index)) ||
               candidate.decision.receiptSettlement !== false) {
             throw new Error('C2 queue notice result invalid')
           }
         } })
       const result = prepared.commit()
+      // The core's promise for the notice: turns before this one, and earlier
+      // messages that share it.
       return { effectId: result.effects[0].effectId, receiptId, chatId,
-        queueIndex: index, visibleQueue }
+        queueIndex: index, visibleQueue,
+        ahead: result.decision.ahead, joins: result.decision.joins }
     } catch (error) { this.close(); throw error }
   }
 
@@ -586,7 +634,8 @@ class C2DurableRuntime {
         !isDeepStrictEqual(this.#coordinator.snapshot(), before.state)) {
       throw new Error('C2 initial dispatch differs from durable idle queue')
     }
-    const runLen = queueRunLen(queue)
+    const threads = payloadHandles.queueThreads(queue)
+    const runLen = queueRunLen(queue, threads)
     const taken = queue.slice(0, runLen)
     const remaining = queue.slice(runLen)
     const jobReceiptIds = taken.map(item => item.id.slice('receipt:job:'.length))
@@ -602,7 +651,7 @@ class C2DurableRuntime {
     if (this.#journal.hasEvent(id)) throw new Error('C2 initial dispatch already committed')
     try {
       const prepared = this.#coordinator.prepare({ id, domain: 'atomicHandoff', scope,
-        payload: { type: 'initialDispatchCommit' },
+        payload: { type: 'initialDispatchCommit', ...(threads ? { threads } : {}) },
         validate: candidate => {
           const token = candidate.decision?.turnToken
           const dispatch = candidate.decision?.queueDispatch
@@ -621,7 +670,7 @@ class C2DurableRuntime {
               !isDeepStrictEqual(candidate.decision.batchReceiptIds, batchReceiptIds) ||
               !isDeepStrictEqual(candidate.state.lanes.handoff[scope].acceptedReceiptIds,
                 batchReceiptIds.length > 1 ? batchReceiptIds : []) ||
-              candidate.decision.queueRunLen !== queueRunLen(remaining) ||
+              candidate.decision.queueRunLen !== queueRunLen(remaining, threads?.slice(runLen) ?? null) ||
               candidate.decision.visibleQueue !== remaining.filter(item =>
                 !item.quiet && !item.polled).length ||
               candidate.effects.length !== 1 || effect.type !== 'dispatch' ||
@@ -1117,7 +1166,8 @@ class C2DurableRuntime {
     if (!isDeepStrictEqual(handoff.acceptedReceiptIds, accepted)) {
       throw new Error('C2 atomic release accepted receipts differ from queue')
     }
-    const releasedCount = paused ? queue.length : queueRunLen(queue)
+    const threads = paused ? null : payloadHandles.queueThreads(queue)
+    const releasedCount = paused ? queue.length : queueRunLen(queue, threads)
     const remaining = queue.slice(releasedCount)
     const id = callbackEventId({ receiptId, generation,
       domain: 'atomicHandoff', kind: 'queueReleaseCommit',
@@ -1126,12 +1176,12 @@ class C2DurableRuntime {
     if (this.#journal.hasEvent(id)) throw new Error('C2 atomic release already committed')
     try {
       const prepared = this.#coordinator.prepare({ id, domain: 'atomicHandoff', scope,
-        payload: { type: 'queueReleaseCommit', turnToken, paused },
+        payload: { type: 'queueReleaseCommit', turnToken, paused, ...(threads ? { threads } : {}) },
         validate: candidate => {
           if (candidate.cursor !== before.cursor + 1 ||
               candidate.state?.seq !== candidate.cursor ||
               !isDeepStrictEqual(candidate.state.lanes.queue?.[scope]?.queue, remaining) ||
-              candidate.decision?.queueRunLen !== queueRunLen(remaining) ||
+              candidate.decision?.queueRunLen !== queueRunLen(remaining, threads?.slice(releasedCount) ?? null) ||
               !isDeepStrictEqual(candidate.decision?.jobReceiptIds,
                 paused ? [] : queue.slice(0, releasedCount).map(item =>
                   item.id.slice('receipt:job:'.length))) ||

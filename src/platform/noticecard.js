@@ -42,7 +42,9 @@ function normalize(n = {}, { redact } = {}) {
   const body = n.body ? r(String(n.body).replace(/^\n+|\n+$/g, '')) : ''
   const warnings = asLines(n.warnings).map((w) => r(w.replace(/^(?:⚠️|⚠|\s)+/u, '').trim())).filter(Boolean)
   const footer = n.footer ? r(String(n.footer).trim()) : ''
-  return { tone, emoji: t.emoji, label: t.label, template: t.template, tagColor: t.tagColor, title, subtitle, body, warnings, footer }
+  // `label` overrides the category word on the card (an English conversation's notice names it in English).
+  const label = n.label ? r(String(n.label).trim()) : t.label
+  return { tone, emoji: t.emoji, label, template: t.template, tagColor: t.tagColor, title, subtitle, body, warnings, footer }
 }
 
 // 正文里「**标签** 说明」这种要点行(v0.11.138):排成两栏对齐(标签窄栏加粗、说明宽栏),不再靠全角空格硬顶。

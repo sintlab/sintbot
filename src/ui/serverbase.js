@@ -15,6 +15,7 @@ const { loadConfig, migrateModelSettings, applyProxyEnv, deriveNoProxy, DEFAULTS
 const verify = require('../core/verify') // 凭据最近一次验证的记录:模型测试 / 平台预检写,概览读
 const projectsroot = require('../projectsroot') // 项目根目录围栏:目录浏览 / 保存绑定 / 风格提炼三处同一份判据
 const { atomicWriteJSON } = require('../core/store')
+const { isChatLang, chatLang, defaultChatLang, pick } = require('../chatlang') // the language of the bot's own words in one conversation
 const { createLedger } = require('../core/ledger')
 const { normalizeTz, isValidTz, tzOffsetMin, tzParts } = require('../core/time')
 // Runner dispatch (Claude vs Codex by provider.runner) — so 测试/试跑 run codex
@@ -50,7 +51,7 @@ const { guessBotName } = require('../platform/wecomname') // 机器人名从群�
 const { newLocalChatId, isLocalChatId } = require('../platform/local')
 const { platformsConfigured, chatPlatform, inferChatPlatform, PLATFORMS } = require('../config') // 双平台并存:哪些平台配齐了 · 某群属于哪个平台(与 daemon 路由器同一个函数)
 const { feishuClient, fetchBotOpenId, fetchAppIdentity, fetchChats, createChat, fetchChatMembers, addChatMembers, deleteChat, sendChatText, larkErrMsg, feishuPrecheck, fetchAdminCandidates, resolveContactToOpenId, fetchOrgUsers } = require('../platform/feishu')
-const { slackPrecheck, fetchSlackChannels, sendSlackText } = require('../platform/slack') // Slack:控制台侧只用这三个助手(收发在 daemon 里)
+const { slackPrecheck, fetchSlackChannels, sendSlackText, slackInviteHint } = require('../platform/slack') // Slack:控制台侧只用这几个助手(收发在 daemon 里)
 const { getUsage, refreshUsage } = require('../usage')
 const brainMod = require('../core/brain') // a group's model and depth on one backend: the single resolver
 const { applyBrainChange, auditRow } = require('../groupbrain')
@@ -176,9 +177,10 @@ function execShellCommand(cmd, platform = process.platform) {
 
 // 飞书 WS 连接健康度 → 概览健康行的状态/文案(watchdog snapshot,见 wswatchdog.js)。
 // connected=绿;connecting/reconnecting=黄(自愈中);failed/其它=红。
+// 连着但带 warning(Slack:同一应用另有别的连接,消息会被分走)也是黄:连接本身好的,但有消息收不到。
 function connHealthStatus(c) {
   if (!c) return 'warn'
-  if (c.state === 'connected') return 'ok'
+  if (c.state === 'connected') return c.warning ? 'warn' : 'ok'
   if (c.state === 'connecting' || c.state === 'reconnecting') return 'warn'
   return 'fail' // failed / stopped
 }
@@ -196,6 +198,7 @@ function connHealthDetail(c) {
   if (c.reconnects) bits.push(`重连 ${c.reconnects}`)
   if (c.rebuilds) bits.push(`重建 ${c.rebuilds}`) // 看门狗强制重建次数——非零=SDK 曾放弃
   if (c.state !== 'connected' && c.lastError) bits.push(String(c.lastError).slice(0, 60))
+  if (c.state === 'connected' && c.warning) bits.push(String(c.warning).slice(0, 60))
   return bits.join(' · ')
 }
 
@@ -223,8 +226,20 @@ function authConfiguredFrom(getAuth, loopbackBind) {
 // 企微群只收 @ 机器人的消息(平台边界),「直接发消息」对它是错指引 ⇒ 按平台措辞。
 // ⚠ 命令前缀按平台传:Slack 把 `/` 开头的输入当成它自己的斜杠命令吃掉(真机验过),写死 `/help`
 //   等于第一句话就教错用法。
-function bindNoticeText(workdir, platform = 'feishu', cmd = '/help') {
-  return `✅ 本群已绑定项目「${path.basename(String(workdir || '')) || '(未命名)'}」\n${platform === 'wecom' ? '@我 派单(只有 @ 我的消息我才收得到)' : platform === 'slack' ? '在频道里 @我 派单(不 @ 我的消息不处理)' : '直接发消息或 @我 派单'};${cmd} 查看命令`
+// Slack 频道不叫「本群」;私聊(手填会话标识绑的)里不用 @。
+// `lang` is the conversation's language (src/chatlang.js): an English conversation reads this in English.
+function bindNoticeText(workdir, platform = 'feishu', cmd = '/help', chatId = '', lang = 'zh') {
+  const slackDm = platform === 'slack' && /^oc_slack_D/.test(String(chatId || ''))
+  if (lang === 'en') {
+    const place = platform === 'slack' ? (slackDm ? 'This direct message' : 'This channel') : 'This group'
+    const how = platform === 'wecom' ? '@mention me to send a task (I only receive messages that mention me).'
+      : slackDm ? 'Send a message here to start a task.'
+        : platform === 'slack' ? '@mention me in this channel to send a task (messages without a mention are ignored).'
+          : 'Send a message or @mention me to send a task.'
+    return `✅ ${place} is now connected to project "${path.basename(String(workdir || '')) || '(unnamed)'}".\n${how} Send ${cmd} to see the commands.`
+  }
+  const here = platform === 'slack' ? (slackDm ? '这个私聊' : '本频道') : '本群'
+  return `✅ ${here}已绑定项目「${path.basename(String(workdir || '')) || '(未命名)'}」\n${platform === 'wecom' ? '@我 派单(只有 @ 我的消息我才收得到)' : slackDm ? '直接发消息派单' : platform === 'slack' ? '在频道里 @我 派单(不 @ 我的消息不处理)' : '直接发消息或 @我 派单'};${cmd} 查看命令`
 }
 
 function createUiServer({ configPath, getLiveState = null, getConnHealth = null, onConfigChange = null, onHostChange = null, control = null, updater = null, host = '127.0.0.1', log = () => {}, issuesPath = null, sessionsPath = null, auditPath = null, ledgerPath = null, inboxDismissPath = null, fetchImpl = null, cdpImpl = null, onTakeoverClaim = null, onTakeoverExpire = null, onTakeoverEnd = null, takeoverNow = null, wecomExec = null, verifyFile = null, setupMode = null, cronRecoveryEnabled = false, runtimePolicy = null, cronTools = null, wecomAttach = null, getWecomChats = null, slackAttach = null, getSlackChats = null, publicReachOptions = null, codexCli = null } = {}) {
@@ -506,6 +521,11 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
   let codexStatusCache = null // { at, login, usage } — codex 订阅登录态+额度缓存(供 /api/state 回填 + verify 60s 去抖)
   let claudeStatusCache = null // { at, login } — Claude 订阅登录态(`claude auth status --json`),同上回填
   const cxCli = codexCli || createCodexCli() // injected only by tests and previews (never install for real there)
+  // The `bin` a Codex model card names for itself ('' = none: it runs the codex on PATH).
+  const codexCardBin = (cfg, name) => {
+    const pv = name && Object.prototype.hasOwnProperty.call(cfg.providers || {}, name) ? cfg.providers[name] : null
+    return pv && pv.runner === 'codex' && typeof pv.bin === 'string' ? pv.bin : ''
+  }
   let codexModelsCache = null // { at, val } — codex model/list 探测缓存(10 分钟)
   // 审计本落点。注入 auditPath 只为可测:单测里的「飞书登录成功」若写进真实审计本,出事时排查者 grep 到的就是假记录。
   const audit = createLedger(auditPath || path.join(os.homedir(), '.sbot', 'audit.jsonl'), log)
@@ -643,6 +663,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         // .mcp.json)—— 无 workdir 的群就是没有项目声明,不能拿 cwd 凑。
         proj: (() => { if (!g.workdir) return { mcp: [], skills: [] }; try { const pp = projectPlugins(g.workdir); return { mcp: pp.mcp.map((m) => m.name), skills: pp.skills.map((s) => s.name) } } catch { return { mcp: [], skills: [] } } })(),
         redactPii: g.redactPii !== false, // false = 数据明文群;true = 默认遮盖
+        lang: chatLang(g, chatPlatformOf(raw, chatId)), // 'zh' | 'en': the effective language of the bot's own notices and command replies in this conversation (set, or the platform's default)
         preview: g.preview || null, styles: design.projectStyleCards(g.workdir),
         // 图标那一行:与「设计风格」平级的第二个选择(2026-08-25)。用哪套图标系统是**项目**的
         // 事、住在 design/icons.md ——「换风格就换图标」是要拆掉的那个绑定。
@@ -763,7 +784,9 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         maxTurnTimeMins: cfg.agent.maxTurnTimeMins,
         ackDelayMs: cfg.agent.ackDelayMs, // 回执等待毫秒(默认 25s 经 config 层合并;界面按秒显示)
       },
-      proxy: raw.proxy && raw.proxy.http ? { http: raw.proxy.http, noProxy: raw.proxy.noProxy || '' } : null,
+      // Masked: a saved proxy may carry a user name and password (Slack onboarding saves the terminal's).
+      // Saving the field back unchanged keeps them (see /api/proxy).
+      proxy: raw.proxy && raw.proxy.http ? { http: require('../slackproxy').maskProxy(String(raw.proxy.http)), noProxy: raw.proxy.noProxy || '' } : null,
       live: getLiveState ? getLiveState() : { running: false },
       // 守护进程还没接平台、只开着控制台(cmdStart 配置模式):supervised = 由服务托管,接上平台后会自己重启连上
       setupMode: setupMode ? { supervised: !!setupMode.supervised } : null,
@@ -966,22 +989,39 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       // a prefilled manifest link, pastes two tokens, then sends one message.
       // The core owns the manifest and every verdict; tokens are checked here
       // and never stored outside the attach call or sent back.
+      // `agentView=1` declares the app as a Slack Agent (opt-in: it cannot be undone in Slack).
       if (p === '/api/slack/manifest' && req.method === 'GET' && runtimePolicy) {
-        const manifest = require('../agent/privatecore').connectSlackManifest(url.searchParams.get('name') || '')
-        return sendJSON(res, 200, { name: manifest.name, createUrl: manifest.createUrl, hint: manifest.hint, scopes: manifest.scopes })
+        const manifest = require('../agent/privatecore').connectSlackManifest(url.searchParams.get('name') || '',
+          { agentView: url.searchParams.get('agentView') === '1' })
+        return sendJSON(res, 200, { name: manifest.name, createUrl: manifest.createUrl, hint: manifest.hint, scopes: manifest.scopes, agentView: manifest.agentView })
+      }
+      // The proxy the running service actually reaches Slack through (its
+      // environment: a terminal's proxy wins over the saved one), and the one
+      // saved in the configuration, both masked. `same`: they are one proxy.
+      // `offer`: the service's came from the environment it was started in and
+      // the configuration has none, so a later start by the system or the
+      // desktop app would go without it; the attach can save it.
+      if (p === '/api/slack/proxy' && req.method === 'GET' && runtimePolicy) {
+        const { proxyFromEnv } = require('../core/proxy')
+        const { maskProxy } = require('../slackproxy')
+        const raw = readRaw()
+        const saved = String(raw.proxy && (raw.proxy.https || raw.proxy.http) || '').trim()
+        const service = proxyFromEnv(process.env)
+        return sendJSON(res, 200, { service: maskProxy(service), saved: maskProxy(saved), same: !!service && service === saved,
+          offer: !!service && !saved })
       }
       if (p === '/api/slack/verify' && req.method === 'POST' && runtimePolicy) {
         const input = await body(req)
         const slackVerify = require('../slackverify')
         if (typeof input?.botToken === 'string' && input.botToken.trim()) {
           const app = await slackVerify.verifySlackAppToken(input.appToken)
-          if (!app.ok) return sendJSON(res, 200, { step: 'app', ok: false, notice: app.notice })
+          if (!app.ok) return sendJSON(res, 200, { step: 'app', ok: false, notice: app.notice, network: app.network === true })
           const bot = await slackVerify.verifySlackBotToken(input.botToken, { appId: app.appId })
-          return sendJSON(res, 200, { step: 'bot', ok: bot.ok, verdict: bot.verdict, notice: bot.notice,
+          return sendJSON(res, 200, { step: 'bot', ok: bot.ok, verdict: bot.verdict, notice: bot.notice, network: bot.network === true,
             ...(bot.ok && bot.identity ? { team: bot.identity.team, open: slackVerify.slackOpenLinks(bot.identity) } : {}) })
         }
         const app = await slackVerify.verifySlackAppToken(input?.appToken)
-        return sendJSON(res, 200, { step: 'app', ok: app.ok, notice: app.notice, ...(app.ok ? { appId: app.appId, links: app.links } : {}) })
+        return sendJSON(res, 200, { step: 'app', ok: app.ok, notice: app.notice, network: app.network === true, ...(app.ok ? { appId: app.appId, links: app.links } : {}) })
       }
       if (p === '/api/slack/channels' && req.method === 'GET' && runtimePolicy) {
         try {
@@ -1008,12 +1048,13 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         // The job carries only what the page shows: a notice, the workspace
         // name and the links that open the conversation with the bot.
         const job = slackJob = { phase: 'running', notice: '正在验证两枚令牌…', step: 'verify', team: '', open: null }
-        void slackAttach.run({ appToken: input?.appToken, botToken: input?.botToken, workdir: input?.workdir, provider: input?.provider }, { signal: slackAbort.signal,
+        void slackAttach.run({ appToken: input?.appToken, botToken: input?.botToken, workdir: input?.workdir, provider: input?.provider,
+          saveProxy: input?.saveProxy === true }, { signal: slackAbort.signal,
           onNotice: notice => { job.notice = notice },
           onIdentity: identity => { job.team = identity.team || ''; job.step = 'message'
             job.open = require('../slackverify').slackOpenLinks(identity) } }).then(result => {
             slackJob = { phase: 'done', notice: 'Slack 已添加，请在 Slack 里发送任务。', chatId: result.chatId }
-          }, error => { slackJob = { phase: 'failed', notice: error?.message || 'Slack 接入失败' } })
+          }, error => { slackJob = { phase: 'failed', notice: error?.message || 'Slack 接入失败', network: error?.network === true } })
         return sendJSON(res, 200, slackJob)
       }
       if (!cronTools && p.startsWith('/api/groups/cron/')) {
@@ -1183,11 +1224,14 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         return sendJSON(res, 200, r)
       }
       // The Codex program on this machine (Codex model card): version, and an
-      // upgrade that runs one fixed install command taking nothing from the
-      // request. Refused while a group is running or about to start a Codex
+      // upgrade that runs one fixed install command; nothing from the request
+      // reaches it. Refused while a group is running or about to start a Codex
       // turn (the install replaces the files a turn is launched from); every
       // attempt is audited.
-      if (p === '/api/codex/cli' && req.method === 'GET') return sendJSON(res, 200, await cxCli.info())
+      // `?name=` is the model card the row is drawn for. It is only looked up
+      // in the configuration: a card that names its own program (`bin`) other
+      // than the one on PATH is shown that program's version and no upgrade.
+      if (p === '/api/codex/cli' && req.method === 'GET') return sendJSON(res, 200, await cxCli.info({ cardBin: codexCardBin(loadConfig(configPath), url.searchParams.get('name')) }))
       if (p === '/api/codex/cli/upgrade' && req.method === 'POST') {
         const cfg = loadConfig(configPath); applyProxyEnv(cfg)
         const lv = getLiveState ? getLiveState() : null
@@ -1197,10 +1241,12 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
           return pv && pv.runner === 'codex' && st && (st.busy || st.waitingForCapacity)
         }).map(([id, g]) => (g && g.name) || id.slice(-8))
         if (busyOn.length) return sendJSON(res, 409, { error: `有群正在用 Codex 处理任务（${busyOn.slice(0, 3).join('、')}），等它结束再升级` })
-        const r = await cxCli.upgrade()
-        audit.append({ kind: 'codex-cli-upgrade', ok: !!r.ok, from: r.from || '', to: r.to || '', error: r.ok ? null : String(r.error || '').slice(0, 200), ts: Date.now() })
+        // `detail` (npm's own wording, with this machine's paths) is for the
+        // audit only; the page gets `error`, where paths are masked.
+        const { detail, refused, ...r } = await cxCli.upgrade({ cardBin: codexCardBin(cfg, url.searchParams.get('name')) })
+        audit.append({ kind: 'codex-cli-upgrade', ok: !!r.ok, from: r.from || '', to: r.to || '', error: r.ok ? null : String(detail || r.error || '').slice(0, 200), ts: Date.now() })
         if (r.ok) { codexstatus.clearCache(); codexModelsCache = null }
-        return sendJSON(res, r.ok ? 200 : 500, r)
+        return sendJSON(res, r.ok ? 200 : refused ? 409 : 500, r)
       }
       if (p === '/api/usage' && req.method === 'GET') { const cfg = loadConfig(configPath); return sendJSON(res, 200, await getUsage(cfg.providers, { bin: cfg.agent.bin })) }
       // 模型卡「额度」行的 ↻:只刷这一个 provider 且绕过两层缓存(见 usage.js refreshUsage)。
@@ -1459,7 +1505,9 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         //   这句话读起来就是「机器人在自言自语」—— 而它其实是人下的指令,后面紧跟着的
         //   回复才是机器人的。加【管理员】之后,群里读到的是「有人问 → 它答」,与真人对话同形。
         //   体裁按群消息规矩:纯文本不渲染 markdown,层次只能用【】与「· 」。
-        const shownText = visible ? `【管理员】${redact(t, { pii })}` : null
+        // An English conversation reads the same mark in English. Nothing reads the mark back:
+        // the injected text is passed on its own (src/consolesay.js).
+        const shownText = visible ? `${pick(chatLang(gCfg, chatPlatformOf(raw, chatId)), '【管理员】', '[Admin] ')}${redact(t, { pii })}` : null
         // say 会先等群里那行「【管理员】…」发出去再注入(见 src/consolesay.js),所以要 await;最多多等一次发送
         // requestId:前端每次提交生成的 32 位十六进制幂等键。静默注入(群里无可见那行字)
         // 时它是唯一跨重启稳定的锚点 —— 带了就能让重复提交落到同一笔持久收据上;没带只是
@@ -1497,7 +1545,13 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
             refused: '该群拒收了这句(原因已回复在群里那行下面);插话未执行',
             quarantined: '这句的来源已被隔离,未执行',
             unconfirmed: '这行字已发进群,但没在 5 秒内确认登记,结果以群里和「实时活动」为准;原样再点一次插入不会重复处理' }[r.reason] || '插话失败'
-          return sendJSON(res, 409, { error: why, reason: r.reason || null })
+          // A Slack channel the bot has not joined refuses every line it posts; a direct message
+          // can only be one with the bot itself.
+          const slackSay = r.reason === 'shown-failed' && chatPlatformOf(raw, chatId) === 'slack'
+          const invite = !slackSay ? '' : /^oc_slack_D/.test(chatId)
+            ? '。Slack 私聊里发不出时，先确认这是和机器人本身的私聊'
+            : '。Slack 频道里发不出时，先确认机器人已在这个频道里：没有的话在频道里发 /invite @机器人名'
+          return sendJSON(res, 409, { error: why + invite, reason: r.reason || null })
         }
         return sendJSON(res, 200, Object.assign(await buildState(), { sayInjected: { chatId, show: visible, reply: wantReply, where } }))
       }
@@ -1523,9 +1577,17 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         return sendJSON(res, 200, Object.assign(await buildState(), { issueNotified: canNotify }))
       }
       if (p === '/api/proxy' && req.method === 'POST') {
-        const { http: httpUrl, enabled } = await body(req); const raw = readRaw()
+        const { http: typed, enabled } = await body(req); const raw = readRaw()
+        // The page shows the saved proxy masked: *** sent back stands for the saved user name and
+        // password, on the same proxy only (another address must be typed with its own).
+        let httpUrl = typed
+        try { if (enabled && typed) httpUrl = require('../slackproxy').restoreMaskedProxy(String(typed), raw.proxy && raw.proxy.http) }
+        catch (e) { return sendJSON(res, 400, { error: e.message }) }
         if (enabled && httpUrl && !/^https?:\/\/\S+$/i.test(String(httpUrl))) return sendJSON(res, 400, { error: '代理地址要像 http://127.0.0.1:7890' })
-        if (enabled && httpUrl) raw.proxy = { http: httpUrl, https: httpUrl, noProxy: deriveNoProxy(raw.providers) }
+        // Exceptions already saved (onboarding adds Feishu and WeCom) are kept alongside the model endpoints.
+        const keep = String((raw.proxy && raw.proxy.noProxy) || '').split(',').map(item => item.trim()).filter(Boolean)
+        const noProxy = [...new Set([...deriveNoProxy(raw.providers).split(','), ...keep])].join(',')
+        if (enabled && httpUrl) raw.proxy = { http: httpUrl, https: httpUrl, noProxy }
         else delete raw.proxy
         writeRaw(raw); return sendJSON(res, 200, await buildState())
       }
@@ -1539,7 +1601,19 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
           // 页面每次保存都带着这两项:与已存的值相同 = 没动它,原样留着,别让一个早先存下的越界值挡住其他设置的保存
           if (typeof patch[k] === 'number' && patch[k] === raw.agent[k]) continue
           const n = Number(patch[k])
-          if (typeof patch[k] === 'boolean' || patch[k] === null || patch[k] === '' || !Number.isInteger(n) || n < 0 || n > max) return sendJSON(res, 400, { error: what })
+          const whole = typeof patch[k] !== 'boolean' && patch[k] !== null && patch[k] !== '' && Number.isInteger(n)
+          // 发行宿主(持久处理流程)的并发上限只收 1–32(c2install),而且只在启动时读:运行中改它,宿主会以英文
+          // 错误拒掉整次保存(c2configcontrol)。这里按同一条规则先挡,用页面的话说清楚。与正在运行的值相同
+          // (文件里没写、页面带回默认值)照常落盘 —— 那不算改。
+          if (k === 'maxConcurrent' && runtimePolicy) {
+            if (!whole || n < 1 || n > 32) return sendJSON(res, 400, { error: '并发上限须为 1–32 之间的整数' })
+            const live = getLiveState ? getLiveState() : null
+            const running = live && live.concurrency && Number.isInteger(live.concurrency.max) ? live.concurrency.max : loadConfig(configPath).agent.maxConcurrent
+            if (n !== running) return sendJSON(res, 409, { error: '服务运行中不能改并发上限：请在配置文件里改 agent.maxConcurrent（1–32），然后重启服务' })
+            raw.agent[k] = n
+            continue
+          }
+          if (!whole || n < 0 || n > max) return sendJSON(res, 400, { error: what })
           raw.agent[k] = n
         }
         // 机器人自称(顶层 brand):空或默认名就不落盘,和安装向导 --full 的写法一致
@@ -2099,6 +2173,8 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         // —— 老配置缺这个字段靠推断在跑,控制台重新保存一次就把它钉死(doctor 那行提示的出路就是这里)
         // ⚠ 不按「那个平台配了凭据没」拒绝:纯配置模式(先绑群、后填凭据)一直是允许的;没配的平台由 doctor 的群行报「收不到消息」
         next.platform = PLATFORMS.includes(platform) ? platform : chatPlatformOf(raw, chatId)
+        // No `lang` key is written here: a new Slack conversation speaks English, any other Chinese
+        // (src/chatlang.js), whatever the language of the page; an entry bound before keeps what it has.
         raw.groups[chatId] = next
         if (runtimePolicy) {
           // A new binding or another backend starts with the recommended model
@@ -2118,13 +2194,20 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         // First-time binding: drop a confirmation into the group (best-effort) so a
         // fresh chat is immediately alive and members know how to use it.
         let notified = false, noticeQueued = false // notified = 真送达(飞书 await 判);noticeQueued = 已交 daemon 发(企微 fire-and-forget,送没送到只有日志知道)
+        // The Slack conversation refused the guide because the bot is not in it: a channel needs /invite
+        // (slackInvite); a direct message can only be one with the bot itself (slackDirect).
+        let slackInvite = false, slackDirect = false
         const fe = raw.feishu || {}
         const sl = raw.slack || {}
         if (isNewBinding && next.platform === 'slack') {
           const bt = isEnvRef(sl.botToken) ? (process.env[String(sl.botToken).slice(4)] || '') : sl.botToken
           if (bt) {
-            try { await sendSlackText(bt, chatId, bindNoticeText(workdir, 'slack', `${sl.commandAlias || '!'}help`)); notified = true }
-            catch (e) { log('bind notice failed (slack): ' + ((e && e.message) || e)) }
+            try { await sendSlackText(bt, chatId, bindNoticeText(workdir, 'slack', `${sl.commandAlias || '!'}help`, chatId, chatLang(next)), { lang: chatLang(next) }); notified = true }
+            catch (e) {
+              const hint = slackInviteHint(e && e.code, chatId)
+              if (hint) { if (/^oc_slack_D/.test(chatId)) slackDirect = true; else slackInvite = true }
+              log('bind notice failed (slack): ' + ((e && e.message) || e) + (hint ? ' — ' + hint : ''))
+            }
           }
         }
         if (isNewBinding && next.platform === 'feishu' && fe.appId && fe.appSecret && !isEnvRef(fe.appId) && !isEnvRef(fe.appSecret)) {
@@ -2135,7 +2218,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         if (isNewBinding && next.platform === 'wecom' && control && control.notifyGroup) {
           try { control.notifyGroup(chatId, bindNoticeText(workdir, 'wecom')); noticeQueued = true } catch (e) { log('bind notice failed: ' + (e && e.message)) }
         }
-        return sendJSON(res, 200, { ...(await buildState()), notified, noticeQueued, ...(createdLocal ? { createdChatId: chatId } : {}) })
+        return sendJSON(res, 200, { ...(await buildState()), notified, noticeQueued, ...(slackInvite ? { slackInvite } : {}), ...(slackDirect ? { slackDirect } : {}), ...(createdLocal ? { createdChatId: chatId } : {}) })
       }
       if (p === '/api/groups' && req.method === 'DELETE') {
         const chatId = url.searchParams.get('chatId'); const raw = readRaw()
@@ -2269,6 +2352,23 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         notifyGroup(chatId, showPii
           ? '🔓 本群已设为数据明文输出:回复里的手机号/邮箱将原样显示(密钥类信息仍会自动遮盖)'
           : '🔒 本群已恢复数据遮盖:回复里的手机号/邮箱将显示为遮盖标记')
+        return sendJSON(res, 200, await buildState())
+      }
+      // The language of the bot's own notices and command replies in one conversation
+      // (src/chatlang.js). The key is written only when the choice differs from the platform's
+      // default (Slack: English; the others: Chinese), so a conversation on its default keeps
+      // its configuration without the key. Read again for the next message: no
+      // session is touched, and the durable writer does not wait for a running task.
+      // No line is posted to the conversation about it.
+      if (p === '/api/groups/lang' && req.method === 'POST') {
+        const { chatId, lang } = await body(req); const raw = readRaw()
+        if (!isChatLang(lang)) return sendJSON(res, 400, { error: 'lang 只认 zh / en' })
+        if (!chatId || !raw.groups || !raw.groups[chatId]) return sendJSON(res, 404, { error: 'no such group' })
+        const g = raw.groups[chatId]
+        if (lang === defaultChatLang(chatPlatformOf(raw, chatId))) delete g.lang
+        else g.lang = lang
+        writeRaw(raw)
+        audit.append({ kind: 'group-lang', chatId, lang, ts: Date.now() })
         return sendJSON(res, 200, await buildState())
       }
       // 「需要你处理」里忽略一条。只有失败轮次能忽略:其余几类各有自己的处理路径(反馈本标已处理、

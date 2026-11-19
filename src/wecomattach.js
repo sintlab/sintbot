@@ -67,10 +67,10 @@ function createWecomAttach({ configPath, stateDir, writeConfig, activateConnecti
           chatId = await discover({ botId: bot.botId, secret: bot.secret, signal, onNotice,
             ...(scan ? { notice: WECOM_SCAN_NOTICES.botReady } : {}),
             // Reply in WeCom only once the current configuration accepts this binding.
-            confirm: async ({ chatId: found }) => {
+            confirm: async ({ chatId: found, chatType }) => {
               const check = merged(JSON.parse(fs.readFileSync(configPath, 'utf8')), found)
               if (!check.ok) throw new Error(check.error)
-              return confirmReply(name)
+              return confirmReply(name, chatType)
             },
             inboxDir: path.join(stateDir, 'wecom-inbox') })
         } catch (error) {

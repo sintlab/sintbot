@@ -10,7 +10,7 @@ function cancelled(reason) {
   return error
 }
 
-// Shared by all per-group Engines. Rust owns capacity and grant order;
+// Shared by all per-group Engines. The built-in core owns capacity and grant order;
 // Node retains only Promise/AbortSignal handles. The caller must durably stage
 // a receipt before awaiting acquire, and commit dispatch only AFTER acquiring.
 // A waiting task is therefore a durable queued receipt, not an attempted model

@@ -9,6 +9,7 @@ const { loadInstallationFromRaw, assertJournalScope, assertRunnerExecutable,
 const { C2DurableJournal } = require('./core/c2durablejournal')
 const { assertNoLegacyGroupState } = require('./c2migration')
 const { applyBrainChange } = require('./groupbrain')
+const { proxyFromEnv } = require('./core/proxy')
 
 const GLOBAL_TASK_KEYS = ['agent', 'timezone', 'brand']
 // A group's model and depth (providerPrefs, legacy model) are not here: the
@@ -36,7 +37,7 @@ function sessionIdentity(provider) {
 function createC2ConfigControl({ installation, getBindings, getHeld = () => new Map(),
   assertWriterLock, store = null, activateRoute = null, probeRunner = assertRunnerExecutable,
   isFrozen = () => false, validateConnectionAddition = null, activateConnection = null,
-  onApplied = null, log = () => {} } = {}) {
+  onApplied = null, log = () => {}, env = process.env } = {}) {
   if (!installation?.cfg?._path || typeof getBindings !== 'function' ||
       typeof getHeld !== 'function' || typeof isFrozen !== 'function' ||
       typeof assertWriterLock !== 'function' ||
@@ -52,16 +53,20 @@ function createC2ConfigControl({ installation, getBindings, getHeld = () => new 
   function held() {
     if (assertWriterLock() !== true) throw new Error('Service writer authority is unavailable')
   }
-  // The group as the settled gate sees it: everything but the per-backend speed.
+  // The group as the settled gate sees it: everything but the per-backend
+  // speed and the language of the bot's own words (src/chatlang.js). Neither
+  // touches the session; each is read again for the next message.
   function taskView(group) {
-    if (!group || typeof group !== 'object' || !group.providerPrefs || typeof group.providerPrefs !== 'object') return group
+    if (!group || typeof group !== 'object') return group
+    const view = { ...group }
+    delete view.lang
+    if (!group.providerPrefs || typeof group.providerPrefs !== 'object') return view
     const prefs = {}
     for (const [name, pref] of Object.entries(group.providerPrefs)) {
       if (!pref || typeof pref !== 'object') { prefs[name] = pref; continue }
       const { speed, ...rest } = pref
       if (Object.keys(rest).length) prefs[name] = rest
     }
-    const view = { ...group }
     delete view.providerPrefs
     if (Object.keys(prefs).length) view.providerPrefs = prefs
     return view
@@ -141,7 +146,13 @@ function createC2ConfigControl({ installation, getBindings, getHeld = () => new 
           validateConnectionAddition(cfg, next.cfg, name) !== true) throw new Error('Connection settings require a service restart')
       connectionAdded.push(name)
     }
+    // A proxy may arrive only inside a proven Slack connection, as the proxy
+    // this process already reaches Slack through (the attach saves it for the
+    // next start by launchd or the desktop app); nothing changes until then.
+    const proxyArrives = !cfg.proxy && !!next.cfg.proxy && connectionAdded.includes('slack') &&
+      (next.cfg.proxy.https || next.cfg.proxy.http) === proxyFromEnv(env)
     for (const key of ['proxy', 'projectsRoots', 'browser']) {
+      if (key === 'proxy' && proxyArrives) continue
       if (!isDeepStrictEqual(cfg[key], next.cfg[key])) throw new Error('Connection and filesystem settings require a service restart')
     }
     if (cfg.agent.maxConcurrent !== next.cfg.agent.maxConcurrent) {
@@ -166,8 +177,11 @@ function createC2ConfigControl({ installation, getBindings, getHeld = () => new 
         sessionIdentity(cfg.providers?.[effective(route.chatId, route.group, cfg)]),
         sessionIdentity(next.cfg.providers?.[effective(route.chatId, target.group, next.cfg)]))
       if (heldGroups.has(route.chatId)) {
-        // Edits elsewhere proceed; the held group keeps its exact settings.
-        if (!isDeepStrictEqual(route.group, target.group)) {
+        // Edits elsewhere proceed; the held group keeps its exact settings,
+        // except the language of the bot's own words: the notice that says
+        // the conversation is held is itself said in that language.
+        const sansLang = group => { const view = { ...group }; delete view.lang; return view }
+        if (!isDeepStrictEqual(sansLang(route.group), sansLang(target.group))) {
           throw new Error('This group is held after an unresolved fault; seal its incident and restart before changing it')
         }
         if (providerMoved) {

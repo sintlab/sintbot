@@ -1,5 +1,40 @@
 [
   {
+    "version": "1.4.28",
+    "date": "2026-11-19",
+    "name": "Slack speaks English, stopping inside a thread, a full queue no longer holds the group",
+    "items": [
+      {
+        "t": "A full queue asks you to resend instead of holding the group",
+        "d": "When two messages are already waiting, a new one is not handled: the bot asks you to send it again after the current task, and the running task is not affected. Before, in Feishu, WeCom and direct messages this interrupted the current task and held the whole group. A message that arrives while the current task is wrapping up is also answered with a request to resend."
+      },
+      {
+        "t": "Slack speaks English by default",
+        "d": "In Slack, the bot's notices, command replies, status and errors are in English, and the model is asked to answer in English (it still follows a member who writes in another language). Slack conversations that are already connected switch to English after the upgrade; for Chinese, change it on the conversation's console card under More settings → Notice language. Feishu, WeCom and local conversations are unchanged."
+      },
+      {
+        "t": "Threads in a Slack channel are handled separately",
+        "d": "A new @mention in the channel while a task is running no longer joins that task: it waits its turn, runs on its own and is answered in its own thread. Only a reply in the running task's thread is added to it. Replying !stop in a thread stops only that thread's task and the queue carries on; a new @bot !stop in the channel, or /sint stop, still stops the current task and clears the queue."
+      },
+      {
+        "t": "Unfinished Slack messages are marked",
+        "d": "After the service is killed or a conversation is sealed, messages that did not finish get ⚠️ and a single note asking you to send them again if you still need them. Deleting a queued message that has replies now cancels it as well, and several problems when the connection is renewed are fixed."
+      },
+      {
+        "t": "Slack setup: proxy, Agent option and hints",
+        "d": "The Slack step of the setup page fills in a terminal proxy it detects (http only); it is saved as the network proxy of the whole service, so other platforms and the local model tools use it too. Declaring the app as a Slack Agent is optional and off by default. When the bot is not in a channel, it says to /invite it first; when another machine is connected to the same Slack app, the console warns about it."
+      },
+      {
+        "t": "Wording for direct messages and one-to-one chats",
+        "d": "Help, status and notices name the kind of conversation: \"this direct message\" or \"this channel\" in Slack. In WeCom a one-to-one chat is no longer called a group, and its project note no longer tells you to mention the bot in a group."
+      },
+      {
+        "t": "Console fixes",
+        "d": "After a failed Codex upgrade the button comes back and the reason stays (local paths are masked); when a model card points to a Codex program other than the one on the PATH, the console asks for a manual upgrade instead. The number of tasks that run at once is checked against 1–32, and changing it while the service runs explains that the configuration file must be edited and the service restarted."
+      }
+    ]
+  },
+  {
     "version": "1.4.27",
     "date": "2026-11-18",
     "name": "Confirmations in the desktop app",

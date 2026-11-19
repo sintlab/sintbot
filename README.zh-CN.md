@@ -144,7 +144,7 @@ curl -fsSL https://sintbot.com/install.sh | bash
 <details>
 <summary><b>它和 cc-bot 有什么区别?</b></summary>
 
-两者都免费。[cc-bot](https://github.com/WaterTian/cc-bot) 是 Claude Code 插件,运行在你自己的交互会话里,用的就是该会话的模型。SintBot 是独立的守护进程:每个群有自己的项目、模型和权限，提供 Claude Code、Codex 两条执行路线，并有本地控制台。当前安装包如何运行，以安装指南为准。
+两者都免费。cc-bot 是 Claude Code 插件,运行在你自己的交互会话里,用的就是该会话的模型。SintBot 是独立的守护进程:每个群有自己的项目、模型和权限，提供 Claude Code、Codex 两条执行路线，并有本地控制台。当前安装包如何运行，以安装指南为准。
 </details>
 
 ## 文档
@@ -168,7 +168,7 @@ curl -fsSL https://sintbot.com/install.sh | bash
 
 ## 许可
 
-SintBot 按 [PolyForm Shield 1.0.0 许可](./LICENSE) 分发，© WaterTian。安装包包含内置核心，准确边界以许可原文为准；依赖声明见 [THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md)。
+SintBot 按 [PolyForm Shield 1.0.0 许可](./LICENSE) 分发。安装包包含内置核心，准确边界以许可原文为准；依赖声明见 [THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md)。
 
 - 可以自己用、团队或公司内部用,也可以修改和运行。
 - 不可以拿它做成与 SintBot 竞争的产品,收费、免费都不行。

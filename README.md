@@ -138,7 +138,7 @@ A switch starts a fresh conversation. Project files and saved shared notes in `C
 <details>
 <summary><b>How is it different from cc-bot?</b></summary>
 
-Both are free. [cc-bot](https://github.com/WaterTian/cc-bot) is a Claude Code plugin: it runs inside your own interactive session, on that session's model. SintBot is a standalone daemon: each group has its own project, model and permissions, with Claude Code and Codex routes and a local console. Follow the installation guide for how to run the installed package.
+Both are free. cc-bot is a Claude Code plugin: it runs inside your own interactive session, on that session's model. SintBot is a standalone daemon: each group has its own project, model and permissions, with Claude Code and Codex routes and a local console. Follow the installation guide for how to run the installed package.
 </details>
 
 ## Documentation
@@ -162,7 +162,7 @@ Report security issues privately through [GitHub Security Advisories](https://gi
 
 ## License
 
-SintBot is distributed under the [PolyForm Shield License 1.0.0](./LICENSE) © WaterTian. The package includes a built-in core. The license text governs. Dependency notices are in [THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md).
+SintBot is distributed under the [PolyForm Shield License 1.0.0](./LICENSE). The package includes a built-in core. The license text governs. Dependency notices are in [THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md).
 
 - You may use, modify and run it for yourself, your team or your company.
 - You may not use it to offer a product that competes with SintBot, paid or free.

@@ -15,9 +15,16 @@
 // recommended(没有「模型卡默认」):新绑的群、换到没选过的后端、模型卡「测试」预填 / 兜底用的推荐项 ——
 //   Codex = ★ 型号 + 它自带的默认深度;Claude 订阅 = 握手里 default 指向的型号 + xhigh(Claude Code 自己的默认档);
 //   第三方 = 型号由模型卡定(空)+ xhigh。只用于预填与迁移,运行时不拿它悄悄兜底。
+// Key-route providers (src/providers.js: DeepSeek, GLM, Kimi, MiniMax …) are chosen per group like the two
+// subscriptions: the documented main models of the registry entry, replaced by the provider's own live list once the
+// card has a key and the probe answers (10-minute cache like the others; a missing or failed probe never blocks a
+// card click, and the typed /model waits at most FRESH_WAIT_MS). recommended = the registry's main model and depth.
+// A custom endpoint nobody lists keeps models:null (its model stays on the model card).
 
 const fs = require('node:fs')
 const path = require('node:path')
+const crypto = require('node:crypto')
+const providers = require('./providers')
 const { recommendEffort } = require('./core/modelcmd') // 推荐深度的口径只此一份(engine 的 /model 与模型卡同用)
 const { setModelNames } = require('./core/modelname')
 
@@ -31,17 +38,28 @@ const TTL = 600_000
 // old list is used and the refresh finishes in the background.
 const FRESH_WAIT_MS = 8000
 
-// DeepSeek exposes its Claude-compatible model as a per-project choice.
-function isDeepSeek(p = {}) {
-  try { return new URL(p.baseUrl || p.env?.ANTHROPIC_BASE_URL).hostname === 'api.deepseek.com' } catch { return false }
+// A card whose model each group picks from a list: a registry provider (by its endpoint, never its name).
+const isKeyRoute = (p = {}) => !!providers.forCard(p)
+// The documented names show on group cards and receipts before any live list is fetched.
+setModelNames(providers.PROVIDERS.flatMap((e) => providers.choicesOf(e).map((m) => ({ id: m.id, name: m.label }))))
+const asModel = (m) => ({ id: m.id, ...(m.label && m.label !== m.id ? { name: m.label } : {}),
+  ...(Array.isArray(m.efforts) ? { efforts: m.efforts.slice() } : {}),
+  ...(Number.isSafeInteger(m.context) ? { context: m.context } : {}), ...(typeof m.vision === 'boolean' ? { vision: m.vision } : {}),
+  ...(m.family ? { family: m.family } : {}) })
+function keyRouteCatalog(entry, models, source) {
+  return { ok: true, models: models.map(asModel), aliases: [], efforts: CLAUDE_EFFORTS.slice(),
+    recommended: { model: entry.model, effort: entry.effort || CLAUDE_EFFORT }, source }
 }
-function deepSeekCatalog(p) {
-  if (!isDeepSeek(p)) return null
-  return { ok: true, models: [{ id: 'deepseek-flash[1m]', name: 'DeepSeek Flash (1M)' }],
-    aliases: [], efforts: CLAUDE_EFFORTS.slice(), recommended: { model: 'deepseek-flash[1m]', effort: 'max' }, source: 'builtin' }
+// The registry's own list for a key-route card (no network), or null for any other card.
+function staticCatalog(p) {
+  const hit = providers.forCard(p)
+  return hit ? keyRouteCatalog(hit.entry, providers.choicesOf(hit.entry), 'builtin') : null
 }
+const keyHash = (key) => crypto.createHash('sha256').update(String(key)).digest('hex').slice(0, 16)
 
-function createModelCatalog({ codexstatus, claudemodels, claudeBin = 'claude', cacheFile = null, now = () => Date.now(), log = () => {} } = {}) {
+// fetchImpl: the live model lists of key-route cards are probed only when it is given (the service passes
+// globalThis.fetch; tests and embeddings pass nothing and get the documented lists).
+function createModelCatalog({ codexstatus, claudemodels, claudeBin = 'claude', cacheFile = null, now = () => Date.now(), log = () => {}, fetchImpl = null } = {}) {
   const live = { codex: null, claude: null } // { at, data }
   const inflight = { codex: null, claude: null }
   const fetchers = {
@@ -106,6 +124,28 @@ function createModelCatalog({ codexstatus, claudemodels, claudeBin = 'claude', c
   }
   const sourceOf = (kind) => (live[kind] && live[kind].saved && !live[kind].at ? 'saved' : 'live')
 
+  // Key-route live lists, per card endpoint and key (hashed): { at, ids | null, names }. A failed probe keeps the previous
+  // ids and is not retried before the TTL; nothing about the key or the answer is logged.
+  const krLive = new Map(), krInflight = new Map()
+  async function keyRouteIds(name, p, waitMs) {
+    const key = typeof p.apiKey === 'string' && !p.apiKey.startsWith('env:') ? p.apiKey : ''
+    if (!fetchImpl || !key || !p.baseUrl) return null
+    const k = `${name}|${p.baseUrl}|${keyHash(key)}`
+    const c = krLive.get(k)
+    if ((!c || now() - c.at >= TTL) && !krInflight.has(k)) {
+      krInflight.set(k, providers.probeModels({ baseUrl: p.baseUrl, apiKey: key, fetchImpl }).catch(() => ({ ok: false }))
+        .then((r) => { krLive.set(k, { at: now(), ids: r.ok ? r.ids : (c && c.ids) || null, names: r.ok ? r.names || {} : (c && c.names) || {} }); if (!r.ok) log(`${name} 可选型号探测失败 —— 用${c && c.ids ? '上次的清单' : '文档里的清单'}`) })
+        .finally(() => krInflight.delete(k)))
+    }
+    if (krInflight.has(k) && (waitMs > 0 || !c)) {
+      let timer
+      await Promise.race([krInflight.get(k), new Promise((r) => { timer = setTimeout(r, waitMs > 0 ? waitMs : 0) })])
+      clearTimeout(timer)
+    }
+    const cur = krLive.get(k)
+    return cur && cur.ids && cur.ids.length ? cur : null
+  }
+
   // opts.fresh: wait for a stale list to refresh first (opts.waitMs, default 8 s); see get.
   async function catalog(name, provider, opts) {
     const p = provider || {}
@@ -126,7 +166,11 @@ function createModelCatalog({ codexstatus, claudemodels, claudeBin = 'claude', c
       cat.recommended.effort = recommendEffort(cat, star.model)
       return cat
     }
-    if (isDeepSeek(p)) return deepSeekCatalog(p)
+    const kr = providers.forCard(p)
+    if (kr) {
+      const got = await keyRouteIds(name, p, waitMs)
+      return got ? keyRouteCatalog(kr.entry, providers.mergeLive(kr.entry, got.ids, got.names), 'live') : staticCatalog(p)
+    }
     if (!p.baseUrl) {
       const d = await get('claude', waitMs)
       if (d && Array.isArray(d.models) && d.models.length) {
@@ -169,4 +213,4 @@ function createModelCatalog({ codexstatus, claudemodels, claudeBin = 'claude', c
   return catalog
 }
 
-module.exports = { isDeepSeek, deepSeekCatalog, createModelCatalog, CLAUDE_EFFORTS, CODEX_LEGAL, CLAUDE_ALIASES }
+module.exports = { isKeyRoute, staticCatalog, createModelCatalog, CLAUDE_EFFORTS, CODEX_LEGAL, CLAUDE_ALIASES }

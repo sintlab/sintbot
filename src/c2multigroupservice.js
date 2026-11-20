@@ -577,6 +577,8 @@ function createC2MultiGroupService({ routes, assertWriterLock,
   }
   return { start, stop, routeMessage, addRoute, heldGroups, beginMaintenance, endMaintenance,
     get inMaintenance() { return maintenance },
+    // A stop (signal, upgrade, console seal or a service fault) has begun.
+    get stopping() { return !!stopPromise },
     // True only while the transport serves: the console may inject then and
     // never during startup or a stop, when routing would close the service.
     get serving() { return started && !starting && !stopPromise && !failed },

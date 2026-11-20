@@ -41,15 +41,17 @@ function createConsoleSeal({ getHeld, gate, upgradeActive, beginMaintenance, end
   }
   let requested = null
   // Anything but the holds themselves keeps the service running: a running,
-  // queued or unsettled group would lose its turn's outcome on the stop.
-  const blocked = () => gate().filter(reason => reason !== 'held')
+  // queued or unsettled group would lose its turn's outcome on the stop. The
+  // group being sealed is left out: its own stuck turn (a lane, a model permit
+  // kept until restart) is what the seal is for, not another group's work.
+  const blocked = chatId => gate({ except: chatId }).filter(reason => reason !== 'held')
   function request(chatId) {
     if (requested) throw new Error(PENDING)
     if (typeof chatId !== 'string' || !getHeld().has(chatId)) throw new Error(NOT_HELD)
     if (upgradeActive()) throw new Error(UPGRADING)
-    if (blocked().length) throw new Error(BUSY)
+    if (blocked(chatId).length) throw new Error(BUSY)
     beginMaintenance()
-    if (blocked().length) { endMaintenance(); throw new Error(BUSY) }
+    if (blocked(chatId).length) { endMaintenance(); throw new Error(BUSY) }
     requested = chatId
     // After the reply has left: the stop closes the console server too.
     defer(() => requestStop(chatId))

@@ -382,4 +382,4 @@ async function recoverAndOpen({ gate, journal, coordinator, resolveTarget, send,
   return { settledReceiptIds: settled, ingressClosed: false }
 }
 
-module.exports = { recoverAndOpen, assessScopedRecovery }
+module.exports = { recoverAndOpen, assessScopedRecovery, provedNotStartedEffect }

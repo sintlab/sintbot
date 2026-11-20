@@ -23,8 +23,10 @@ const { normalizeTz, isValidTz, tzOffsetMin, tzParts } = require('../core/time')
 const { runTurn, probeVersion, isClosedRunnerResult, isClosedRunnerError } = require('../agent/runner')
 const codexstatus = require('../agent/codexstatus') // codex 订阅登录态 + 用量(卡片「验证登录」)
 const { createCodexCli } = require('../agent/codexcli') // the Codex program on this machine: version and upgrade
+const { createClaudeCli } = require('../agent/claudecli') // the Claude Code program on this machine: version and upgrade
 const { codexCatalogWindows, windowForProvider } = require('../agent/modelwindows')
-const { isDeepSeek, deepSeekCatalog } = require('../modelcatalog')
+const { isKeyRoute, staticCatalog } = require('../modelcatalog') // key-route cards (src/providers.js) pick their model per group
+const providerRegistry = require('../providers')
 const { assertCardCredentials } = require('../agent/claudecode')
 const claudestatus = require('../agent/claudestatus') // Claude 订阅登录态(卡片「检测登录」· doctor 同源)
 const claudemodels = require('../agent/claudemodels') // Claude 模型候选(仅登录后给)
@@ -66,6 +68,9 @@ const CONSOLE_HTML = path.join(__dirname, 'console.html')
 // Model display names: the same function as group replies and cards, injected
 // into the page (with a plain fallback when the page is opened directly).
 const MODELNAME_SLOT = "/*__SBOT_MODELNAME__*/(s=>String(s==null?'':s))"
+// The key-route provider registry the page builds its presets, logos and endpoint display from (src/providers.js).
+const PROVIDERS_SLOT = '/*__SBOT_PROVIDERS__*/[]'
+const PROVIDERS_SRC = JSON.stringify(require('../providers').clientView()).replace(/</g, '\\u003c')
 const MODELNAME_SRC = '(' + require('../core/modelname').modelDisplayName.toString() + ')'
 const { knownModelNames } = require('../core/modelname')
 const LIVE_ACTIVITY_JS = fs.readFileSync(path.join(__dirname, 'liveactivity-client.js'), 'utf8')
@@ -74,20 +79,6 @@ const takeover = require('./takeover') // 接管链接的票据与 cookie(纯逻
 const dashboard = require('./dashboard') // 「需要你处理」收件箱 + 活动流的账本回填(纯逻辑)
 const { createBrowserRoutes } = require('./browserroutes') // /api/browser/* 的实现;这里只裁决谁能进
 const PKG_VERSION = (() => { try { return 'v' + require('../../package.json').version } catch { return '' } })() // 顶栏版本徽章
-let changelogCache = null // 随包分发的版本历史,进程内读一次
-const readChangelog = () => {
-  if (changelogCache) return changelogCache
-  try { changelogCache = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'CHANGELOG.json'), 'utf8')) } catch { changelogCache = [] }
-  return Array.isArray(changelogCache) ? changelogCache : (changelogCache = [])
-}
-// 版本历史的英文本(CHANGELOG.en.json,按 version 与中文条目对应,可以缺版本 —— 缺了页面回退中文)。
-// 没这个文件 / 文件坏了都当「一条英文都没有」,整卡照旧出中文,不是错误。
-let changelogEnCache = null
-const readChangelogEn = () => {
-  if (changelogEnCache) return changelogEnCache
-  try { changelogEnCache = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'CHANGELOG.en.json'), 'utf8')) } catch { changelogEnCache = [] }
-  return Array.isArray(changelogEnCache) ? changelogEnCache : (changelogEnCache = [])
-}
 const isEnvRef = (v) => typeof v === 'string' && v.startsWith('env:')
 // 目录浏览—— 只在**项目根目录**之内一层层列。围栏判据(哪些根 / realpath 比较)全在
 // src/projectsroot.js,与保存绑定、风格提炼、doctor 同一份;这里只管列目录。
@@ -242,7 +233,7 @@ function bindNoticeText(workdir, platform = 'feishu', cmd = '/help', chatId = ''
   return `✅ ${here}已绑定项目「${path.basename(String(workdir || '')) || '(未命名)'}」\n${platform === 'wecom' ? '@我 派单(只有 @ 我的消息我才收得到)' : slackDm ? '直接发消息派单' : platform === 'slack' ? '在频道里 @我 派单(不 @ 我的消息不处理)' : '直接发消息或 @我 派单'};${cmd} 查看命令`
 }
 
-function createUiServer({ configPath, getLiveState = null, getConnHealth = null, onConfigChange = null, onHostChange = null, control = null, updater = null, host = '127.0.0.1', log = () => {}, issuesPath = null, sessionsPath = null, auditPath = null, ledgerPath = null, inboxDismissPath = null, fetchImpl = null, cdpImpl = null, onTakeoverClaim = null, onTakeoverExpire = null, onTakeoverEnd = null, takeoverNow = null, wecomExec = null, verifyFile = null, setupMode = null, cronRecoveryEnabled = false, runtimePolicy = null, cronTools = null, wecomAttach = null, getWecomChats = null, slackAttach = null, getSlackChats = null, publicReachOptions = null, codexCli = null, schedules = null } = {}) {
+function createUiServer({ configPath, getLiveState = null, getConnHealth = null, onConfigChange = null, onHostChange = null, control = null, updater = null, host = '127.0.0.1', log = () => {}, issuesPath = null, sessionsPath = null, auditPath = null, ledgerPath = null, inboxDismissPath = null, fetchImpl = null, cdpImpl = null, onTakeoverClaim = null, onTakeoverExpire = null, onTakeoverEnd = null, takeoverNow = null, wecomExec = null, verifyFile = null, setupMode = null, cronRecoveryEnabled = false, runtimePolicy = null, cronTools = null, wecomAttach = null, getWecomChats = null, slackAttach = null, getSlackChats = null, publicReachOptions = null, codexCli = null, claudeCli = null, schedules = null } = {}) {
   // Legacy scheduling rules are injected by its compatibility wrapper only.
   // The durable console cannot acquire those rules through this base module.
   const unsupportedCron = () => { throw new Error('当前控制台未接入定时任务') }
@@ -355,7 +346,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
   const catalogFor = async (name, prov) => {
     const c = runtimePolicy && runtimePolicy.modelCatalog
     if (!prov) return null
-    if (!c) return deepSeekCatalog(prov)
+    if (!c) return staticCatalog(prov)
     try { return await c(name, prov) } catch { return null }
   }
   // The target backend of a change as the file says now ({} when unknown).
@@ -390,7 +381,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
     const switching = target !== home
     const tBrain = brainMod.groupBrain(g, target, tProv, { defaultProvider: defName })
     let model = change.model, effort = change.effort, speed = change.speed
-    if (model !== undefined && model !== '' && tProv.baseUrl && !isDeepSeek(tProv)) return { status: 400, body: { error: '这个模型的型号是连接设置,请在「模型」页修改' } }
+    if (model !== undefined && model !== '' && tProv.baseUrl && !isKeyRoute(tProv)) return { status: 400, body: { error: '这个模型的型号是连接设置,请在「模型」页修改' } }
     if (model !== undefined && model !== '' && !brainMod.isModel(model)) return { status: 400, body: { error: '型号格式不对' } }
     if (effort !== undefined && effort !== '' && !brainMod.isEffort(effort)) return { status: 400, body: { error: '思考深度格式不对' } }
     // Speed: 'fast' = turn Fast on, '' = back to standard, omitted = keep. The
@@ -399,7 +390,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
     if (model === tBrain.model) model = undefined
     if (effort === tBrain.effort && model === undefined) effort = undefined
     if (speed !== undefined && speed === (tBrain.speed || '') && model === undefined) speed = undefined
-    const f = fillPicks({ switching, model, effort, speed, currentModel: tBrain.model, currentEffort: tBrain.effort, currentSpeed: tBrain.speed || '', third: !!tProv.baseUrl && !isDeepSeek(tProv), cat })
+    const f = fillPicks({ switching, model, effort, speed, currentModel: tBrain.model, currentEffort: tBrain.effort, currentSpeed: tBrain.speed || '', third: !!tProv.baseUrl && !isKeyRoute(tProv), cat })
     model = f.model; effort = f.effort
     if (speed === undefined && f.speed !== undefined) speed = f.speed // a model without a Fast tier drops Fast
     const nextModel = model === undefined ? tBrain.model : model
@@ -521,6 +512,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
   let codexStatusCache = null // { at, login, usage } — codex 订阅登录态+额度缓存(供 /api/state 回填 + verify 60s 去抖)
   let claudeStatusCache = null // { at, login } — Claude 订阅登录态(`claude auth status --json`),同上回填
   const cxCli = codexCli || createCodexCli() // injected only by tests and previews (never install for real there)
+  const clCli = claudeCli || createClaudeCli() // likewise
   // The `bin` a Codex model card names for itself ('' = none: it runs the codex on PATH).
   const codexCardBin = (cfg, name) => {
     const pv = name && Object.prototype.hasOwnProperty.call(cfg.providers || {}, name) ? cfg.providers[name] : null
@@ -845,9 +837,11 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
     return (cat && cat.recommended && cat.recommended.model) || undefined
   }
 
-  async function testProvider(name, prompt) {
+  // `unsaved`: a card typed into the model dialog and not saved yet (Verify key); it runs like a saved one, with the
+  // executor's own retries off so a wrong key answers in seconds (the terminal wizard's trial does the same).
+  async function testProvider(name, prompt, unsaved = null) {
     const cfg = loadConfig(configPath); applyProxyEnv(cfg)
-    const provider = cfg.providers[name]
+    const provider = unsaved || cfg.providers[name]
     if (!provider) return { ok: false, error: `unknown provider '${name}'` }
     if (provider.hidden) return { ok: false, error: '模型已隐藏，不能试运行' }
     if (provider.runner !== 'codex') {
@@ -869,6 +863,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         model: provider.model || await recommendedModel(name, provider),
         permissionMode: cfg.agent.permissionMode,
         signal: ac.signal, // a one-line reply — needs no tools, so no allow list
+        ...(unsaved ? { extraEnv: { CLAUDE_CODE_MAX_RETRIES: '0' } } : {}),
       })
       closed = isClosedRunnerResult(execution)
       const { result } = execution
@@ -1170,7 +1165,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         //     局域网 / 经隧道的访客看到登录框,本机仍免密,好进去把密码设回来;
         //   · 带反代头的一律不算本机:隧道对端哪天被写成本机地址,只绑环回也不会退化成「公网全员免密」。
         const injectTok = pageToken(req)
-        return fs.readFile(CONSOLE_HTML, 'utf8', (e, html) => e ? (res.writeHead(500), res.end('console.html missing')) : (res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }), res.end(html.replace('__SBOT_TOKEN__', injectTok).replace('__SBOT_VERSION__', PKG_VERSION).replace('__SBOT_FEISHU_LOGIN__', feishuLoginInfo().ready ? '1' : '').replace('/*__LIVE_ACTIVITY__*/', () => LIVE_ACTIVITY_JS).replace(MODELNAME_SLOT, () => MODELNAME_SRC))))
+        return fs.readFile(CONSOLE_HTML, 'utf8', (e, html) => e ? (res.writeHead(500), res.end('console.html missing')) : (res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }), res.end(html.replace('__SBOT_TOKEN__', injectTok).replace('__SBOT_VERSION__', PKG_VERSION).replace('__SBOT_FEISHU_LOGIN__', feishuLoginInfo().ready ? '1' : '').replace('/*__LIVE_ACTIVITY__*/', () => LIVE_ACTIVITY_JS).replace(MODELNAME_SLOT, () => MODELNAME_SRC).replace(PROVIDERS_SLOT, () => PROVIDERS_SRC))))
       }
       // 接管浏览器页。群成员的一次性链接是 /browser#k=<票>:票在 URL 片段里,服务端根本收不到 ⇒ 不进任何日志、链接预览的
       //   裸 GET 也抓不走;页面脚本读片段、人点「开始接管」后 POST /api/browser/claim 换 cookie。这里只分发页面:
@@ -1202,10 +1197,6 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         const detail = runtimePolicy?.activityDetail?.(url.searchParams.get('chatId'), url.searchParams.get('id'))
         return sendJSON(res, detail ? 200 : 404, detail || { error: '活动详情未记录' })
       }
-      // 版本历史(设置页「版本历史」卡):CHANGELOG.json 随包分发 = 单一事实源,发版时更新
-      if (p === '/api/changelog' && req.method === 'GET') return sendJSON(res, 200, { changelog: readChangelog() })
-      // 同一份版本历史的英文本(界面切英文时才拉;缺的版本前端按 version 回退中文)
-      if (p === '/api/changelog-en' && req.method === 'GET') return sendJSON(res, 200, { changelog: readChangelogEn() })
       // 升级进度:控制台的升级弹窗在升级期间每一两秒读一次。只读,只给升级状态和还有任务的群名,
       // 不重算整份 state(那里有健康探针);服务重启的那几秒连不上,由页面当作「正在重启」处理。
       if (p === '/api/update' && req.method === 'GET') {
@@ -1253,6 +1244,25 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       // request from the sign-in check, which answers first. Answers
       // { ok, count, added, removed, first }; without the service's live list
       // (unit tests, embedding) nothing is probed: ok false, unavailable true.
+      // The live model list of a key-route endpoint (model card dialog, once a key is entered or verified): one GET of
+      // the provider's list route (src/providers.js) with the key, bearer first. The key is the request's (an unsaved
+      // card) or the saved card's (?name=, or a POST naming the card with no key and the same endpoint). Answers
+      // { ok, source: 'live' | 'builtin', reason, count, models: [{ id, name? }] }: the documented list when the probe
+      // gets nothing. Neither the key nor the provider's answer is logged or returned.
+      if (p === '/api/providers/models' && (req.method === 'GET' || req.method === 'POST')) {
+        const b = req.method === 'POST' ? await body(req) : {}
+        const name = req.method === 'GET' ? (url.searchParams.get('name') || '') : String(b.name || '')
+        const cfg = loadConfig(configPath)
+        const saved = name && Object.prototype.hasOwnProperty.call(cfg.providers || {}, name) ? cfg.providers[name] : null
+        const baseUrl = String((req.method === 'POST' && b.baseUrl) || (saved && saved.baseUrl) || '').trim()
+        const apiKey = String((req.method === 'POST' && b.apiKey) || (saved && saved.baseUrl === baseUrl ? saved.apiKey : '') || '').trim()
+        if (!/^https?:\/\/[^\s/]+/i.test(baseUrl)) return sendJSON(res, 400, { error: '端点地址不对' })
+        const hit = providerRegistry.forBase(baseUrl)
+        const r = apiKey ? await providerRegistry.probeModels({ baseUrl, apiKey, fetchImpl: fetchImpl || globalThis.fetch }) : { ok: false, reason: 'auth' }
+        const list = r.ok ? providerRegistry.mergeLive(hit && hit.entry, r.ids, r.names) : (hit ? providerRegistry.choicesOf(hit.entry) : [])
+        return sendJSON(res, 200, { ok: r.ok, source: r.ok ? 'live' : 'builtin', reason: r.ok ? '' : r.reason, count: list.length,
+          models: list.map((m) => ({ id: m.id, ...(m.label && m.label !== m.id ? { name: m.label } : {}), ...(m.family ? { family: m.family } : {}) })) })
+      }
       if (p === '/api/models/refresh' && req.method === 'POST') {
         const { kind } = await body(req)
         if (kind !== 'codex' && kind !== 'claude') return sendJSON(res, 400, { error: '未知的型号清单' })
@@ -1290,6 +1300,30 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         audit.append({ kind: 'codex-cli-upgrade', ok: !!r.ok, from: r.from || '', to: r.to || '', error: r.ok ? null : String(detail || r.error || '').slice(0, 200), ts: Date.now() })
         if (r.ok) { codexstatus.clearCache(); codexModelsCache = null }
         return sendJSON(res, r.ok ? 200 : refused ? 409 : 500, r)
+      }
+      // The Claude Code program on this machine (Claude subscription card): the
+      // same row as the Codex one, for the one program every Claude Code card
+      // runs (`agent.bin`). The upgrade goes the way the program was installed
+      // (npm, or the native installer's own update) with fixed commands only;
+      // nothing from the request reaches them. Refused while a group is running
+      // or about to start a Claude Code turn: every card that is not Codex runs
+      // this program, third-party endpoints included. Every attempt is audited.
+      if (p === '/api/claude/cli' && req.method === 'GET') return sendJSON(res, 200, await clCli.info({ bin: loadConfig(configPath).agent.bin }))
+      if (p === '/api/claude/cli/upgrade' && req.method === 'POST') {
+        const cfg = loadConfig(configPath); applyProxyEnv(cfg)
+        const lv = getLiveState ? getLiveState() : null
+        const busyOn = Object.entries(cfg.groups || {}).filter(([id, g]) => {
+          const pv = cfg.providers[(control && control.providerOf && control.providerOf(id)) || (g && g.provider) || cfg.defaultProvider]
+          const st = lv && lv.groups && lv.groups[id]
+          return pv && pv.runner !== 'codex' && st && (st.busy || st.waitingForCapacity)
+        }).map(([id, g]) => (g && g.name) || id.slice(-8))
+        if (busyOn.length) return sendJSON(res, 409, { error: `有群正在用 Claude Code 处理任务（${busyOn.slice(0, 3).join('、')}），等它结束再升级` })
+        // `detail` (the command's own wording, with this machine's paths) is for
+        // the audit only; the page gets `error`, where paths are masked.
+        const { detail, ...r } = await clCli.upgrade({ bin: cfg.agent.bin })
+        audit.append({ kind: 'claude-cli-upgrade', ok: !!r.ok, via: r.via || '', from: r.from || '', to: r.to || '', error: r.ok ? null : String(detail || r.error || '').slice(0, 200), ts: Date.now() })
+        if (r.ok) { probeCache = null; claudestatus.clearCache() }
+        return sendJSON(res, r.ok ? 200 : 500, r)
       }
       if (p === '/api/usage' && req.method === 'GET') { const cfg = loadConfig(configPath); return sendJSON(res, 200, await getUsage(cfg.providers, { bin: cfg.agent.bin })) }
       // 模型卡「额度」行的 ↻:只刷这一个 provider 且绕过两层缓存(见 usage.js refreshUsage)。
@@ -2229,7 +2263,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
             brainMod.migrateLegacyModel(next, defName)
             const b = brainMod.groupBrain(next, tName, tProv, { defaultProvider: defName })
             const f = fillPicks({ switching: true, currentModel: b.model, currentEffort: b.effort,
-              third: !!tProv.baseUrl && !isDeepSeek(tProv), cat: tName === preName ? preCat : null })
+              third: !!tProv.baseUrl && !isKeyRoute(tProv), cat: tName === preName ? preCat : null })
             if (f.model !== undefined || f.effort !== undefined) applyBrainChange(raw, chatId, { model: f.model, effort: f.effort })
           }
         }
@@ -2836,6 +2870,36 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       }
       if (p === '/api/test' && req.method === 'POST') {
         const { provider, prompt } = await body(req); return sendJSON(res, 200, await testProvider(provider, prompt))
+      }
+      // Verify key (model card dialog, key-route cards): one short trial turn with the endpoint, key and env typed
+      // into the dialog (or the saved card's key when none is typed), the same trial the terminal wizard runs. A
+      // failure is put in plain words (setupmodels.explainTestFailure: wrong key, no balance, unknown model, not an
+      // Anthropic-format endpoint, unreachable) in the page's language; a success also probes the live model list.
+      // Answers { ok, ms, kind?, reason?, count?, source? }; the key is never returned or logged.
+      if (p === '/api/providers/test' && req.method === 'POST') {
+        const b = await body(req)
+        const en = b.en === true // the wording of the answer only (the page's own language)
+        const cfg = loadConfig(configPath)
+        const saved = b.name && Object.prototype.hasOwnProperty.call(cfg.providers || {}, b.name) ? cfg.providers[b.name] : null
+        const baseUrl = String(b.baseUrl || (saved && saved.baseUrl) || '').trim()
+        const same = !!(saved && saved.baseUrl === baseUrl)
+        const apiKey = String(b.apiKey || (same ? saved.apiKey : '') || '').trim()
+        if (!/^https?:\/\/[^\s/]+/i.test(baseUrl)) return sendJSON(res, 400, { error: en ? 'The endpoint address is not valid' : '端点地址不对' })
+        if (!apiKey) return sendJSON(res, 200, { ok: false, kind: 'auth', reason: en ? 'Enter the API key first' : '先填 API key' })
+        const hit = providerRegistry.forBase(baseUrl)
+        // Only Claude Code tuning travels from the page: connection and credential variables come from the fields above.
+        const typed = b.env && typeof b.env === 'object' ? Object.fromEntries(Object.entries(b.env)
+          .filter(([k, v]) => /^[A-Z][A-Z0-9_]*$/.test(k) && typeof v === 'string' && !/^ANTHROPIC_(BASE_URL|AUTH_TOKEN|API_KEY)$/.test(k))) : {}
+        const provider = { baseUrl, apiKey, model: (same && saved.model) || (hit && hit.entry.model) || String(b.model || ''),
+          env: { ...(same && saved.env ? saved.env : {}), ...typed }, ...(b.vision === false ? { vision: false } : {}) }
+        const r = await testProvider(null, null, provider)
+        if (!r.ok) {
+          const why = require('../setupmodels').explainTestFailure(r.error || r.reply || '', { baseUrl: providerRegistry.displayBase(baseUrl), lang: en ? 'en' : 'zh' })
+          return sendJSON(res, 200, { ok: false, ms: r.ms, kind: why.kind, reason: why.text })
+        }
+        const list = await providerRegistry.probeModels({ baseUrl, apiKey, fetchImpl: doFetch })
+        return sendJSON(res, 200, { ok: true, ms: r.ms, source: list.ok ? 'live' : 'builtin',
+          count: list.ok ? providerRegistry.mergeLive(hit && hit.entry, list.ids, list.names).length : (hit ? providerRegistry.choicesOf(hit.entry).length : 0) })
       }
       // Claude 卡片「检测登录」:`claude auth status --json`(官方非交互子命令,0.2s,不吃订阅额度)。
       // 与 codex 的「验证登录」对称。**force 才绕过缓存**:点按钮就是要看此刻的状态(刚

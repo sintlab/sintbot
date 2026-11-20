@@ -12,13 +12,17 @@ const { createC2ChatFacts } = require('./c2chatfacts')
 // A host facade over existing v2 authorities, not a second execution engine.
 // The allowlist applies after the existing console's authentication boundary.
 const READ_PATHS = ['/api/wecom/chats', '/api/wecom/attach', '/api/slack/channels', '/api/slack/attach', '/api/slack/manifest', '/api/slack/proxy', '/api/state', '/api/events', '/api/inbox', '/api/activity', '/api/activity/detail',
-  '/api/changelog', '/api/changelog-en', '/api/codex/models', '/api/usage',
+  '/api/codex/models', '/api/usage',
   '/api/plugins', '/api/design/styles', '/api/design/icons', '/api/fs/listdir',
   '/api/feishu/admin-candidates', '/api/feishu/org-users', '/api/feishu/resolve-contact',
   '/api/feishu/chats', '/api/feishu/chat-members', '/api/update', '/api/claude/models',
   '/api/groups/model-options',
   // Version of the Codex program on this machine (model card).
   '/api/codex/cli',
+  // Version of the Claude Code program on this machine (Claude subscription card).
+  '/api/claude/cli',
+  // The live model list of a saved key-route card (src/providers.js); writes nothing.
+  '/api/providers/models',
   // The console's own conversations (src/platform/local.js).
   '/api/local/history',
   // Counts only, for the desktop shell: also answered to a loopback request
@@ -48,12 +52,19 @@ const WRITE_PATHS = ['/api/wecom/attach', '/api/wecom/attach/cancel', '/api/weco
   '/api/default-provider', '/api/claude/verify',
   // Probe a backend's model list again now; writes no config and no journal.
   '/api/models/refresh',
+  // The live model list of an endpoint and key typed into the model card dialog (not saved; writes nothing).
+  '/api/providers/models',
   // Upgrade the machine's Codex program: one fixed install command, refused
   // while a group runs a Codex turn (serverbase).
   '/api/codex/cli/upgrade',
+  // Upgrade the machine's Claude Code program the way it was installed: fixed
+  // commands, refused while a group runs a Claude Code turn (serverbase).
+  '/api/claude/cli/upgrade',
   // One headless trial reply outside every journal and session (like a
   // one-off agent run); it does not take a group concurrency slot.
   '/api/test',
+  // The same trial for an endpoint and key typed into the model dialog (Verify key); writes no config.
+  '/api/providers/test',
   '/api/inbox/dismiss', '/api/issues/status',
   // Console injection through the ordinary busy-followup ingress, the line shown in
   // the group and the reply delivered there. The posted line is the platform
@@ -280,15 +291,19 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
       for (const receipt of snap.receipts.pending) {
         if (activity?.has(chatId, receipt.id)) continue
         const running = rt?.v2RunningJobs?.some(job => job.msg?._c2ReceiptId === receipt.id)
+        // A row drawn from the receipt alone has no message text: the service's
+        // own words take its place, in both interface languages (the panel is
+        // outside the page's translation, and one update reaches every page).
         items.push({ id: receipt.id, chatId, group, ts: receipt.acceptedAt,
           kind: running ? 'start' : 'done', status: running ? 'running' : '等待处理',
-          text: running ? '正在处理群消息' : '消息已登记，等待处理', sender: '' })
+          text: running ? '正在处理群消息' : '消息已登记，等待处理',
+          textEn: running ? 'Processing a group message' : 'Message recorded, waiting to be processed', sender: '' })
       }
       for (const receipt of snap.receipts.completed.slice(-30)) {
         if (activity?.has(chatId, receipt.id)) continue
         // A settled receipt alone does not prove successful answer delivery.
         items.push({ id: receipt.id, chatId, group, ts: receipt.settledAt,
-          kind: 'done', status: '已结账', text: '消息处理记录已结账', sender: '' })
+          kind: 'done', status: '已结账', text: '消息处理记录已结账', textEn: 'Message record settled', sender: '' })
       }
     }
     const recent = activity?.list({ limit: 100 }).activity || []
@@ -393,7 +408,7 @@ function createC2Console(options = {}) {
     // The service's scheduled tasks (null where this run has none: every
     // /api/schedules request is then refused).
     schedules: options.schedules || null,
-    onHostChange: options.onHostChange, codexCli: options.codexCli || null,
+    onHostChange: options.onHostChange, codexCli: options.codexCli || null, claudeCli: options.claudeCli || null,
     getLiveState: facade.getLiveState, control: facade.control, runtimePolicy: facade,
     issuesPath: path.join(stateDir, 'issues.jsonl'),
     sessionsPath: path.join(stateDir, 'ui-sessions.json'),

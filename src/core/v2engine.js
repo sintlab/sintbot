@@ -10,7 +10,7 @@ const { redact } = require('./redact')
 const { fmtStamp, normalizeTz } = require('./time')
 const { settleUsage, manifestPolicy, manifestHeader, manifestContext, manifestFeatures, manifestSkills,
   followupEnabled, systemAppendix, turnPrompt, engineTerminalStep, engineQueueStep,
-  idleCompactPlan, idleCompactSettle, compactEvent, classifyError, scheduleStep } = require('../agent/privatecore')
+  idleCompactPlan, idleCompactSettle, compactEvent, classifyError, scheduleStep, unfinishedStep } = require('../agent/privatecore')
 const { taskId } = require('./enginecheckpoint')
 const { prepareCardTerminalPath } = require('./c2cardterminalpath')
 const { terminalReplyText, terminalNoticeText } = require('./c2terminaleffectbridge')
@@ -22,7 +22,7 @@ const progress = require('./turnprogress')
 const { groupBrain } = require('./brain')
 const { modelName } = require('./modelname')
 const { chatLang, pick } = require('../chatlang')
-const { parseModelWords, resolveModel, effortsFor, speedsFor, fastNote, whatName, modelChoices, fillPicks, recommendEffort } = require('./modelcmd')
+const { parseModelWords, resolveModel, effortsFor, speedsFor, fastNote, whatName, modelChoices, fillPicks, recommendEffort, MODEL_LIST_CAP } = require('./modelcmd')
 const { DEFAULT_VALUE: MODEL_CARD_DEFAULT } = require('../platform/modelcard')
 // A /model card answers taps for ten minutes; older cards turn read-only.
 const MODEL_CARD_TTL_MS = 10 * 60 * 1000
@@ -245,7 +245,7 @@ const T = {
     const L = [`【${(o.w || GROUP_WORDS).of}模型】${o.current}`]
     L.push(`【后端】${o.names.join(' · ')}`)
     if (o.choices === null) L.push(`【${o.name} 型号】到控制台改`)
-    else if (o.choices && o.choices.length) L.push(`【${o.name} 型号】${o.choices.map((x) => modelName(x)).join(' · ')}`)
+    else if (o.choices && o.choices.length) L.push(`【${o.name} 型号】${o.choices.map((x) => modelName(x)).join(' · ')}${o.more ? ' · 更多见控制台' : ''}`)
     if (o.efforts && o.efforts.length) L.push(`【思考深度】${o.efforts.join(' · ')}`)
     // Speed: listed only when the current model has a Fast tier; its cost is
     // written next to it so it is known before turning it on.
@@ -260,7 +260,7 @@ const T = {
   modelUnknownWord: (word, o) => (o.choices === null
     ? `⚠ 「${word}」不是可选的后端或深度（${o.name} 的型号要到控制台改）—— 一项都没改`
     : `⚠ 「${word}」不是可选的后端、型号或深度 —— 一项都没改`)
-    + `\n【后端】${o.names.join(' · ')}` + (o.choices && o.choices.length ? `\n【${o.name} 型号】${o.choices.map((x) => modelName(x)).join(' · ')}` : '')
+    + `\n【后端】${o.names.join(' · ')}` + (o.choices && o.choices.length ? `\n【${o.name} 型号】${o.choices.map((x) => modelName(x)).join(' · ')}${o.more ? ' · 更多见控制台' : ''}` : '')
     + (o.efforts && o.efforts.length ? `\n【思考深度】${o.efforts.join(' · ')}` : '')
     + (o.speeds && o.speeds.length ? '\n【速度】标准 · Fast' : ''),
   modelDup: (what, a, b) => `⚠ 一次只能选一个${what}（写了 ${a} 和 ${b}）—— 一项都没改`,
@@ -373,7 +373,7 @@ const T_EN = {
     const L = [`${upperFirst((o.w || GROUP_WORDS_EN).of)} model: ${o.current}`]
     L.push(`Backends: ${o.names.join(' · ')}`)
     if (o.choices === null) L.push(`${o.name} models: change them in the console`)
-    else if (o.choices && o.choices.length) L.push(`${o.name} models: ${o.choices.map((x) => modelName(x, 'en')).join(' · ')}`)
+    else if (o.choices && o.choices.length) L.push(`${o.name} models: ${o.choices.map((x) => modelName(x, 'en')).join(' · ')}${o.more ? ' · more in the console' : ''}`)
     if (o.efforts && o.efforts.length) L.push(`Thinking effort: ${o.efforts.join(' · ')}`)
     if (o.speeds && o.speeds.length) L.push(`Speed: standard · Fast (${o.fastNote})`)
     if (o.exEffort) L.push(`· Change the effort: /model ${o.exEffort} (keeps the conversation)`)
@@ -386,7 +386,7 @@ const T_EN = {
   modelUnknownWord: (word, o) => (o.choices === null
     ? `⚠ "${word}" is not an available backend or effort (${o.name} models are changed in the console) — nothing was changed`
     : `⚠ "${word}" is not an available backend, model or effort — nothing was changed`)
-    + `\nBackends: ${o.names.join(' · ')}` + (o.choices && o.choices.length ? `\n${o.name} models: ${o.choices.map((x) => modelName(x, 'en')).join(' · ')}` : '')
+    + `\nBackends: ${o.names.join(' · ')}` + (o.choices && o.choices.length ? `\n${o.name} models: ${o.choices.map((x) => modelName(x, 'en')).join(' · ')}${o.more ? ' · more in the console' : ''}` : '')
     + (o.efforts && o.efforts.length ? `\nThinking effort: ${o.efforts.join(' · ')}` : '')
     + (o.speeds && o.speeds.length ? '\nSpeed: standard · Fast' : ''),
   modelDup: (what, a, b) => `⚠ Only one ${what} can be chosen at a time (got ${a} and ${b}) — nothing was changed`,
@@ -564,7 +564,8 @@ class Engine {
       durableV2ModelCard = null,
       durableV2UsageProbe = null, durableV2Issues = null,
       durableV2Version = '', durableV2DataDir = '', durableV2ConsoleEnabled = false,
-      durableV2CompactSession = null, durableV2CapacitySnapshot = null } = options
+      durableV2CompactSession = null, durableV2CapacitySnapshot = null,
+      durableV2RecoveryNotes = null, durableV2RollbackWindow = null } = options
     const sync = f => typeof f === 'function' && f.constructor?.name !== 'AsyncFunction'
     if (!cfg || !cfg.agent || !cfg.groups || !cfg.providers ||
         options.receiptJournal || options.unifiedStepHost ||
@@ -595,7 +596,10 @@ class Engine {
         durableV2Issues !== null && typeof durableV2Issues?.add !== 'function' ||
         typeof durableV2Version !== 'string' ||
         durableV2CompactSession !== null && typeof durableV2CompactSession !== 'function' ||
-        durableV2CapacitySnapshot !== null && !sync(durableV2CapacitySnapshot)) {
+        durableV2CapacitySnapshot !== null && !sync(durableV2CapacitySnapshot) ||
+        durableV2RecoveryNotes !== null && (typeof durableV2RecoveryNotes.set !== 'function' ||
+          typeof durableV2RecoveryNotes.delete !== 'function') ||
+        durableV2RollbackWindow !== null && !sync(durableV2RollbackWindow)) {
       throw new TypeError('dedicated Engine requires complete durable v2 authority')
     }
     Object.assign(this, { cfg, store, log, durableV2Runtime, durableV2Payloads,
@@ -604,7 +608,8 @@ class Engine {
       durableV2StreamFrames, durableV2AcquireCapacity, durableV2SealCapacity,
       durableV2SwitchProvider, durableV2SetBrain, durableV2ModelCatalog, durableV2ModelCard,
       durableV2UsageProbe, durableV2Issues, durableV2Version,
-      durableV2DataDir, durableV2ConsoleEnabled, durableV2CompactSession, durableV2CapacitySnapshot })
+      durableV2DataDir, durableV2ConsoleEnabled, durableV2CompactSession, durableV2CapacitySnapshot,
+      durableV2RecoveryNotes, durableV2RollbackWindow })
     this.projectMemory = options.projectMemory || null
     this.repoInfo = options.repoInfo || null
     this.activity = options.activity || null
@@ -741,6 +746,52 @@ abortDurableV2FaultTurn(turn) {
       try { rt.v2Controller.abort(); return true } catch { return false }
     }
     return this.durableV2ActiveFaultProofs([turn]) !== null
+  }
+
+// Codex exec failed before turn.started, or Claude Code before system/init,
+// and its child has closed (rule 1, ABI 40). The core judges the shape; only a not-started verdict records the
+// runner-not-started witness, and its notice is kept for this receipt's one
+// recovery notice. An unknown verdict, a witness that cannot be recorded (a
+// merged batch, a changed authority) or a core failure leaves the start
+// unknown, as before: the runner rejects and the group is held.
+_durableV2PreStartFailure({ rt, chatId, receiptId, capability, facts }) {
+    const known = value => typeof value === 'string' && value ? value : null
+    const runner = ['codex-exec', 'claude-code'].includes(facts?.runner) ? facts.runner : null
+    if (!runner) throw new Error('C2 pre-start failure names no supported runner')
+    const decision = unfinishedStep({ type: 'prestart', runner, phase: facts?.phase === 'after' ? 'after' : 'before', event: known(facts?.event),
+      item: known(facts?.item), tag: known(facts?.tag), excerpt: known(facts?.excerpt),
+      rollbackWindowOpen: this._durableV2RollbackWindowOpen(), lang: this._chatLang(chatId) })
+    this.log(`group ${chatId}: the executor failed before it started; core says ${decision.decision} (${decision.reason})`)
+    if (decision.decision !== 'not-started') return { notStarted: false }
+    const witnessed = capability.onSpawnFailed({ backend: runner, code: 'PRE_START_ERROR',
+      turnStarted: false, closed: true })
+    if (witnessed !== true) throw new Error('C2 runner not-started witness was not confirmed')
+    rt.v2PreStartNotice = { receiptId, notice: decision.notice, resetSession: decision.resetSession === true }
+    return { notStarted: true }
+  }
+
+// The host fact for unfinished_step: an upgrade switch that has not confirmed
+// this release may still start the previous one. Unreadable counts as open.
+_durableV2RollbackWindowOpen() {
+    if (!this.durableV2RollbackWindow) return false
+    try { return this.durableV2RollbackWindow() !== false } catch { return true }
+  }
+
+// The two runner witnesses that existed before ABI 40 (the exec child never
+// spawned; the App Server rejected the thread before any turn/start) ask the
+// core too, so a not-started proof is never written while an upgrade can still
+// roll back. Their recovery notice stays the ordinary one.
+_durableV2SpawnWitness({ chatId, capability, value }) {
+    const runner = value?.backend === 'codex-app-server' ? 'codex-app-server'
+      : value?.backend === 'codex-exec' ? 'codex-exec' : null
+    if (!runner) return capability.onSpawnFailed(value)
+    const decision = unfinishedStep({ type: 'prestart', runner, phase: 'before', event: null, item: null, tag: null,
+      excerpt: null, rollbackWindowOpen: this._durableV2RollbackWindowOpen(), lang: this._chatLang(chatId) })
+    if (decision.decision !== 'not-started') {
+      this.log(`group ${chatId}: the executor did not start; core says ${decision.decision} (${decision.reason})`)
+      throw new Error(`C2 runner not-started witness withheld (${decision.reason})`)
+    }
+    return capability.onSpawnFailed(value)
   }
 
 _rt(chatId) {
@@ -963,10 +1014,13 @@ async _modelPanel(chatId, group, extra = {}) {
     if (!draft.e) draft.e = base.effort || ''
     if (!cat || cat.models !== null) {
       const choices = cat && cat.ok !== false ? (cat.models || []).map(m => m.id) : []
-      if (!draft.m && !third) draft.m = base.model || ''
+      // Every card with a list starts from the model this group runs now (its
+      // own pick, else the card's); a key-route card is no exception.
+      if (!draft.m) draft.m = base.model || ''
       if (!draft.m && rec && rec.model) draft.m = rec.model
-      const options = choices.map(v => ({ value: v, label: modelName(v, lang) }))
-      if (draft.m && !choices.includes(draft.m)) options.push({ value: draft.m, label: modelName(draft.m, lang) })
+      // The card's dropdown lists the first MODEL_LIST_CAP models (and the drafted one); the console has the rest.
+      const options = choices.slice(0, MODEL_LIST_CAP).map(v => ({ value: v, label: modelName(v, lang) }))
+      if (draft.m && !options.some(o => o.value === draft.m)) options.push({ value: draft.m, label: modelName(draft.m, lang) })
       model = { options, selected: draft.m }
     } else draft.m = ''
     const dModel = draft.m || (third ? base.model : '')
@@ -1079,8 +1133,10 @@ async _modelCatalog(name, provider, opts) {
     try { return await this.durableV2ModelCatalog(name, provider, opts) } catch { return null }
   }
 _modelOpts(names, name, cat, brain, lang = 'zh') {
+    // A long live list is listed up to MODEL_LIST_CAP (the rest: 「更多见控制台」); a typed name still resolves on the whole list.
+    const all = !cat ? undefined : cat.models === null ? null : cat.ok === false ? [] : modelChoices(cat)
     return { names, name,
-      choices: !cat ? undefined : cat.models === null ? null : cat.ok === false ? [] : modelChoices(cat),
+      choices: Array.isArray(all) ? all.slice(0, MODEL_LIST_CAP) : all, more: Array.isArray(all) ? Math.max(0, all.length - MODEL_LIST_CAP) : 0,
       efforts: cat ? effortsFor(cat, brain && brain.model) : [],
       // Speed: only the live catalog says whether this model has a Fast tier.
       speeds: cat ? speedsFor(cat, brain && brain.model) : [], speed: (brain && brain.speed) || '',
@@ -2386,6 +2442,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
         rt.v2SteerLandedChain = observation
         observation.catch(() => { authority.close(); controller?.abort() })
       }
+      rt.v2InterruptNote = null
       const prompt = this._prepareRunnerPrompt({ msg: job.msg, group: job.group,
         platform: job.platform, providerName: name, provider, rt,
         batch: cohort.receiptIds.length > 1 ? cohort.jobs.map(item => item.msg) : null,
@@ -2395,6 +2452,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
       rt.v2RunnerStopPromise = null
       rt.v2RunnerStopVerified = false
       rt.v2RunnerNotStarted = false
+      rt.v2PreStartNotice = null
       let streamChain = Promise.resolve()
       let streamFailure = null
       const joinedLine = () => rt.v2CardJoinedNames.length
@@ -2601,9 +2659,11 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
           const ack = capability.onTurnAccepted(value)
           accepted = true
           if (ackDue) { ackDue = false; armAck(0) }
+          this._consumeInterruptNote(chatId, rt)
           return ack
         },
-        onSpawnFailed: value => capability.onSpawnFailed(value),
+        onSpawnFailed: value => this._durableV2SpawnWitness({ chatId, capability, value }),
+        onPreStartFailure: facts => this._durableV2PreStartFailure({ rt, chatId, receiptId, capability, facts }),
         onSteerReady, onSteerLanded,
         log: this.log })
       rt.v2Compacted = false // 「进度可能已折叠」只带一轮
@@ -2709,12 +2769,19 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
       const proofId = `sbot-c2-runner-not-started-v1:${receiptId}:${generation}`
       const eventId = `sbot-c2-runner-not-started-commit-v1:${receiptId}:${turnToken}:${generation}`
       const provenNotStarted = !accepted &&
-        ['AGENT_BIN_MISSING', 'AGENT_THREAD_REJECTED'].includes(error?.code) &&
+        ['AGENT_BIN_MISSING', 'AGENT_THREAD_REJECTED', 'AGENT_NOT_STARTED'].includes(error?.code) &&
         this.durableV2Journal?.lookupRunnerNotStarted(proofId)?.dispatchEffectId === effectId &&
         this.durableV2Journal?.hasEvent(eventId) === true
+      // The core's verdict on a Codex start that failed before turn.started:
+      // its notice is the recovery notice of this one receipt.
+      const preStart = error?.code === 'AGENT_NOT_STARTED' && rt.v2PreStartNotice?.receiptId === receiptId
+        ? rt.v2PreStartNotice : null
+      rt.v2PreStartNotice = null
       if (provenNotStarted) {
         authority.close()
-        await authority.open()
+        if (preStart) this.durableV2RecoveryNotes?.set(receiptId, preStart.notice)
+        try { await authority.open() }
+        finally { if (preStart) this.durableV2RecoveryNotes?.delete(receiptId) }
         if (authority.snapshot().receipts.pending.some(item => item.id === receiptId) ||
             !authority.snapshot().receipts.completed.some(item => item.id === receiptId)) {
           authority.close()
@@ -2737,7 +2804,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
         // (missing rollout, unreadable history). As /new on this now idle and
         // settled group: the next message starts a fresh session instead of
         // meeting the same rejection again.
-        if (error.code === 'AGENT_THREAD_REJECTED' && this.store.getSession(chatId)) {
+        if ((error.code === 'AGENT_THREAD_REJECTED' || preStart?.resetSession === true) && this.store.getSession(chatId)) {
           let locked = false
           try { locked = this.durableV2AssertWriterLock?.() === true } catch {}
           if (!locked) {
@@ -2745,7 +2812,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
             throw new Error('C2 v2 rejected-session reset lost single-writer lock')
           }
           this.store.resetSessionAndStats(chatId)
-          this.log(`group ${chatId}: Codex rejected the saved session before any turn; the next message starts a new session`)
+          this.log(`group ${chatId}: Codex ${preStart ? 'could not resume' : 'rejected'} the saved session before any turn; the next message starts a new session`)
         }
         rt.v2RunnerGeneration = null
         rt.v2RunningJobs = null
@@ -3051,9 +3118,43 @@ classifyDurableV2UnresolvedTurn({ chatId, receiptId, turnToken, effectId,
     ].join('\n')
     // Reinject current supported context each turn. No legacy feature menu,
     // external-message commands or v1 manifest refresh scheduler is included.
+    const interrupted = this._interruptNote(msg.chatId, rt)
     return turnPrompt({ lines: batch?.length > 1 ? batch.map(line) : [line(msg)],
       cancelled: null, compacted: rt?.v2Compacted === true, manifest, updated: false,
+      ...(interrupted ? { interrupted } : {}),
       ...this._handbackReply(rt, msg.chatId, group, providerName, provider) })
+  }
+
+  // Rule 2 (ABI 40): the session of a crash-interrupted turn is kept; its next
+  // turn carries the core's sentence (turn_prompt) until a runner accepts that
+  // turn. The fact lives with the group's session state (StateStore); it
+  // counts only while the journal has its crashInterrupt event and the session
+  // is the one it was written for, otherwise it is dropped unused.
+  _interruptNote(chatId, rt) {
+    const fact = this.store?.getInterrupted?.(chatId)
+    if (!fact) return null
+    const valid = /^[0-9a-f]{32}$/.test(fact.receiptId || '') && /^[0-9a-f]{32}$/.test(fact.generation || '') &&
+      Number.isSafeInteger(fact.turnToken) && fact.turnToken > 0 &&
+      (fact.sessionId || null) === (this.store.getSession(chatId) || null) &&
+      this.durableV2Journal?.hasEvent(`sbot-c2-crash-interrupt-v1:${fact.receiptId}:${fact.turnToken}:${fact.generation}`) === true
+    if (!valid) {
+      try { this.store.clearInterrupted(chatId) } catch (error) { this.log(`group ${chatId}: interrupted note not cleared: ${error.message}`) }
+      return null
+    }
+    if (rt) rt.v2InterruptNote = fact
+    return { lang: this._chatLang(chatId), text: typeof fact.text === 'string' && fact.text ? fact.text : null }
+  }
+
+  // Once a runner accepted the turn that carried the sentence it is used up.
+  // A failed write keeps it for the next turn rather than losing it.
+  _consumeInterruptNote(chatId, rt) {
+    const fact = rt?.v2InterruptNote
+    if (!fact) return
+    rt.v2InterruptNote = null
+    try {
+      if (this.store.getInterrupted?.(chatId)?.receiptId === fact.receiptId) this.store.clearInterrupted(chatId)
+      this.log(`group ${chatId}: the turn after the crash-interrupted one carried its note`)
+    } catch (error) { this.log(`group ${chatId}: interrupted note not cleared: ${error.message}`) }
   }
 
   // The reply kept by a successful idle compaction, for the session, backend

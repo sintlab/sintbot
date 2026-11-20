@@ -230,7 +230,8 @@ const activityPanel = (() => {
     }
     const b = n.children[0], lead = b.children[0], group = groups.get(r.chatId)
     text(lead.children[0], stamp(r.ts) + ' · ' + (r.sender || '—'))
-    text(lead.children[1], r.text || tr('内容未记录','Content not recorded'))
+    // `textEn`: the service's own words for a row without a message (src/c2console.js getActivity)
+    text(lead.children[1], (en() && r.textEn) || r.text || tr('内容未记录','Content not recorded'))
     text(lead.children[2], active(r) ? (r.doing || []).join(' · ') : r.preview || '')
     text(b.children[1], status(r.status) + (r.messageCount > 1 ? ' · ' + tr('消息 ','messages ') + r.messageCount : '') + (r.ms ? ' · ' + (r.ms/1000).toFixed(1)+'s' : ''))
     b.children[1].dataset.state = r.status; b.setAttribute('aria-expanded', String(open.has(k)))

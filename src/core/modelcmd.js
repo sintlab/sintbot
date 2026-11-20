@@ -128,6 +128,10 @@ function fastNote(cat, modelId, lang = 'zh') {
   return (k ? `约 ${k[1]} 倍速，` : '') + FAST_COST
 }
 
+// 群里一次最多列这么多型号(文字回复与 /model 卡片的下拉):第三方实时清单可能有几十个,余下的说「更多见控制台」。
+// 打字指定清单里的任何型号仍然认(按完整清单解析,只是不全列出来)。
+const MODEL_LIST_CAP = 20
+
 // 群里列给人看的型号:别名在前(短、好打),再列完整 id
 function modelChoices(cat) {
   if (!cat || !Array.isArray(cat.models)) return []
@@ -168,4 +172,4 @@ function fillPicks({ switching = false, model, effort, speed, currentModel = '',
   return { model, effort, filled, ...(speed !== undefined ? { speed } : {}), ...(speedDropped ? { speedDropped } : {}) }
 }
 
-module.exports = { parseModelWords, resolveModel, effortsFor, speedsFor, fastNote, speedName, whatName, modelChoices, recommendEffort, fillPicks, EFFORT_WORDS, SPEED_WORDS, FAST_COST }
+module.exports = { parseModelWords, resolveModel, effortsFor, speedsFor, fastNote, speedName, whatName, modelChoices, recommendEffort, fillPicks, EFFORT_WORDS, SPEED_WORDS, FAST_COST, MODEL_LIST_CAP }

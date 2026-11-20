@@ -13,8 +13,31 @@ const NOTICE_TEXT = '上一轮没有完成（模型出错或服务中断），�
 const NOTICE_TEXT_EN = 'The last round did not finish (a model error or a service interruption). Please send your request again.'
 // The notice in the conversation's own language, read from the live
 // configuration at the moment it is sent. `platform` is the sender's own: a
-// conversation whose entry does not say speaks that platform's default.
-const noticeFor = (cfg, chatId, platform) => pick(chatLang(cfg.groups?.[chatId], platform), NOTICE_TEXT, NOTICE_TEXT_EN)
+// conversation whose entry does not say speaks that platform's default. A
+// receipt the core closed with its own notice (a start that failed before the
+// executor began, a turn a crash cut off; ABI 40 unfinished_step) gets that
+// notice instead, already in the conversation's language.
+const noticeFor = (cfg, chatId, platform, receiptId = null, notes = null) =>
+  (receiptId && notes?.get(receiptId)) || pick(chatLang(cfg.groups?.[chatId], platform), NOTICE_TEXT, NOTICE_TEXT_EN)
+
+// Process-local notices for receipts the next recovery settles, set just
+// before that recovery and removed after it. Never written anywhere: a notice
+// lost to a restart falls back to the ordinary recovery notice above.
+const MAX_NOTE = 4000
+function createRecoveryNotes() {
+  const notes = new Map()
+  return Object.freeze({
+    set(receiptId, text) {
+      if (!RECEIPT_ID.test(receiptId || '') || typeof text !== 'string' || !text.trim() || text.length > MAX_NOTE) {
+        throw new TypeError('C2 recovery notice invalid')
+      }
+      notes.set(receiptId, text)
+    },
+    get: receiptId => notes.get(receiptId) || null,
+    delete: receiptId => notes.delete(receiptId),
+    get size() { return notes.size },
+  })
+}
 
 // A deliberately narrow recovery sender for a previously accepted Feishu
 // message. The ordinary platform.reply() can fall back to a second send after
@@ -23,7 +46,7 @@ const noticeFor = (cfg, chatId, platform) => pick(chatLang(cfg.groups?.[chatId],
 // The caller supplies the active app's SDK client and the multi-platform
 // router under its single-writer lease. Neither credentials nor reply text
 // enter the durable receipt.
-function createFeishuRecoverySender({ cfg, platform, client } = {}) {
+function createFeishuRecoverySender({ cfg, platform, client, notes = null } = {}) {
   if (!cfg || typeof cfg !== 'object' || !cfg.groups ||
       !platform || typeof platform.names !== 'function' ||
       typeof platform.get !== 'function' || typeof platform.forChat !== 'function' ||
@@ -67,7 +90,7 @@ function createFeishuRecoverySender({ cfg, platform, client } = {}) {
     try {
       const response = await client.im.message.reply({
         path: { message_id: receipt.sourceId },
-        data: { msg_type: 'text', content: JSON.stringify({ text: noticeFor(cfg, receipt.chatId) }) },
+        data: { msg_type: 'text', content: JSON.stringify({ text: noticeFor(cfg, receipt.chatId, undefined, receipt.id, notes) }) },
       })
       const id = response?.data?.message_id ?? response?.message_id
       return response?.code === 0 && typeof id === 'string' &&
@@ -85,7 +108,7 @@ function createFeishuRecoverySender({ cfg, platform, client } = {}) {
 // The same single-attempt notice for a local conversation: one appended line
 // under the accepted message. A failed append reports null (unknown), exactly
 // as an ambiguous chat service call does; it is never retried.
-function createLocalRecoverySender({ cfg, platform } = {}) {
+function createLocalRecoverySender({ cfg, platform, notes = null } = {}) {
   if (!cfg || typeof cfg !== 'object' || !cfg.groups ||
       !platform || typeof platform.get !== 'function' || typeof platform.forChat !== 'function' ||
       typeof platform.get('local')?.notice !== 'function') {
@@ -124,7 +147,7 @@ function createLocalRecoverySender({ cfg, platform } = {}) {
       throw new Error('C2 local recovery target differs from durable receipt')
     }
     try {
-      const id = local.notice(receipt.chatId, noticeFor(cfg, receipt.chatId), receipt.sourceId)
+      const id = local.notice(receipt.chatId, noticeFor(cfg, receipt.chatId, undefined, receipt.id, notes), receipt.sourceId)
       return isLocalMessageId(id) ? id : null
     } catch { return null }
   }
@@ -138,7 +161,7 @@ function createLocalRecoverySender({ cfg, platform } = {}) {
 // it opens that one socket early when recovery runs before the service starts
 // serving, and never a second one. One part, one attempt; anything but a
 // confirmed ACK reports null (unknown), which is never retried.
-function createWecomRecoverySender({ cfg, platform } = {}) {
+function createWecomRecoverySender({ cfg, platform, notes = null } = {}) {
   const adapter = platform?.get?.('wecom')
   if (!cfg?.groups || typeof adapter?.pushOnce !== 'function' || typeof platform?.forChat !== 'function') {
     throw new TypeError('C2 WeCom recovery needs active conversation routing')
@@ -170,7 +193,7 @@ function createWecomRecoverySender({ cfg, platform } = {}) {
     }
     try {
       adapter.openOutbound?.()
-      const id = await adapter.pushOnce(receipt.chatId, noticeFor(cfg, receipt.chatId))
+      const id = await adapter.pushOnce(receipt.chatId, noticeFor(cfg, receipt.chatId, undefined, receipt.id, notes))
       return isWecomMessageId(id) ? id : null
     } catch { return null }
   }
@@ -183,7 +206,7 @@ function createWecomRecoverySender({ cfg, platform } = {}) {
 // in the thread of the source message in a channel, in the conversation itself
 // in a direct message. Sending needs no socket. Anything but a confirmed
 // message reports null (unknown), which is never retried.
-function createSlackRecoverySender({ cfg, platform } = {}) {
+function createSlackRecoverySender({ cfg, platform, notes = null } = {}) {
   const adapter = platform?.get?.('slack')
   if (!cfg?.groups || typeof adapter?.replyOnce !== 'function' || typeof platform?.forChat !== 'function') {
     throw new TypeError('C2 Slack recovery needs active conversation routing')
@@ -216,7 +239,7 @@ function createSlackRecoverySender({ cfg, platform } = {}) {
     }
     let id = null
     try {
-      const response = await adapter.replyOnce({ chatId: receipt.chatId, messageId: receipt.sourceId }, noticeFor(cfg, receipt.chatId, 'slack'), { notice: true })
+      const response = await adapter.replyOnce({ chatId: receipt.chatId, messageId: receipt.sourceId }, noticeFor(cfg, receipt.chatId, 'slack', receipt.id, notes), { notice: true })
       id = response?.code === 0 ? response.data?.message_id : null
     } catch {}
     // Display only: a ⏳ left by the interrupted turn becomes ⚠️ beside the
@@ -249,4 +272,4 @@ function createRoutedRecoverySender({ cfg, senders } = {}) {
   })
 }
 
-module.exports = { NOTICE_TEXT, NOTICE_TEXT_EN, createWecomRecoverySender, createSlackRecoverySender, createFeishuRecoverySender, createLocalRecoverySender, createRoutedRecoverySender }
+module.exports = { NOTICE_TEXT, NOTICE_TEXT_EN, createRecoveryNotes, createWecomRecoverySender, createSlackRecoverySender, createFeishuRecoverySender, createLocalRecoverySender, createRoutedRecoverySender }

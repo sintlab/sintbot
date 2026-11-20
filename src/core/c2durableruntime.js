@@ -732,15 +732,19 @@ class C2DurableRuntime {
     } catch (error) { this.close(); throw error }
 
     let phase = 'attempting'
-    // Two host witnesses prove that no model turn began: the exec child never
-    // spawned (no pid), or the App Server rejected initialize/thread before
-    // any turn/start and its child has already closed.
+    // Three host witnesses prove that no model turn began: the exec child never
+    // spawned (no pid); the App Server rejected initialize/thread before any
+    // turn/start and its child has already closed; or the Codex exec child
+    // (before turn.started) or the Claude Code child (before system/init)
+    // reported an error, the core's unfinished_step judged the shape not
+    // started (ABI 40), and the child has already closed.
     const runnerNotStartedWitness = failure => {
       const keys = failure && typeof failure === 'object' ? Object.keys(failure).sort() : []
       return (isDeepStrictEqual(keys, ['backend', 'code', 'pid']) &&
           failure.backend === 'codex-exec' && failure.code === 'ENOENT' && failure.pid === null) ||
         (isDeepStrictEqual(keys, ['backend', 'closed', 'code', 'turnStarted']) &&
-          failure.backend === 'codex-app-server' && failure.code === 'THREAD_REJECTED' &&
+          (failure.backend === 'codex-app-server' && failure.code === 'THREAD_REJECTED' ||
+            ['codex-exec', 'claude-code'].includes(failure.backend) && failure.code === 'PRE_START_ERROR') &&
           failure.turnStarted === false && failure.closed === true)
     }
     const onSpawnFailed = (failure) => {

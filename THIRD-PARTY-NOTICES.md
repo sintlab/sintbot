@@ -60,6 +60,36 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## Model provider logos (Lobe Icons)
+
+- **Where**: the brand sprite (`#brand-sprite`) in `src/ui/console.html` — the small logos on the model cards and in the Add model preset list. The same symbols are used on the SintBot website.
+- **Source**: [Lobe Icons](https://github.com/lobehub/lobe-icons) (Claude, Claude Code, OpenAI, Codex, Zhipu, DeepSeek, MiniMax, Kimi). In the Kimi mark the letter follows the text colour instead of white, so it stays visible on the light theme.
+- **License**: MIT, full text below. The marks themselves are trademarks of Anthropic, OpenAI, Zhipu AI, DeepSeek, MiniMax and Moonshot AI, used only to identify which model a card connects to. SintBot is not affiliated with or endorsed by them.
+
+```
+MIT License
+
+Copyright (c) 2023 LobeHub
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ## Rust crates embedded in the built-in core
 
 The built-in core includes the following runtime dependencies locked for this release. Each listed crate offers the selected license as one of its declared alternatives. The license text below is copied from that exact version’s local crate archive. Build-only procedural macro crates in the lockfile are not part of this WASM payload.

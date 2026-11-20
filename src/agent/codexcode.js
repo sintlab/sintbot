@@ -23,6 +23,33 @@ const { IS_WIN, resolveSpawn } = require('./winexec')
 const { tagError } = require('./errtag') // 出错原话 → quota / sessionMissing / transient 之一(优先级只在那一处定),与 claude runner 共用
 const { sandboxTier, codexBuildPrompt, codexBuildArgs, codexNormalizeEvent, codexParseError, codexEffortRejection } = require('./privatecore')
 const { coreFailedResult } = require('./errtag')
+const prestart = require('./prestart')
+
+// What Codex emitted before turn.started, for the log and the error message:
+// the event and item types, and for an error a short excerpt of its message
+// (src/agent/prestart.js). Never the full text.
+function excerptOf(text) {
+  if (typeof text !== 'string' || !text.trim()) return null
+  let message = text
+  try { message = parseCodexError(text).text || text } catch { /* the raw text, still redacted */ }
+  return prestart.excerptOf(String(message))
+}
+const word = prestart.word
+function preStartShape(raw) {
+  const type = word(raw?.type)
+  const item = raw?.item && typeof raw.item === 'object' && !Array.isArray(raw.item) ? raw.item : null
+  const itemType = item ? word(item.type) : null
+  const message = itemType === 'error' ? item.message
+    : type === 'error' ? raw.message : type === 'turn.failed' ? raw.error?.message : null
+  return { type, itemType, excerpt: excerptOf(message) }
+}
+const describeShape = shape => `event ${shape.type || '(none)'}` +
+  (shape.itemType ? `, item ${shape.itemType}` : '') + (shape.excerpt ? `: ${shape.excerpt}` : '')
+// The text of a pre-start failure report, for its classification only.
+const failureText = raw => raw?.item?.type === 'error' ? raw.item.message
+  : raw?.type === 'error' ? raw.message : raw?.type === 'turn.failed' ? raw.error?.message : null
+// The errtag class of a failure text, in the core's prestart vocabulary.
+const failureTag = text => typeof text === 'string' && text.trim() ? prestart.tagOf(parseCodexError(text).text) : null
 
 // Warn only when the answer→close (rollout-flush) lag is abnormally high. Real-machine
 // data (Windows, codex 0.142.5) clustered at ~2.0–3.2s, so healthy turns stay silent and
@@ -182,6 +209,10 @@ function runOnce(opts, effort) {
     onRawEvent,
     onTurnAccepted,
     onSpawnFailed,
+    // Durable start only: Codex failed before turn.started and its child has
+    // closed. Receives { event, item, tag, excerpt } and answers synchronously
+    // { notStarted: true } once the not-started witness is recorded.
+    onPreStartFailure,
     signal,
     softStopGraceMs = 10000,
     log = () => {}, // daemon logger — warns when the answer→close (rollout-flush) lag is high
@@ -193,6 +224,7 @@ function runOnce(opts, effort) {
     if (onTurnAccepted !== undefined && typeof onTurnAccepted !== 'function') return reject(new TypeError('onTurnAccepted must be a function'))
     if (onDurableEvent !== undefined && typeof onDurableEvent !== 'function') return reject(new TypeError('onDurableEvent must be a function'))
     if (onSpawnFailed !== undefined && typeof onSpawnFailed !== 'function') return reject(new TypeError('onSpawnFailed must be a function'))
+    if (onPreStartFailure !== undefined && typeof onPreStartFailure !== 'function') return reject(new TypeError('onPreStartFailure must be a function'))
 
     const env = { ...process.env }
     delete env.CLAUDECODE // don't let a nested Claude Code session confuse the child
@@ -236,6 +268,11 @@ function runOnce(opts, effort) {
     const heldEvents = []
     let durableWork = Promise.resolve()
     let durableFailed = false
+    // Before turn.started: the last error / turn.failed report (Codex goes on
+    // to exit), and an error item that ended the start (the child is being
+    // stopped). Either is settled only from the child's close.
+    let preStartFailure = null
+    let preStartClosing = null
 
     // /stop and the wall-clock cap abort via this signal. On Windows the codex.exe under
     // the cmd.exe shim can SURVIVE a tree-kill and keep the inherited stdout pipe open, so
@@ -344,6 +381,10 @@ function runOnce(opts, effort) {
         let raw
         try { raw = JSON.parse(line) } catch { continue } // skip non-JSON noise
         if (onRawEvent) { try { onRawEvent(raw) } catch { /* observer must not kill the turn */ } }
+        // After the first failure the child is being stopped, but it may not
+        // listen: keep reading until it closes, deliver nothing, and remember
+        // whether it started its turn or did anything but report failures.
+        if (preStartClosing) { observeAfterFailure(raw); continue }
         if (raw.type === 'thread.started' && raw.thread_id) capturedSessionId = raw.thread_id
         if (durableStart && !acceptedStart) {
           if (raw.type === 'turn.started') {
@@ -363,8 +404,22 @@ function runOnce(opts, effort) {
               }
               heldEvents.length = 0
             } catch (error) { failTurnAcceptance(error); return }
-          } else if (!['thread.started', 'turn.failed', 'error'].includes(raw.type)) {
-            failTurnAcceptance(new Error('Codex emitted turn effects before turn.started'))
+          } else if (raw.type === 'error' || raw.type === 'turn.failed') {
+            preStartFailure = raw
+          } else if (raw.type !== 'thread.started') {
+            // The shape of what came first is the only evidence of why: keep it.
+            const shape = preStartShape(raw)
+            log(`codex emitted ${describeShape(shape)} before turn.started`)
+            const error = new Error(`Codex emitted turn effects before turn.started (${describeShape(shape)})`)
+            // Durable start with the hook: stop the child and let the core
+            // judge the shape once it has closed. Otherwise fail at once.
+            if (onPreStartFailure && onDurableEvent && !aborted) {
+              preStartClosing = { raw, shape, error, later: null }
+              heldEvents.length = 0
+              killChild()
+              continue
+            }
+            failTurnAcceptance(error)
             return
           }
         }
@@ -415,7 +470,51 @@ function runOnce(opts, effort) {
       reject(err)
     }))
 
+    // What the child printed after the failure that stopped it. turn.started
+    // means its turn began after all; any event other than a failure report or
+    // the thread identity may be an effect. The first such event is kept.
+    const observeAfterFailure = (raw) => {
+      if (preStartClosing.later) return
+      if (raw.type === 'turn.started') { preStartClosing.later = { phase: 'after' }; return }
+      if (raw.type === 'thread.started' || raw.type === 'error' || raw.type === 'turn.failed' ||
+          raw.item?.type === 'error' && ['item.started', 'item.updated', 'item.completed'].includes(raw.type)) return
+      preStartClosing.later = { shape: preStartShape(raw) }
+    }
+    // The child closed before turn.started. Without the hook, or once stopped,
+    // the outcome stays unknown as before. Otherwise the engine asks the core
+    // with what Codex reported; only its confirmed not-started witness turns
+    // the rejection into AGENT_NOT_STARTED.
+    const settleBeforeStart = (code) => {
+      const raw = preStartClosing ? preStartClosing.raw : preStartFailure
+      const tail = stderr.trim().slice(-800)
+      const later = preStartClosing?.later || null
+      const shape = later?.shape || (raw ? preStartShape(raw) : { type: null, itemType: null, excerpt: excerptOf(tail) })
+      const phase = later?.phase === 'after' ? 'after' : 'before'
+      if (later) log(`codex went on after its first failure (${later.phase === 'after' ? 'turn.started' : describeShape(later.shape)}) before it closed`)
+      const unknown = preStartClosing ? preStartClosing.error
+        : new Error(`Codex exited ${code} before turn.started (${describeShape(shape)})`)
+      if (aborted || !onPreStartFailure || !onDurableEvent) { done(() => reject(closedError(unknown))); return }
+      let answer
+      try {
+        answer = onPreStartFailure({ runner: 'codex-exec', phase, event: shape.type, item: shape.itemType,
+          tag: failureTag(raw ? failureText(raw) : tail), excerpt: shape.excerpt })
+        if (answer && typeof answer.then === 'function') throw new TypeError('onPreStartFailure must answer synchronously')
+      } catch (hookError) {
+        log(`codex start failed before turn.started (${describeShape(shape)}); not proven unstarted: ${hookError?.message || hookError}`)
+        done(() => reject(closedError(hookError)))
+        return
+      }
+      if (answer?.notStarted !== true) { done(() => reject(closedError(unknown))); return }
+      log(`codex start failed before turn.started (${describeShape(shape)}); closed as not started`)
+      done(() => reject(closedError(Object.assign(new Error(`Codex start failed before turn.started (${describeShape(shape)})`),
+        { code: 'AGENT_NOT_STARTED' }))))
+    }
     const completeClose = (code) => {
+      if (durableStart && !acceptedStart && !aborted &&
+          (preStartClosing || onPreStartFailure && onDurableEvent && !acceptanceFailed)) {
+        settleBeforeStart(code)
+        return
+      }
       if (onDurableEvent && acceptedStart && !lastResult && !aborted) {
         done(() => resolveRun({ sessionId: capturedSessionId, result: null, code, aborted }))
         return
@@ -473,4 +572,4 @@ function probeVersion(bin = 'codex') {
   })
 }
 
-module.exports = { runTurn, runOnce, isClosedRunnerResult, isClosedRunnerError, probeVersion, normalizeEvent, parseCodexError, isEffortRejection, sandboxMode, buildArgs, buildPrompt }
+module.exports = { runTurn, runOnce, preStartShape, isClosedRunnerResult, isClosedRunnerError, probeVersion, normalizeEvent, parseCodexError, isEffortRejection, sandboxMode, buildArgs, buildPrompt }

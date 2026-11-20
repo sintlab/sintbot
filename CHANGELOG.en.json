@@ -1,5 +1,44 @@
 [
   {
+    "version": "1.4.30",
+    "date": "2026-11-20",
+    "name": "Fewer held groups, models chosen per group, a tidier console",
+    "items": [
+      {
+        "t": "A start that fails at once no longer holds the group",
+        "d": "When Claude Code, or Codex in a group with Add follow-up messages to the current task turned off, reports an error before it starts on a message (for example the usage limit is reached, the sign-in has expired, the previous session cannot be resumed, the chosen model is not available, or the model service cannot be reached), the message is closed as not handled: the conversation is told why and asked to send it again later, and the group keeps handling new messages. Before, this held the whole group, and later messages only got a notice that the last task's result was unknown, without the reason. When the session cannot be resumed, the next message starts a new one; when Codex fails before it starts, the service log says what it printed (with secrets masked). Exceptions: within 90 seconds after an upgrade switches over (while it can still roll back to the previous release), or when the turn combined several messages, the group is still held as before. Codex groups with Add follow-up messages to the current task turned on (the default) keep the previous behaviour in this release."
+      },
+      {
+        "t": "A message cut off by a crash is reported, not redone, and the group is not held",
+        "d": "When the service exits on an error nothing caught, the message it was working on gets a note in its conversation after the restart saying it was not finished (with who sent it and how it began); it is not redone and the group is not held. The session is kept, and its next turn tells the model not to continue that request unless you ask again. The group is still held when the turn combined several messages, more messages were waiting in that conversation, the executor had not yet confirmed it started, or the final reply had begun, and for a turn cut off by stopping the service yourself or by an upgrade restart."
+      },
+      {
+        "t": "Sealing a held group is no longer blocked by its own task",
+        "d": "When you seal a held group from Needs attention in the console, that group's own stuck turn no longer counts as another group's task, so the seal goes ahead; it still waits while other groups are running or have messages queued. Before, a group stuck after its usage limit was reached could be refused because other groups still had tasks, and had to be sealed from the command line with the service stopped."
+      },
+      {
+        "t": "A tidier console",
+        "d": "On the settings page, the Feishu, WeCom and Slack cards fold to one row by default (icon, name, status dot and a short summary); open one for the details, and its dot turns red when the connection fails. The interface language moves from the sidebar to a new Interface card at the top of the settings page. Version history is no longer kept in the console: Release notes → at the bottom of the Software updates card, the version badge next to the brand and the upgrade announcement in groups all link to that version's section of the release notes on the website. Chinese text left on the English interface is now in English."
+      },
+      {
+        "t": "Models chosen per group; adding a model starts with the key",
+        "d": "Model cards that use an API key now work like subscription cards: each group picks its model on its card under Groups · Projects or with /model, and once the card has a key, the list shows the models the provider offers right now; a group that has not chosen runs the model stored on the card. Add model asks for the API key right after the preset, and Verify key runs a short trial on the spot and says why it failed (for example the key was refused, or the endpoint does not speak the Anthropic format); the endpoint, small model, default thinking depth and the rest move under Advanced. A custom endpoint still takes its endpoint and model on the card, shared by its groups."
+      },
+      {
+        "t": "Model presets",
+        "d": "The preset list changes: the GLM preset moves to glm-5.3, Kimi is added and Volcano Ark is removed; the default models of the DeepSeek and MiniMax presets follow the providers' current docs as well. The MiniMax preset uses MiniMax's current endpoint, api.minimax.cn. Model cards and presets show the provider's small logo, the two subscription presets (Claude subscription and GPT via Codex) come first, and the terminal wizard's providers change to match. Existing model cards, including Volcano Ark cards and cards on the old MiniMax endpoint, are not affected and can still be used and edited."
+      },
+      {
+        "t": "Check and upgrade Claude Code",
+        "d": "The Claude subscription model card shows the version of the Claude Code program on this Mac and, when a newer one exists, upgrades it after you confirm: a copy installed with npm is reinstalled with npm, one from the native installer uses its own updater, and any other install is left for a manual upgrade. It will not upgrade while a group is running or queuing a Claude Code task, and every attempt is recorded in the audit log; groups that use Claude Code run the new version from their next turn."
+      },
+      {
+        "t": "The installer points to Slack first",
+        "d": "After the one-line install, the closing message links to connecting your project in Slack first, then notes that Feishu and WeCom are supported too, with their links."
+      }
+    ]
+  },
+  {
     "version": "1.4.29",
     "date": "2026-11-19",
     "name": "Scheduled tasks, and a clean exit on crashes",

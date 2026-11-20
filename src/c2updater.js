@@ -372,10 +372,20 @@ function createC2Updater({ currentVersion, runMode, stateFile, dataDir, configPa
     return status()
   }
 
+  // Whether a console upgrade may still start the previous release on these
+  // journals: this process was started by a switch (the job is switching to
+  // exactly this version) that has not been confirmed yet. Read from the job
+  // record on disk each time (the switch process writes it too). A process
+  // not started by a switch, or after done / rolled-back / failed, is outside.
+  function rollbackWindowOpen() {
+    refresh()
+    return data.job?.state === 'switching' && !!current && data.job.to === current
+  }
+
   if (data.job?.state === 'queued') schedule(0)
   const checkTimer = autoCheck ? setInterval(() => { void check() }, checkIntervalMs) : null
   checkTimer?.unref?.()
-  return { status, check, ignore, startUpgrade, processQueue, confirmStarted,
+  return { status, check, ignore, startUpgrade, processQueue, confirmStarted, rollbackWindowOpen,
     start() { return autoCheck ? check() : Promise.resolve(status()) },
     close() { closed = true; if (checkTimer) clearInterval(checkTimer); if (timer) clearTimeout(timer); timer = null } }
 }
@@ -383,16 +393,20 @@ function createC2Updater({ currentVersion, runMode, stateFile, dataDir, configPa
 // What keeps a console upgrade from starting: 'not-serving', 'held', 'busy'
 // or 'unsettled'. The updater's own maintenance flag never blocks it, so the
 // final check after admission closes can pass.
+// `except`: a group whose own lanes and permits do not count (the held group
+// the console seals). Every other group's running, queued or unsettled work
+// still does; without it every group counts.
 function createC2UpgradeGate({ isRunning, service, capacity, assertJournalScope }) {
-  return () => {
+  return ({ except = null } = {}) => {
     const reasons = new Set()
     const live = service()
     if (!isRunning() || !live) return ['not-serving']
-    if (live.held.size) reasons.add('held')
-    const shared = capacity.snapshot()
+    if ([...live.held.keys()].some(chatId => chatId !== except)) reasons.add('held')
+    const shared = capacity.snapshot({ except })
     if (shared.closed) reasons.add('not-serving')
     if (shared.active || shared.waiting) reasons.add('busy')
     for (const [chatId, binding] of live.bindings) {
+      if (chatId === except) continue
       if (binding.gate.blocked) reasons.add('not-serving')
       for (const rt of binding.engine.rts.values()) {
         if (rt.v2NormalRouteActive || rt.v2AdmissionPending || rt.v2Controller ||

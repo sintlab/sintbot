@@ -36,6 +36,20 @@ const closedRunnerErrors = new WeakSet()
 const isClosedRunnerError = error => !!error && typeof error === 'object' && closedRunnerErrors.has(error)
 const closedError = error => { closedRunnerErrors.add(error); return error }
 const PRE_INIT_HOOK_EVENTS = new Set(['hook_started', 'hook_response'])
+const prestart = require('./prestart')
+// What Claude Code emitted before system/init, for the log, the error and the
+// engine's pre-start hook (ABI 40): its type, the subtype of a result or system
+// event, and for an error result a short excerpt of its errors. Never the text.
+const resultText = raw => raw?.type !== 'result' ? null
+  : Array.isArray(raw.errors) && raw.errors.length ? raw.errors.filter(e => typeof e === 'string').join('; ')
+    : typeof raw.result === 'string' ? raw.result : null
+function claudePreStartShape(raw) {
+  const type = prestart.word(raw?.type)
+  const subtype = ['result', 'system'].includes(type) ? prestart.word(raw.subtype) : null
+  return { type, subtype, excerpt: subtype?.startsWith('error') ? prestart.excerptOf(resultText(raw)) : null }
+}
+const describeClaudeShape = shape => `event ${shape.type || '(none)'}` +
+  (shape.subtype ? `/${shape.subtype}` : '') + (shape.excerpt ? `: ${shape.excerpt}` : '')
 const DURABLE_EVENT_TYPES = new Set(['system', 'assistant', 'user', 'result', 'tool_result', 'turn_continue'])
 // Tool output is completion evidence only, never answer text.
 function durableToolResults(ev) {
@@ -178,6 +192,10 @@ function runTurn({
   onEvent,
   onDurableEvent,
   onTurnAccepted,
+  // Durable start only: Claude Code failed before system/init and its child
+  // has closed. Receives { runner, event, item, tag, excerpt } and answers
+  // synchronously { notStarted: true } once the not-started witness is recorded.
+  onPreStartFailure,
   signal,
   log = () => {}, // daemon logger — 与 codex runner 同一个口子(engine 两边都传 this.log)
   spawnFn = spawn, // 可注入,供单测驱动 spawn/解析环路(与 codexcode 同一形状)
@@ -305,6 +323,9 @@ function runTurn({
       let childCloseObserved = false
       let acceptanceFailed = false
       let turnAccepted = false
+      // An event before system/init that ended the start: the child is being
+      // stopped, and only its close settles the start (see settleBeforeInit).
+      let preStartClosing = null
       let durableWork = Promise.resolve()
       let durableFailed = false
       // Resolution is guarded (exactly once) because a close-grace timer can force the
@@ -433,12 +454,25 @@ function runTurn({
           let raw
           try { raw = JSON.parse(line) } catch { continue } // skip non-JSON noise
           if (followup && followup.protocol(raw)) continue
+          // After the first failure the child is being stopped: keep reading
+          // until it closes, deliver nothing, remember whether it went on.
+          if (preStartClosing) { observeAfterFailure(raw); continue }
           if (onTurnAccepted && !turnAccepted) {
             // Locally configured session hooks report their own lifecycle before
             // init. They are not model output; skip them and keep waiting.
             if (raw.type === 'system' && PRE_INIT_HOOK_EVENTS.has(raw.subtype)) continue
             if (raw.type !== 'system' || raw.subtype !== 'init' || typeof raw.session_id !== 'string' || !raw.session_id) {
-              failTurnAcceptance(new Error('Claude turn emitted an event before start confirmation'))
+              const shape = claudePreStartShape(raw)
+              log(`claude emitted ${describeClaudeShape(shape)} before start confirmation`)
+              const error = new Error(`Claude turn emitted an event before start confirmation (${describeClaudeShape(shape)})`)
+              // Durable start with the hook: stop the child and let the core
+              // judge the shape once it has closed. Otherwise fail at once.
+              if (onPreStartFailure && onDurableEvent && !aborted) {
+                preStartClosing = { raw, shape, error, later: null }
+                killTree()
+                continue
+              }
+              failTurnAcceptance(error)
               return
             }
             let accepted
@@ -533,7 +567,51 @@ function runTurn({
         reject(err)
       }))
 
-      const completeClose = (code) => finish(() => {
+      // What the child printed after the failure that stopped it: system/init
+      // means its turn began after all; anything but a local hook event or an
+      // error result may be an effect. The first such event is kept.
+      const observeAfterFailure = (raw) => {
+        if (preStartClosing.later) return
+        if (raw.type === 'system' && raw.subtype === 'init') { preStartClosing.later = { phase: 'after' }; return }
+        if (raw.type === 'system' && PRE_INIT_HOOK_EVENTS.has(raw.subtype) ||
+            raw.type === 'result' && typeof raw.subtype === 'string' && raw.subtype.startsWith('error')) return
+        preStartClosing.later = { shape: claudePreStartShape(raw) }
+      }
+      // The child closed before system/init. Without the hook, or once stopped,
+      // the outcome stays unknown as before; otherwise the engine asks the core
+      // and only its confirmed not-started witness makes AGENT_NOT_STARTED.
+      const settleBeforeInit = (code) => finish(() => {
+        const raw = preStartClosing ? preStartClosing.raw : null
+        const tail = stderr.trim().slice(-800)
+        const later = preStartClosing?.later || null
+        const shape = later?.shape || (raw ? preStartClosing.shape : { type: null, subtype: null, excerpt: prestart.excerptOf(tail) })
+        const phase = later?.phase === 'after' ? 'after' : 'before'
+        if (later) log(`claude went on after its first failure (${later.phase === 'after' ? 'system/init' : describeClaudeShape(later.shape)}) before it closed`)
+        const unknown = preStartClosing ? preStartClosing.error
+          : new Error(`claude exited ${code} before start confirmation (${describeClaudeShape(shape)})`)
+        let answer
+        try {
+          answer = onPreStartFailure({ runner: 'claude-code', phase, event: shape.type, item: shape.subtype,
+            tag: prestart.tagOf(raw ? resultText(raw) : tail), excerpt: shape.excerpt })
+          if (answer && typeof answer.then === 'function') throw new TypeError('onPreStartFailure must answer synchronously')
+        } catch (hookError) {
+          log(`claude start failed before start confirmation (${describeClaudeShape(shape)}); not proven unstarted: ${hookError?.message || hookError}`)
+          reject(closedError(hookError))
+          return
+        }
+        if (answer?.notStarted !== true) { reject(closedError(unknown)); return }
+        log(`claude start failed before start confirmation (${describeClaudeShape(shape)}); closed as not started`)
+        reject(closedError(Object.assign(new Error(`Claude start failed before start confirmation (${describeClaudeShape(shape)})`),
+          { code: 'AGENT_NOT_STARTED' })))
+      })
+      const completeClose = (code) => {
+        if (onTurnAccepted && !turnAccepted && !aborted && !acceptanceFailed && onPreStartFailure && onDurableEvent) {
+          settleBeforeInit(code)
+          return
+        }
+        completeAfterInit(code)
+      }
+      const completeAfterInit = (code) => finish(() => {
         if (onDurableEvent && turnAccepted && !lastResult && !aborted) {
           resolveRun({ sessionId: capturedSessionId, result: null, code, aborted })
           return

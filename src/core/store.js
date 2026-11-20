@@ -119,7 +119,27 @@ class StateStore {
     this.data = next
   }
   // 清会话连带清「被掐断」标记:标记属于那段会话,会话没了它就没有意义。
-  clearSession(chatId) { const g = this._group(chatId); delete g.sessionId; delete g.tainted; this._save() }
+  clearSession(chatId) { const g = this._group(chatId); delete g.sessionId; delete g.tainted; delete g.interrupted; this._save() }
+
+  // 「这段会话上一轮被崩溃打断」(ABI 40 规则 ②):崩溃收尾时写下,执行器确认下一轮开工后才清;
+  // 下一轮提示由核心加一句「不要继续它」。落盘而不是内存态:收尾与下一轮之间重启也不能丢。
+  // 属于那段会话:换会话 / 清会话一并清掉。{ receiptId, turnToken, generation, sessionId, text }
+  markInterrupted(chatId, value) {
+    const groups = this.data.groups || {}
+    const next = { ...this.data, groups: { ...groups, [chatId]: { ...(groups[chatId] || {}), interrupted: { ...value } } } }
+    atomicWriteJSON(this.file, next, { mode: 0o600 })
+    this.data = next
+  }
+  getInterrupted(chatId) { return this._group(chatId).interrupted || null }
+  clearInterrupted(chatId) {
+    const groups = this.data.groups || {}
+    if (!groups[chatId]?.interrupted) return
+    const group = { ...groups[chatId] }
+    delete group.interrupted
+    const next = { ...this.data, groups: { ...groups, [chatId]: group } }
+    atomicWriteJSON(this.file, next, { mode: 0o600 })
+    this.data = next
+  }
 
   // 「这段会话上一轮被掐断过」(v0.11.103):/stop · /skip · 控制台停止 · 撤回 · 墙钟 · 关停都算。
   // 为什么要落盘:被掐的轮若起过后台子任务,之后每次续接会话 CLI 都先塞它们的完成通知、模型
@@ -147,6 +167,7 @@ class StateStore {
     delete group.sessionId
     delete group.tainted
     delete group.sessionStats
+    delete group.interrupted
     const next = { ...this.data, groups: { ...groups, [chatId]: group } }
     atomicWriteJSON(this.file, next, { mode: 0o600 })
     this.data = next
@@ -158,7 +179,7 @@ class StateStore {
   resetGroupSession(chatId) {
     const groups = this.data.groups || {}
     const group = { ...(groups[chatId] || {}) }
-    for (const key of ['sessionId', 'tainted', 'sessionStats', 'provider', 'failover']) delete group[key]
+    for (const key of ['sessionId', 'tainted', 'sessionStats', 'provider', 'failover', 'interrupted']) delete group[key]
     const next = { ...this.data, groups: { ...groups, [chatId]: group } }
     atomicWriteJSON(this.file, next, { mode: 0o600 })
     this.data = next

@@ -6,7 +6,7 @@ const { followupEnabled } = require('../agent/privatecore')
 // process-local arguments. It neither starts a child nor persists text,
 // credentials, callback handles, or environment values.
 function prepareC2RunnerInput({ prompt, appendSystemPrompt, msg, group, provider,
-  config, brain = null, sessionId = null, signal, extraEnv, onTurnAccepted, onSpawnFailed, onDurableEvent,
+  config, brain = null, sessionId = null, signal, extraEnv, onTurnAccepted, onSpawnFailed, onPreStartFailure, onDurableEvent,
   onEvent = () => {}, onSteerReady, onSteerLanded, log = () => {} } = {}) {
   if (typeof prompt !== 'string' || !prompt ||
       typeof appendSystemPrompt !== 'string' || !appendSystemPrompt ||
@@ -23,6 +23,7 @@ function prepareC2RunnerInput({ prompt, appendSystemPrompt, msg, group, provider
       Object.values(extraEnv).some(value => typeof value !== 'string') ||
       typeof onTurnAccepted !== 'function' ||
       (onSpawnFailed !== undefined && typeof onSpawnFailed !== 'function') ||
+      (onPreStartFailure !== undefined && typeof onPreStartFailure !== 'function') ||
       typeof onDurableEvent !== 'function' ||
       typeof onEvent !== 'function' || typeof log !== 'function') {
     throw new TypeError('C2 runner input requires an exact process-local turn')
@@ -72,6 +73,7 @@ function prepareC2RunnerInput({ prompt, appendSystemPrompt, msg, group, provider
     onDurableEvent,
     onTurnAccepted,
     onSpawnFailed,
+    onPreStartFailure,
   }
 }
 

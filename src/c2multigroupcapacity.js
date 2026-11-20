@@ -30,11 +30,15 @@ class C2MultiGroupCapacity {
     this.#slots = new BinarySemaphore(maxConcurrent)
   }
 
-  snapshot() {
+  // `except`: leave out the permits one group holds or waits for (the console
+  // seal must not be refused by the held group's own stuck turn). A permit
+  // acquired without an owner is never left out.
+  snapshot({ except = null } = {}) {
+    const records = [...this.#records].filter(record => except === null || record.owner !== except)
     return Object.freeze({ closed: this.#closed,
       maxConcurrent: this.#maxConcurrent,
-      active: [...this.#records].filter(record => record.phase === 'active').length,
-      waiting: [...this.#records].filter(record => record.phase === 'waiting').length })
+      active: records.filter(record => record.phase === 'active').length,
+      waiting: records.filter(record => record.phase === 'waiting').length })
   }
 
   close(reason) {
@@ -46,18 +50,23 @@ class C2MultiGroupCapacity {
     // after the real runner/turn closes. Shutdown is not proof of closure.
   }
 
-  async acquire({ signal } = {}) {
+  // `owner`: the group the permit is for, so a snapshot can tell one group's
+  // permits from everybody else's. Bookkeeping only; grant order is the core's.
+  async acquire({ signal, owner = null } = {}) {
     if (signal !== undefined && signal !== null &&
         (typeof signal.aborted !== 'boolean' ||
          typeof signal.addEventListener !== 'function' ||
          typeof signal.removeEventListener !== 'function')) {
       throw new TypeError('Model concurrency signal is invalid')
     }
+    if (owner !== null && (typeof owner !== 'string' || !owner)) {
+      throw new TypeError('Model concurrency owner is invalid')
+    }
     if (this.#closed || signal?.aborted) throw cancelled(signal?.reason)
     const controller = new AbortController()
     const forwardAbort = () => controller.abort(signal.reason)
     if (signal) signal.addEventListener('abort', forwardAbort, { once: true })
-    const record = { controller, phase: 'waiting' }
+    const record = { controller, phase: 'waiting', owner }
     this.#records.add(record)
     let acquired = false, released = false
     const detach = () => {

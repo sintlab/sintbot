@@ -19,8 +19,11 @@
 //   runners), otherwise exit(1). A stop that throws exits 1 at once.
 // - The ceiling timer is unref'd: if the event loop empties first, Node exits
 //   by itself with the exitCode 1 set here.
-// - Recovery rules are unchanged: a turn the stop interrupts is settled by the
-//   journal as after any stop, never replayed by this handler.
+// - The caller's shutdown first writes down the turns still running
+//   (src/c2crashstop.js), before the stop seals the journals. At the next
+//   start the core decides (ABI 40 unfinished_step "restart"): a turn the
+//   crash cut off is told once in its conversation and never redone; the
+//   group is not held. Nothing is ever replayed by this handler.
 
 const MAX_LOGS = 5
 const MAX_REASON = 8000

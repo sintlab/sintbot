@@ -403,6 +403,18 @@ function runnerClosureCandidate(record, authority, requireRunning = true) {
     dispatchEffectId: record.dispatchEffectId, closedAt: record.closedAt }
 }
 
+// A conversation that has finished a turn keeps that turn's settled session
+// lane: an earlier epoch, its runner closed and its session written. It is no
+// effect of a later dispatch (the core's abortUnstartedDispatch reads it the
+// same way since ABI 40). Before, every group past its first turn failed the
+// not-started proof here and was held (11-18).
+function settledEarlierSession(lane, turnToken) {
+  return !!lane && typeof lane === 'object' && !Array.isArray(lane) &&
+    Object.keys(lane).sort().join(',') === 'closeSeen,epoch,settled' &&
+    Number.isSafeInteger(lane.epoch) && lane.epoch < turnToken &&
+    lane.closeSeen === true && lane.settled === true
+}
+
 function runnerNotStartedCandidate(record, authority, requireRunning = true) {
   if (Object.keys(record).sort().join(',') !==
       'chatId,cursor,dispatchEffectId,evidenceId,generation,kind,receiptId,resolvedAt,turnToken' ||
@@ -444,8 +456,10 @@ function runnerNotStartedCandidate(record, authority, requireRunning = true) {
         handoff?.phase !== 'running' || handoff.turnToken !== record.turnToken ||
         handoff.attempt !== 0 || handoff.nextJobId !== null ||
         !Array.isArray(handoff.acceptedReceiptIds) || handoff.acceptedReceiptIds.length ||
-        ['terminal', 'session', 'outbound', 'cardCleanup', 'stopIntent']
-          .some(domain => Object.hasOwn(authority.state.lanes[domain] || {}, record.chatId))) {
+        ['terminal', 'outbound', 'cardCleanup', 'stopIntent']
+          .some(domain => Object.hasOwn(authority.state.lanes[domain] || {}, record.chatId)) ||
+        Object.hasOwn(authority.state.lanes.session || {}, record.chatId) &&
+          !settledEarlierSession(authority.state.lanes.session[record.chatId], record.turnToken)) {
       throw new Error('C2 runner not-started proof has active side effects')
     }
   }

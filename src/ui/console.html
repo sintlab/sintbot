@@ -173,7 +173,7 @@ body{
 .mark .word{white-space:nowrap}
 .mark .word .trace{display:none}
 .mark .ver{font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:0;line-height:18px;height:18px;padding:0 6px;border-radius:999px;
-  color:var(--dim);background:var(--hover);white-space:nowrap;transition:var(--tr-ui)}
+  color:var(--dim);background:var(--hover);white-space:nowrap;text-decoration:none;transition:var(--tr-ui)}
 .mark .ver:hover{color:var(--ink);background:var(--sel)}
 .mark .ver:empty{display:none}
 .mark .ver-update{appearance:none;display:inline-flex;align-items:center;justify-content:center;width:14px;height:16px;margin:0 -4px;padding:0;
@@ -380,6 +380,14 @@ p.hint{margin:0 0 8px}
 .pn .gname{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ph>.inline{gap:6px;flex-shrink:0}
 .pcard .pn{font-family:var(--mono);font-size:13px}   /* 模型名是配置里的 id */
+/* 模型品牌小标(#brand-sprite):彩色标自带颜色,单色标(OpenAI、Kimi 的 K)随文字色,深浅主题各自可读;
+   认不出的端点用中性的 Lucide 芯片,描边、灰色。下拉标签里贴着行盒顶对齐(32px 控件、20px 行高)。 */
+.model-logo{width:20px;height:20px;flex:none;display:inline-block}
+.model-logo.neutral{fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;color:var(--muted)}
+.csel-lbl .model-logo{vertical-align:top;margin-right:8px}
+/* 第三方模型卡名字下面那行端点主机名(显示形式) */
+.pcard .phost{font-size:11px;line-height:16px;color:var(--muted);margin:-6px 0 6px 28px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pcard .ph:has(.drag)+.phost{margin-left:46px}   /* 有拖动把手时名字再往右一格 */
 .pcard .acts{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap}
 .drag{cursor:grab;color:var(--muted);user-select:none;display:inline-flex;margin-left:-4px}
 .drag:hover{color:var(--dim)}
@@ -569,6 +577,7 @@ select{appearance:none;-webkit-appearance:none;cursor:pointer;padding-right:28px
 .csel-opt.sel::before{background:var(--ember);-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center/13px 13px no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center/13px 13px no-repeat}
 .csel-opt.sel{color:var(--ink)}
 .csel-opt.hl{background:var(--hover);color:var(--ink)}
+.csel-grp{font-size:11px;line-height:16px;color:var(--muted);padding:8px 10px 2px 26px;cursor:default;user-select:none}
 textarea{height:auto;resize:vertical;min-height:56px;padding:6px 10px}
 label.f{display:block;font-size:12px;line-height:18px;font-weight:500;color:var(--dim);margin:0 0 4px}
 .field{margin-bottom:12px}
@@ -678,10 +687,8 @@ h4.sec{font-size:12px;line-height:18px;font-weight:600;color:var(--dim);margin:1
 .library-fold[open]>summary .caret{transform:rotate(90deg)}
 .library-fold>summary .hint{font-weight:400}
 .library-fold-content{padding-top:8px}
-/* 版本历史(设置页):时间线式;当前版本行铜色高亮 */
-#verhistBox{max-height:240px;overflow-y:auto}
-.update-history{margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
-.update-history .subhead{font-size:12px;font-weight:600;color:var(--dim);margin-bottom:4px}
+/* 软件更新卡底部:版本历史在官网,这里只留一行链接(1.4.30) */
+.update-notes{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);font-size:13px}
 #botNetCard{container-type:inline-size;align-self:start;grid-column:1/-1}
 #botNetCard .botnet-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 #botNetCard .botnet-fields .field{min-width:0;margin:0}
@@ -695,17 +702,6 @@ h4.sec{font-size:12px;line-height:18px;font-weight:600;color:var(--dim);margin:1
 #botNetCard .botnet-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
 #botNetCard .botnet-actions .hint{flex:1 1 240px;min-width:0;margin:0}
 @container (max-width:440px){#botNetCard .botnet-fields{grid-template-columns:minmax(0,1fr)}}
-.vh-row{padding:8px 0;border-bottom:1px solid var(--line)}
-.vh-row:last-child{border:none}
-.vh-head{display:flex;align-items:baseline;gap:8px}
-.vh-ver{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink)}
-.vh-row.cur .vh-ver{color:var(--ember)}
-.vh-name{font-size:13px;font-weight:500;color:var(--dim)}
-.vh-date{font-family:var(--mono);font-size:11px;color:var(--faint);margin-left:auto;flex:none}
-.vh-items{margin:4px 0 0;padding:0;list-style:none}
-.vh-items li{font-size:12px;color:var(--faint);line-height:20px;padding-left:12px;position:relative}
-.vh-items li::before{content:'';position:absolute;left:2px;top:8px;width:4px;height:4px;border-radius:50%;background:var(--line-hi)}
-.vh-items li b{color:var(--dim);font-weight:600}
 .empty{color:var(--faint);font-size:13px;padding:10px 0}
 /* 实时活动(旧版概览)与展开详情(两版共用) */
 .arow{padding:6px 0;border-bottom:1px solid var(--line)}.arow:last-child{border:none}
@@ -928,8 +924,6 @@ button.btn.nsmini{height:20px;padding:0 8px;font-size:11px;vertical-align:1px}
 .fs-empty{padding:12px;color:var(--faint);font-size:12px}
 
 /* 飞书卡:与其它设置卡同一套卡头与键值节奏 */
-.feishu-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:6px}
-.feishu-heading .lbl{display:flex;align-items:center;margin:0}
 .feishu-setup .kv .vv{white-space:normal;overflow-wrap:anywhere}
 .feishu-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0 0}
 .feishu-actions input{flex:1;min-width:180px}
@@ -941,6 +935,30 @@ button.btn.nsmini{height:20px;padding:0 8px;font-size:11px;vertical-align:1px}
 .feishu-details>summary:hover{color:var(--ink)}
 .feishu-details>p.hint{margin:8px 0 0}
 .feishu-uri{overflow-wrap:anywhere;word-break:break-word;flex:1;min-width:0}
+/* 设置页的三张平台卡(飞书 / 企业微信 / Slack,1.4.30):卡头就是概览「健康」卡那条 .hcard .hfold —— 图标 · 名字 · 状态点 · 一行摘要 · 箭头;
+   正文默认收起。摘要很短,窄屏也留着(健康卡窄屏藏读数那条不适用这里) */
+.hcard.pfold .hfold .lbl{display:flex;align-items:center;min-width:0}
+.hcard.pfold.folded .hsum{visibility:visible}
+.hcard.pfold .pfold-body{padding:12px 16px 14px;border-top:1px solid var(--line)}
+.hcard.pfold.folded .pfold-body{display:none}
+.hcard.pfold .pfold-body>.kv:first-child{border-top:0}
+/* 设置页「界面」卡的语言选择(1.4.30):照官网页脚的 language-picker 做 —— 图标 · 当前语言名 · 箭头,点开两项各用本语言书写、当前项打 ✓,
+   点击区 44px;颜色换成控制台的变量。卡在页顶,选项往下展开(官网在页脚,往上展开),箭头跟着朝下 */
+#uiCard .lang-row{padding:0}
+.lang-pick{position:relative;flex:none;margin-right:-10px;font-size:13px;color:var(--dim)}
+.lang-pick>summary{display:flex;align-items:center;gap:9px;min-height:44px;padding:0 10px;list-style:none;cursor:pointer;border-radius:var(--r-ctl);transition:var(--tr-ui)}
+.lang-pick>summary::-webkit-details-marker{display:none}
+.lang-pick>summary:hover,.lang-pick[open]>summary{background:var(--hover);color:var(--ink)}
+.lang-pick>summary .ic{width:16px;height:16px;stroke-width:1.5}
+.lang-pick .lang-arrow{font-size:14px;margin-left:8px;transform:rotate(180deg);transition:transform var(--dur) var(--ease)}
+.lang-pick[open] .lang-arrow{transform:none}
+.lang-pick .lang-opts{position:absolute;top:calc(100% + 6px);right:0;z-index:30;width:176px;padding:6px;background:var(--pop-bg);border:1px solid var(--line-hi);border-radius:8px;box-shadow:var(--sh-md)}
+.lang-pick .lang-opts button{appearance:none;display:flex;align-items:center;gap:16px;width:100%;min-height:44px;margin:0;padding:0 12px;border:0;border-radius:4px;
+  background:transparent;color:var(--dim);font:inherit;font-size:13px;text-align:left;cursor:pointer;transition:var(--tr-ui)}
+.lang-pick .lang-opts button:hover{background:var(--hover);color:var(--ink)}
+.lang-pick .lang-opts [aria-current="true"]{color:var(--ink);font-weight:600}
+.lang-pick .lang-opts [aria-current="true"]::after{content:"✓";margin-left:auto;font-size:12px}
+.lang-pick>summary:focus-visible,.lang-pick .lang-opts button:focus-visible{outline:2px solid var(--focus);outline-offset:3px}
 
 /* 概览的群 · 项目面板:标记与样式都在 liveactivity-client.js 里(选择器 `.la …`),用的是这里的同一套令牌;本文件不再叠覆盖层。 */
 
@@ -1128,7 +1146,7 @@ d.dataset.themePref=p;d.dataset.theme=t;if(l!=='en'&&l!=='zh')l=/^zh/i.test((nav
   <aside class="side">
     <!-- 品牌字标不进翻译层(data-i18n-skip):「Sint」「Bot」是两个文本节点,英文界面下翻译层会把恰好等于某条译文的
          英文反查回中文(i18nZhOrig),「机器人 → Bot」一加,切回中文时左上角就成了「Sint机器人」(10-24 发版前撞到)。 -->
-    <div class="mark"><a class="word" href="https://sintbot.com" target="_blank" rel="noopener" title="SintBot 官网" style="color:inherit;text-decoration:none"><span data-i18n-skip>Sint<i class="trace" aria-hidden="true"></i>Bot</span></a><span class="ver">__SBOT_VERSION__</span><button class="ver-update" id="topUpdateBadge" type="button" hidden title="发现新版本，打开软件更新" aria-label="发现新版本，打开软件更新"><span class="update-dot" aria-hidden="true"></span></button></div>
+    <div class="mark"><a class="word" href="https://sintbot.com" target="_blank" rel="noopener" title="SintBot 官网" style="color:inherit;text-decoration:none"><span data-i18n-skip>Sint<i class="trace" aria-hidden="true"></i>Bot</span></a><a class="ver" href="https://sintbot.com/changelog/" target="_blank" rel="noopener" title="查看版本历史">__SBOT_VERSION__</a><button class="ver-update" id="topUpdateBadge" type="button" hidden title="发现新版本，打开软件更新" aria-label="发现新版本，打开软件更新"><span class="update-dot" aria-hidden="true"></span></button></div>
     <nav>
       <button data-tab="overview" class="active"><svg class="ic" aria-hidden="true"><use href="#lu-dashboard"/></svg><span>概览</span></button>
       <button data-tab="groups"><svg class="ic" aria-hidden="true"><use href="#lu-chats"/></svg><span>群 · 项目</span></button>
@@ -1145,8 +1163,6 @@ d.dataset.themePref=p;d.dataset.theme=t;if(l!=='en'&&l!=='zh')l=/^zh/i.test((nav
       <div class="topbtns">
         <button class="iconbtn" id="refresh" title="刷新"><svg class="ic ic-refresh" aria-hidden="true"><use href="#lu-refresh"/></svg></button>
         <button class="iconbtn" id="themeBtn" title="主题"></button>
-        <!-- 界面语言。title/aria-label 写的是**目标语言**,所以整枚按钮不参与 DOM 翻译(data-i18n-skip)。 -->
-        <button class="iconbtn" id="langBtn" data-i18n-skip></button>
       </div>
     </div>
   </aside>
@@ -1170,6 +1186,19 @@ d.dataset.themePref=p;d.dataset.theme=t;if(l!=='en'&&l!=='zh')l=/^zh/i.test((nav
 <div id="toast"></div>
 <!-- 图标 sprite:全部来自 Lucide(ISC,lucide-static v1.31.0);控制台是自包含单文件,不外连 CDN。用法见脚本里的 IC 助手 -->
 <svg id="lu-sprite" style="display:none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><symbol id="lu-x" viewBox="0 0 24 24"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></symbol><symbol id="lu-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5" /></symbol><symbol id="lu-warn" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" /><path d="M12 9v4" /><path d="M12 17h.01" /></symbol><symbol id="lu-plus" viewBox="0 0 24 24"><path d="M5 12h14" /><path d="M12 5v14" /></symbol><symbol id="lu-rotate" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></symbol><symbol id="lu-square" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2" /></symbol><symbol id="lu-pause" viewBox="0 0 24 24"><rect x="14" y="3" width="5" height="18" rx="1" /><rect x="5" y="3" width="5" height="18" rx="1" /></symbol><symbol id="lu-play" viewBox="0 0 24 24"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z" /></symbol><symbol id="lu-settings" viewBox="0 0 24 24"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" /><circle cx="12" cy="12" r="3" /></symbol><symbol id="lu-bot" viewBox="0 0 24 24"><path d="M12 8V4H8" /><rect width="16" height="12" x="4" y="8" rx="2" /><path d="M2 14h2" /><path d="M20 14h2" /><path d="M15 13v2" /><path d="M9 13v2" /></symbol><symbol id="lu-user" viewBox="0 0 24 24"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></symbol><symbol id="lu-folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" /></symbol><symbol id="lu-up" viewBox="0 0 24 24"><path d="M14 9 9 4 4 9" /><path d="M20 20h-7a4 4 0 0 1-4-4V4" /></symbol><symbol id="lu-chevronRight" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></symbol><symbol id="lu-chevronDown" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></symbol><symbol id="lu-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" /><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" /><path d="M8 16H3v5" /></symbol><symbol id="lu-say" viewBox="0 0 24 24"><path d="M12 2a10 10 0 0 1 7.38 16.75" /><path d="M12 8v8" /><path d="M16 12H8" /><path d="M2.5 8.875a10 10 0 0 0-.5 3" /><path d="M2.83 16a10 10 0 0 0 2.43 3.4" /><path d="M4.636 5.235a10 10 0 0 1 .891-.857" /><path d="M8.644 21.42a10 10 0 0 0 7.631-.38" /></symbol><symbol id="lu-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401" /></symbol><symbol id="lu-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /><path d="M12 2v2" /><path d="M12 20v2" /><path d="m4.93 4.93 1.41 1.41" /><path d="m17.66 17.66 1.41 1.41" /><path d="M2 12h2" /><path d="M20 12h2" /><path d="m6.34 17.66-1.41 1.41" /><path d="m19.07 4.93-1.41 1.41" /></symbol><symbol id="lu-empty" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /><line x1="9" x2="15" y1="15" y2="9" /></symbol><symbol id="lu-grip" viewBox="0 0 24 24"><circle cx="9" cy="12" r="1" /><circle cx="9" cy="5" r="1" /><circle cx="9" cy="19" r="1" /><circle cx="15" cy="12" r="1" /><circle cx="15" cy="5" r="1" /><circle cx="15" cy="19" r="1" /></symbol><symbol id="lu-ext" viewBox="0 0 24 24"><path d="M7 7h10v10" /><path d="M7 17 17 7" /></symbol><symbol id="lu-down" viewBox="0 0 24 24"><path d="M12 5v14" /><path d="m19 12-7 7-7-7" /></symbol><symbol id="lu-upArrow" viewBox="0 0 24 24"><path d="m5 12 7-7 7 7" /><path d="M12 19V5" /></symbol><symbol id="lu-corner" viewBox="0 0 24 24"><path d="m15 10 5 5-5 5" /><path d="M4 4v7a4 4 0 0 0 4 4h12" /></symbol><symbol id="lu-wrench" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z" /></symbol><symbol id="lu-steth" viewBox="0 0 24 24"><path d="M11 2v2" /><path d="M5 2v2" /><path d="M5 3H4a2 2 0 0 0-2 2v4a6 6 0 0 0 12 0V5a2 2 0 0 0-2-2h-1" /><path d="M8 15a6 6 0 0 0 12 0v-3" /><circle cx="20" cy="10" r="2" /></symbol><symbol id="lu-languages" viewBox="0 0 24 24"><path d="m5 8 6 6" /><path d="m4 14 6-6 2-3" /><path d="M2 5h12" /><path d="M7 2h1" /><path d="m22 22-5-10-5 10" /><path d="M14 18h6" /></symbol><symbol id="lu-dashboard" viewBox="0 0 24 24"><rect width="7" height="9" x="3" y="3" rx="1" /><rect width="7" height="5" x="14" y="3" rx="1" /><rect width="7" height="9" x="14" y="12" rx="1" /><rect width="7" height="5" x="3" y="16" rx="1" /></symbol><symbol id="lu-chats" viewBox="0 0 24 24"><path d="M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" /><path d="M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1" /></symbol><symbol id="lu-monitor" viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2" /><line x1="8" x2="16" y1="21" y2="21" /><line x1="12" x2="12" y1="17" y2="21" /></symbol><symbol id="lu-cpu" viewBox="0 0 24 24"><path d="M12 20v2" /><path d="M12 2v2" /><path d="M17 20v2" /><path d="M17 2v2" /><path d="M2 12h2" /><path d="M2 17h2" /><path d="M2 7h2" /><path d="M20 12h2" /><path d="M20 17h2" /><path d="M20 7h2" /><path d="M7 20v2" /><path d="M7 2v2" /><rect x="4" y="4" width="16" height="16" rx="2" /><rect x="8" y="8" width="8" height="8" rx="1" /></symbol></svg>
+<!-- Brand marks (b-*) — <svg class="brand"><use href="#b-name"/></svg>. Not display:none, or gradients inside symbols stop painting.
+     Same symbols as the sintbot.com home page sprite. Claude, Claude Code, OpenAI, Codex, Zhipu, DeepSeek, MiniMax, Kimi: Lobe Icons (MIT, © LobeHub). Marks belong to their owners.
+     Console change: the Kimi "K" is currentColor instead of white, so it stays visible on the light theme. -->
+<svg id="brand-sprite" xmlns="http://www.w3.org/2000/svg" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true" focusable="false">
+<symbol id="b-claude" viewBox="0 0 24 24"><path d="M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z" fill="#D97757" fill-rule="nonzero"/></symbol>
+<symbol id="b-claudecode" viewBox="0 0 24 24"><path clip-rule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0V10.95h3V5h17.998v5.949zM6 10.949h1.488V8.102H6v2.847zm10.51 0H18V8.102h-1.49v2.847z" fill="#D97757" fill-rule="evenodd"/></symbol>
+<symbol id="b-openai" fill="currentColor" fill-rule="evenodd" viewBox="0 0 24 24"><path d="M9.205 8.658v-2.26c0-.19.072-.333.238-.428l4.543-2.616c.619-.357 1.356-.523 2.117-.523 2.854 0 4.662 2.212 4.662 4.566 0 .167 0 .357-.024.547l-4.71-2.759a.797.797 0 00-.856 0l-5.97 3.473zm10.609 8.8V12.06c0-.333-.143-.57-.429-.737l-5.97-3.473 1.95-1.118a.433.433 0 01.476 0l4.543 2.617c1.309.76 2.189 2.378 2.189 3.948 0 1.808-1.07 3.473-2.76 4.163zM7.802 12.703l-1.95-1.142c-.167-.095-.239-.238-.239-.428V5.899c0-2.545 1.95-4.472 4.591-4.472 1 0 1.927.333 2.712.928L8.23 5.067c-.285.166-.428.404-.428.737v6.898zM12 15.128l-2.795-1.57v-3.33L12 8.658l2.795 1.57v3.33L12 15.128zm1.796 7.23c-1 0-1.927-.332-2.712-.927l4.686-2.712c.285-.166.428-.404.428-.737v-6.898l1.974 1.142c.167.095.238.238.238.428v5.233c0 2.545-1.974 4.472-4.614 4.472zm-5.637-5.303l-4.544-2.617c-1.308-.761-2.188-2.378-2.188-3.948A4.482 4.482 0 014.21 6.327v5.423c0 .333.143.571.428.738l5.947 3.449-1.95 1.118a.432.432 0 01-.476 0zm-.262 3.9c-2.688 0-4.662-2.021-4.662-4.519 0-.19.024-.38.047-.57l4.686 2.71c.286.167.571.167.856 0l5.97-3.448v2.26c0 .19-.07.333-.237.428l-4.543 2.616c-.619.357-1.356.523-2.117.523zm5.899 2.83a5.947 5.947 0 005.827-4.756C22.287 18.339 24 15.84 24 13.296c0-1.665-.713-3.282-1.998-4.448.119-.5.19-.999.19-1.498 0-3.401-2.759-5.947-5.946-5.947-.642 0-1.26.095-1.88.31A5.962 5.962 0 0010.205 0a5.947 5.947 0 00-5.827 4.757C1.713 5.447 0 7.945 0 10.49c0 1.666.713 3.283 1.998 4.448-.119.5-.19 1-.19 1.499 0 3.401 2.759 5.946 5.946 5.946.642 0 1.26-.095 1.88-.309a5.96 5.96 0 004.162 1.713z"/></symbol>
+<symbol id="b-codex" fill="currentColor" fill-rule="evenodd" viewBox="0 0 24 24"><path clip-rule="evenodd" d="M8.086.457a6.105 6.105 0 013.046-.415c1.333.153 2.521.72 3.564 1.7a.117.117 0 00.107.029c1.408-.346 2.762-.224 4.061.366l.063.03.154.076c1.357.703 2.33 1.77 2.918 3.198.278.679.418 1.388.421 2.126a5.655 5.655 0 01-.18 1.631.167.167 0 00.04.155 5.982 5.982 0 011.578 2.891c.385 1.901-.01 3.615-1.183 5.14l-.182.22a6.063 6.063 0 01-2.934 1.851.162.162 0 00-.108.102c-.255.736-.511 1.364-.987 1.992-1.199 1.582-2.962 2.462-4.948 2.451-1.583-.008-2.986-.587-4.21-1.736a.145.145 0 00-.14-.032c-.518.167-1.04.191-1.604.185a5.924 5.924 0 01-2.595-.622 6.058 6.058 0 01-2.146-1.781c-.203-.269-.404-.522-.551-.821a7.74 7.74 0 01-.495-1.283 6.11 6.11 0 01-.017-3.064.166.166 0 00.008-.074.115.115 0 00-.037-.064 5.958 5.958 0 01-1.38-2.202 5.196 5.196 0 01-.333-1.589 6.915 6.915 0 01.188-2.132c.45-1.484 1.309-2.648 2.577-3.493.282-.188.55-.334.802-.438.286-.12.573-.22.861-.304a.129.129 0 00.087-.087A6.016 6.016 0 015.635 2.31C6.315 1.464 7.132.846 8.086.457zm-.804 7.85a.848.848 0 00-1.473.842l1.694 2.965-1.688 2.848a.849.849 0 001.46.864l1.94-3.272a.849.849 0 00.007-.854l-1.94-3.393zm5.446 6.24a.849.849 0 000 1.695h4.848a.849.849 0 000-1.696h-4.848z"/></symbol>
+<symbol id="b-zhipu" viewBox="0 0 24 24"><path d="M11.991 23.503a.24.24 0 00-.244.248.24.24 0 00.244.249.24.24 0 00.245-.249.24.24 0 00-.22-.247l-.025-.001zM9.671 5.365a1.697 1.697 0 011.099 2.132l-.071.172-.016.04-.018.054c-.07.16-.104.32-.104.498-.035.71.47 1.279 1.186 1.314h.366c1.309.053 2.338 1.173 2.286 2.523-.052 1.332-1.152 2.38-2.478 2.327h-.174c-.715.018-1.274.64-1.239 1.368 0 .124.018.23.053.337.209.373.54.658.96.8.75.23 1.517-.125 1.9-.782l.018-.035c.402-.64 1.17-.96 1.92-.711.854.284 1.378 1.226 1.099 2.167a1.661 1.661 0 01-2.077 1.102 1.711 1.711 0 01-.907-.711l-.017-.035c-.2-.323-.463-.58-.851-.711l-.056-.018a1.646 1.646 0 00-1.954.746 1.66 1.66 0 01-1.065.764 1.677 1.677 0 01-1.989-1.279c-.209-.906.332-1.83 1.257-2.043a1.51 1.51 0 01.296-.035h.018c.68-.071 1.151-.622 1.116-1.333a1.307 1.307 0 00-.227-.693 2.515 2.515 0 01-.366-1.403 2.39 2.39 0 01.366-1.208c.14-.195.21-.444.227-.693.018-.71-.506-1.261-1.186-1.332l-.07-.018a1.43 1.43 0 01-.299-.07l-.05-.019a1.7 1.7 0 01-1.047-2.114 1.68 1.68 0 012.094-1.101zm-5.575 10.11c.26-.264.639-.367.994-.27.355.096.633.379.728.74.095.362-.007.748-.267 1.013-.402.41-1.053.41-1.455 0a1.062 1.062 0 010-1.482zm14.845-.294c.359-.09.738.024.992.297.254.274.344.665.237 1.025-.107.36-.396.634-.756.718-.551.128-1.1-.22-1.23-.781a1.05 1.05 0 01.757-1.26zm-.064-4.39c.314.32.49.753.49 1.206 0 .452-.176.886-.49 1.206-.315.32-.74.5-1.185.5-.444 0-.87-.18-1.184-.5a1.727 1.727 0 010-2.412 1.654 1.654 0 012.369 0zm-11.243.163c.364.484.447 1.128.218 1.691a1.665 1.665 0 01-2.188.923c-.855-.36-1.26-1.358-.907-2.228a1.68 1.68 0 011.33-1.038c.593-.08 1.183.169 1.547.652zm11.545-4.221c.368 0 .708.2.892.524.184.324.184.724 0 1.048a1.026 1.026 0 01-.892.524c-.568 0-1.03-.47-1.03-1.048 0-.579.462-1.048 1.03-1.048zm-14.358 0c.368 0 .707.2.891.524.184.324.184.724 0 1.048a1.026 1.026 0 01-.891.524c-.569 0-1.03-.47-1.03-1.048 0-.579.461-1.048 1.03-1.048zm10.031-1.475c.925 0 1.675.764 1.675 1.706s-.75 1.705-1.675 1.705-1.674-.763-1.674-1.705c0-.942.75-1.706 1.674-1.706zm-2.626-.684c.362-.082.653-.356.761-.718a1.062 1.062 0 00-.238-1.028 1.017 1.017 0 00-.996-.294c-.547.14-.881.7-.752 1.257.13.558.675.907 1.225.783zm0 16.876c.359-.087.644-.36.75-.72a1.062 1.062 0 00-.237-1.019 1.018 1.018 0 00-.985-.301 1.037 1.037 0 00-.762.717c-.108.361-.017.754.239 1.028.245.263.606.377.953.305l.043-.01zM17.19 3.5a.631.631 0 00.628-.64c0-.355-.279-.64-.628-.64a.631.631 0 00-.628.64c0 .355.28.64.628.64zm-10.38 0a.631.631 0 00.628-.64c0-.355-.28-.64-.628-.64a.631.631 0 00-.628.64c0 .355.279.64.628.64zm-5.182 7.852a.631.631 0 00-.628.64c0 .354.28.639.628.639a.63.63 0 00.627-.606l.001-.034a.62.62 0 00-.628-.64zm5.182 9.13a.631.631 0 00-.628.64c0 .355.279.64.628.64a.631.631 0 00.628-.64c0-.355-.28-.64-.628-.64zm10.38.018a.631.631 0 00-.628.64c0 .355.28.64.628.64a.631.631 0 00.628-.64c0-.355-.279-.64-.628-.64zm5.182-9.148a.631.631 0 00-.628.64c0 .354.279.639.628.639a.631.631 0 00.628-.64c0-.355-.28-.64-.628-.64zm-.384-4.992a.24.24 0 00.244-.249.24.24 0 00-.244-.249.24.24 0 00-.244.249c0 .142.122.249.244.249zM11.991.497a.24.24 0 00.245-.248A.24.24 0 0011.99 0a.24.24 0 00-.244.249c0 .133.108.236.223.247l.021.001zM2.011 6.36a.24.24 0 00.245-.249.24.24 0 00-.244-.249.24.24 0 00-.244.249.24.24 0 00.244.249zm0 11.263a.24.24 0 00-.243.248.24.24 0 00.244.249.24.24 0 00.244-.249.252.252 0 00-.244-.248zm19.995-.018a.24.24 0 00-.245.248.24.24 0 00.245.25.24.24 0 00.244-.25.252.252 0 00-.244-.248z" fill="#3859FF" fill-rule="nonzero"/></symbol>
+<symbol id="b-deepseek" viewBox="0 0 24 24"><path d="M23.748 4.482c-.254-.124-.364.113-.512.234-.051.039-.094.09-.137.136-.372.397-.806.657-1.373.626-.829-.046-1.537.214-2.163.848-.133-.782-.575-1.248-1.247-1.548-.352-.156-.708-.311-.955-.65-.172-.241-.219-.51-.305-.774-.055-.16-.11-.323-.293-.35-.2-.031-.278.136-.356.276-.313.572-.434 1.202-.422 1.84.027 1.436.633 2.58 1.838 3.393.137.093.172.187.129.323-.082.28-.18.552-.266.833-.055.179-.137.217-.329.14a5.526 5.526 0 01-1.736-1.18c-.857-.828-1.631-1.742-2.597-2.458a11.365 11.365 0 00-.689-.471c-.985-.957.13-1.743.388-1.836.27-.098.093-.432-.779-.428-.872.004-1.67.295-2.687.684a3.055 3.055 0 01-.465.137 9.597 9.597 0 00-2.883-.102c-1.885.21-3.39 1.102-4.497 2.623C.082 8.606-.231 10.684.152 12.85c.403 2.284 1.569 4.175 3.36 5.653 1.858 1.533 3.997 2.284 6.438 2.14 1.482-.085 3.133-.284 4.994-1.86.47.234.962.327 1.78.397.63.059 1.236-.03 1.705-.128.735-.156.684-.837.419-.961-2.155-1.004-1.682-.595-2.113-.926 1.096-1.296 2.746-2.642 3.392-7.003.05-.347.007-.565 0-.845-.004-.17.035-.237.23-.256a4.173 4.173 0 001.545-.475c1.396-.763 1.96-2.015 2.093-3.517.02-.23-.004-.467-.247-.588zM11.581 18c-2.089-1.642-3.102-2.183-3.52-2.16-.392.024-.321.471-.235.763.09.288.207.486.371.739.114.167.192.416-.113.603-.673.416-1.842-.14-1.897-.167-1.361-.802-2.5-1.86-3.301-3.307-.774-1.393-1.224-2.887-1.298-4.482-.02-.386.093-.522.477-.592a4.696 4.696 0 011.529-.039c2.132.312 3.946 1.265 5.468 2.774.868.86 1.525 1.887 2.202 2.891.72 1.066 1.494 2.082 2.48 2.914.348.292.625.514.891.677-.802.09-2.14.11-3.054-.614zm1-6.44a.306.306 0 01.415-.287.302.302 0 01.2.288.306.306 0 01-.31.307.303.303 0 01-.304-.308zm3.11 1.596c-.2.081-.399.151-.59.16a1.245 1.245 0 01-.798-.254c-.274-.23-.47-.358-.552-.758a1.73 1.73 0 01.016-.588c.07-.327-.008-.537-.239-.727-.187-.156-.426-.199-.688-.199a.559.559 0 01-.254-.078c-.11-.054-.2-.19-.114-.358.028-.054.16-.186.192-.21.356-.202.767-.136 1.146.016.352.144.618.408 1.001.782.391.451.462.576.685.914.176.265.336.537.445.848.067.195-.019.354-.25.452z" fill="#4D6BFE"/></symbol>
+<symbol id="b-minimax" viewBox="0 0 24 24"><defs><linearGradient id="b-minimax-g0" x1="0%" x2="100.182%" y1="50.057%" y2="50.057%"><stop offset="0%" stop-color="#E2167E"/><stop offset="100%" stop-color="#FE603C"/></linearGradient></defs><path d="M16.278 2c1.156 0 2.093.927 2.093 2.07v12.501a.74.74 0 00.744.709.74.74 0 00.743-.709V9.099a2.06 2.06 0 012.071-2.049A2.06 2.06 0 0124 9.1v6.561a.649.649 0 01-.652.645.649.649 0 01-.653-.645V9.1a.762.762 0 00-.766-.758.762.762 0 00-.766.758v7.472a2.037 2.037 0 01-2.048 2.026 2.037 2.037 0 01-2.048-2.026v-12.5a.785.785 0 00-.788-.753.785.785 0 00-.789.752l-.001 15.904A2.037 2.037 0 0113.441 22a2.037 2.037 0 01-2.048-2.026V18.04c0-.356.292-.645.652-.645.36 0 .652.289.652.645v1.934c0 .263.142.506.372.638.23.131.514.131.744 0a.734.734 0 00.372-.638V4.07c0-1.143.937-2.07 2.093-2.07zm-5.674 0c1.156 0 2.093.927 2.093 2.07v11.523a.648.648 0 01-.652.645.648.648 0 01-.652-.645V4.07a.785.785 0 00-.789-.78.785.785 0 00-.789.78v14.013a2.06 2.06 0 01-2.07 2.048 2.06 2.06 0 01-2.071-2.048V9.1a.762.762 0 00-.766-.758.762.762 0 00-.766.758v3.8a2.06 2.06 0 01-2.071 2.049A2.06 2.06 0 010 12.9v-1.378c0-.357.292-.646.652-.646.36 0 .653.29.653.646V12.9c0 .418.343.757.766.757s.766-.339.766-.757V9.099a2.06 2.06 0 012.07-2.048 2.06 2.06 0 012.071 2.048v8.984c0 .419.343.758.767.758.423 0 .766-.339.766-.758V4.07c0-1.143.937-2.07 2.093-2.07z" fill="url(#b-minimax-g0)" fill-rule="nonzero"/></symbol>
+<symbol id="b-kimi" viewBox="0 0 24 24"><path d="M21.846 0a1.923 1.923 0 110 3.846H20.15a.226.226 0 01-.227-.226V1.923C19.923.861 20.784 0 21.846 0z" fill="#1783FF"/><path d="M11.065 11.199l7.257-7.2c.137-.136.06-.41-.116-.41H14.3a.164.164 0 00-.117.051l-7.82 7.756c-.122.12-.302.013-.302-.179V3.82c0-.127-.083-.23-.185-.23H3.186c-.103 0-.186.103-.186.23V19.77c0 .128.083.23.186.23h2.69c.103 0 .186-.102.186-.23v-3.25c0-.069.025-.135.069-.178l2.424-2.406a.158.158 0 01.205-.023l6.484 4.772a7.677 7.677 0 003.453 1.283c.108.012.2-.095.2-.23v-3.06c0-.117-.07-.212-.164-.227a5.028 5.028 0 01-2.027-.807l-5.613-4.064c-.117-.078-.132-.279-.028-.381z" fill="currentColor"/></symbol>
+</svg>
 <div class="modal-bg" id="modalBg"><div class="modal" id="modal"></div></div>
 <div class="modal-bg" id="fsBg"><div class="modal" id="fsModal" style="width:min(560px,94vw)"></div></div>
 
@@ -1840,23 +1869,46 @@ function clStatusHtml(){
 // 的 supportedReasoningEfforts),选中后服务端并不认。列表是数据驱动的,只是先过一道合法性筛。
 const RE_LEGAL=['none','minimal','low','medium','high','xhigh','max'];
 const RE_CODEX=['','minimal','low','medium','high','xhigh','max']; // 探测不到 codex 时的回退列表
+// 第三方(走 API key 的)模型来源清单:src/providers.js 一份,服务端在出页时注入(端点、型号、档位映射、logo、主机名)。
+// 加一家只改那一份清单;这里、模型卡、按群选型号、额度行、终端向导都从它读。
+const PROVIDER_REGISTRY=/*__SBOT_PROVIDERS__*/[];
+// 顺序即「添加模型」里的顺序(用户 11-20 定):两张订阅预设在前,其后按清单顺序,「自定义」放最后但仍是默认选中项。
+// 火山方舟已从预设里去掉(用户 11-20 定);已配置的火山卡照常读写,它只是不再出现在这张清单里。
 const PRESETS={
-  '自定义':{},
   // Claude 订阅登录:不填端点、不填 key 就是它的正确形态。此前面板里只有第三方预设,
   // 「还能加一个走本机登录态的 Claude(比如再配一个 Sonnet 给别的群)」这件事无从发现。
   // login:true ⇒ 选中时清空并隐藏端点/key 两栏(它们对订阅登录只会误导)。
   'Claude 订阅登录 (claude)':{name:'claude',login:true},
-  // vision:false = 预设里就把「纯文本模型」标好(glm-5.2 已真机确认拒图片)—— 此前控制台
-  // 建的 provider 一律漏标,浏览器截图直达模型 400 崩整轮。
-  '智谱 GLM (glm)':{name:'glm',baseUrl:'https://open.bigmodel.cn/api/anthropic',model:'glm-5.2[1m]',vision:false,env:{ANTHROPIC_DEFAULT_HAIKU_MODEL:'glm-4.5-air',CLAUDE_CODE_SUBAGENT_MODEL:'glm-4.5-air',CLAUDE_CODE_AUTO_COMPACT_WINDOW:'1000000',API_TIMEOUT_MS:'3000000'}},
-  'DeepSeek (deepseek)':{name:'deepseek',baseUrl:'https://api.deepseek.com/anthropic',model:'deepseek-flash[1m]',env:{ANTHROPIC_DEFAULT_OPUS_MODEL:'deepseek-flash[1m]',ANTHROPIC_DEFAULT_SONNET_MODEL:'deepseek-flash[1m]',ANTHROPIC_DEFAULT_HAIKU_MODEL:'deepseek-flash',CLAUDE_CODE_SUBAGENT_MODEL:'deepseek-flash',CLAUDE_CODE_EFFORT_LEVEL:'max',CLAUDE_CODE_AUTO_COMPACT_WINDOW:'786432'}},
-  'MiniMax (minimax)':{name:'minimax',baseUrl:'https://api.minimaxi.com/anthropic',model:'MiniMax-M3[1m]',env:{API_TIMEOUT_MS:'3000000'}},
   // GPT 走 Codex CLI(本项目的 GPT 主路):**没有端点、没有 key** —— 认证是这台机器自己的
   // `codex login`(ChatGPT 订阅)。选中它面板会整个换形态(见 openProviderModal 的 codex 分支)。
   // 此前控制台只能**编辑**已有的 codex provider、建不出新的,文档教的是手改配置文件。
   'GPT via Codex (codex)':{name:'codex',runner:'codex',toolQuality:'high'},
-  '火山方舟 (volcano)':{name:'volcano',baseUrl:'https://ark.cn-beijing.volces.com/api/coding',model:'glm-5.2[1m]',vision:false,env:{CLAUDE_CODE_AUTO_COMPACT_WINDOW:'1000000',API_TIMEOUT_MS:'3000000'}},
+  // vision:false = 清单里就把「纯文本模型」标好(如 GLM-5.3)—— 此前控制台建的 provider 一律漏标,浏览器截图直达模型 400 崩整轮。
+  ...Object.fromEntries(PROVIDER_REGISTRY.map(r=>[r.preset,{name:r.id,baseUrl:r.baseUrl,model:r.model,...(r.vision===false?{vision:false}:{}),env:{...r.env},registry:r.id}])),
+  '自定义':{},
 };
+// 一张卡 / 一个预设属于清单里的哪一家:只按端点主机名认,不按卡名(卡名是自己起的)。认不出 = 自定义端点。
+function keyRouteOf(p){
+  if(!p||p.runner==='codex')return null;
+  if(p.registry)return PROVIDER_REGISTRY.find(r=>r.id===p.registry)||null;
+  let host='';try{host=new URL(p.baseUrl||(p.env&&p.env.ANTHROPIC_BASE_URL)||'').hostname;}catch{}
+  return host?PROVIDER_REGISTRY.find(r=>r.hosts.includes(host))||null:null;
+}
+// 页面上显示的端点:清单里登记了显示地址的,把存的前缀换成显示地址(存的配置不变);其余原样。
+function displayBase(url){
+  url=String(url||'');const r=keyRouteOf({baseUrl:url});
+  const d=r&&(r.displays||[]).find(([stored])=>url.startsWith(stored));
+  return d?d[1]+url.slice(d[0].length):url;
+}
+// 模型卡与「添加模型」预设的小 logo(#brand-sprite,20px):Codex → OpenAI,没有端点的 Claude Code 卡 → Claude 订阅,
+// 清单里的按它登记的 logo;认不出的端点(自定义、旧的火山卡)、「自定义」预设与没登记 logo 的用中性的芯片图标。
+function modelLogoId(p){
+  if(!p||!p.name)return '';
+  if(p.runner==='codex')return 'b-openai';
+  if(!(p.baseUrl||(p.env&&p.env.ANTHROPIC_BASE_URL)))return 'b-claude';
+  const r=keyRouteOf(p);return (r&&r.logo)||'';
+}
+function modelLogo(id){return id?`<svg class="brand model-logo" width="20" height="20" aria-hidden="true"><use href="#${esc(id)}"/></svg>`:'<svg class="model-logo neutral" width="20" height="20" aria-hidden="true"><use href="#lu-cpu"/></svg>';}
 // codex 订阅额度 → 紧凑单行「5h:98% (1.8h) │ 7d:12% (6.1d)」。
 // ⚠ **百分比是「已用」**(v0.11.8 口径改版,与 Claude 卡同款;此前显示的是「剩」,正好相反)。
 // resetsAt 兼容两种口径:>1e9 视作绝对 epoch 秒,否则视作「距重置的秒数」;算出的倒计时须
@@ -1911,23 +1963,25 @@ function claudeChip(){
   if(!s.loggedIn) return '<span class="chip none" title="这台机器还没登录 Claude —— 跑 claude auth login">未登录</span>';
   return `<span class="chip set" title="claude auth status: ${esc(s.method||'')} · ${esc(s.email||'')}${s.org?' · '+esc(s.org):''}">订阅登录 ${IC.check}${s.plan?' · '+esc(s.plan):''}</span>`;
 }
-function isDeepSeekCard(p){try{return new URL(p?.baseUrl).hostname==='api.deepseek.com';}catch{return false;}}
 function providerGroupCount(name){return (S.groups||[]).filter(g=>!g.paused&&(g.effectiveProvider||g.provider||S.defaultProvider)===name).length;}
 function renderProviders(){
   // A visible preset does not write configuration until the user saves it.
   const modelCards=[...S.providers];
-  if(!modelCards.some(p=>p.name==='deepseek'))modelCards.push({...PRESETS['DeepSeek (deepseek)'],preset:true,keyStatus:'none',configured:false});
-  const cards=modelCards.filter(p=>showAll||(!p.hidden&&(p.configured||p.name==='deepseek'))).map(p=>{
+  // 清单里推荐的那家(没有订阅时的起步)还没配时也摆一张预设卡,点 ⚙ 直接按它的预设添加。
+  const rec=PROVIDER_REGISTRY.find(r=>r.recommended);
+  if(rec&&!modelCards.some(p=>p.name===rec.id))modelCards.push({...PRESETS[rec.preset],preset:true,keyStatus:'none',configured:false});
+  const cards=modelCards.filter(p=>showAll||(!p.hidden&&(p.configured||(rec&&p.name===rec.id)))).map(p=>{
     const cs=p.runner==='codex'?codexStatus[p.name]:null;
     const chip=p.runner==='codex'?(cs&&cs.loggedIn&&cs.verified?`<span class="chip set" title="${esc(cs.text||'已验证')}">订阅登录 ${IC.check}</span>`:cs&&cs.dead?`<span class="chip none" title="${esc(cs.text||'')}">登录态已失效</span>`:'<span class="chip" title="点下方「验证登录」确认 codex 订阅登录态 + 拉取额度">订阅登录·未验证</span>'):p.loggedIn?claudeChip():`<span class="chip ${p.keyStatus}">${p.keyStatus==='set'?'key 已设':p.keyStatus==='env'?'env:'+esc(p.keyRef):'无 key'}</span>`;
     return `<div class="card pcard${p.preset?' is-preset':''}${p.hidden?' is-hidden':(!p.configured?' is-unconfig':'')}" data-prov="${esc(p.name)}">
-      <div class="ph"><div class="pn">${p.preset?'':`<span class="drag" draggable="true" title="拖动排序">${IC.grip}</span>`}${esc(p.name)}${p.runner==='codex'?'<span class="cli-tag codex" title="GPT 经 Codex CLI 后端 · 订阅登录">Codex CLI</span>':'<span class="cli-tag claude" title="经 Claude Code CLI · 模型大脑按 env 切换">Claude Code CLI</span>'}</div>
+      <div class="ph"><div class="pn">${p.preset?'':`<span class="drag" draggable="true" title="拖动排序">${IC.grip}</span>`}${modelLogo(modelLogoId(p))}${esc(p.name)}${p.runner==='codex'?'<span class="cli-tag codex" title="GPT 经 Codex CLI 后端 · 订阅登录">Codex CLI</span>':'<span class="cli-tag claude" title="经 Claude Code CLI · 模型大脑按 env 切换">Claude Code CLI</span>'}</div>
         <div class="inline" style="gap:8px">${chip}<button class="iconbtn cfg" data-act="edit" title="配置模型">${IC.settings}</button></div></div>
-      ${p.baseUrl&&!isDeepSeekCard(p)?`<div class="kv"><span class="kk">型号</span><span class="vv mono" title="${esc(p.model||'')}">${esc(p.model?(modelName(p.model)||p.model):'—')}</span></div>
+      ${keyRouteOf(p)?`<div class="phost mono" data-i18n-skip title="${esc(displayBase(p.baseUrl))}">${esc((()=>{try{return new URL(displayBase(p.baseUrl)).host;}catch{return displayBase(p.baseUrl);}})())}</div>`:''}
+      ${p.baseUrl&&!keyRouteOf(p)?`<div class="kv"><span class="kk">型号</span><span class="vv mono" title="${esc(p.model||'')}">${esc(p.model?(modelName(p.model)||p.model):'—')}</span></div>
       <div class="kv"><span class="kk">${p.contextWindow?.source==='official'?'模型上限':'当前窗口'}</span><span class="vv" title="${esc(providerWindowText(p,true))} · 只读，不会改变模型容量">${esc(providerWindowText(p))}</span></div>`:`<div class="kv"><span class="kk">型号与深度</span><span class="vv" title="型号与思考深度按群在「群·项目」里选">按群选 · ${providerGroupCount(p.name)} 个群在用</span></div>`}
       ${p.runner==='codex'?`<div class="kv"><span class="kk">窗口设置</span><span class="vv">${p.contextWindowTokens?esc(fmtContextTokens(p.contextWindowTokens)):'执行器默认'}</span></div>`:''}
       <div class="kv"><span class="kk">${p.runner==='codex'?'压缩阈值':'压缩窗口'}</span><span class="vv" title="${esc(providerCompactText(p))} · 逐模型设置 · ${p.runner==='codex'?'Codex 可能按当前窗口提前压缩':'Claude Code 在压缩窗口满前触发，设置值受模型窗口限制'}">${esc(providerCompactText(p))}</span></div>
-      <div class="kv"><span class="kk">连接方式</span><span class="vv${p.runner!=='codex'&&p.baseUrl?' mono':''}" title="${esc(p.runner==='codex'?'Codex CLI(codex exec · 订阅登录)':(p.baseUrl||'本机 Claude Code 的登录态 —— 无需 baseUrl / API key'))}">${esc(p.runner==='codex'?'Codex CLI (订阅登录)':(p.baseUrl?p.baseUrl.replace('https://',''):'Claude 订阅登录'))}</span></div>
+      <div class="kv"><span class="kk">连接方式</span><span class="vv${p.runner!=='codex'&&p.baseUrl?' mono':''}" title="${esc(p.runner==='codex'?'Codex CLI(codex exec · 订阅登录)':(p.baseUrl?displayBase(p.baseUrl):'本机 Claude Code 的登录态 —— 无需 baseUrl / API key'))}">${esc(p.runner==='codex'?'Codex CLI (订阅登录)':(p.baseUrl?displayBase(p.baseUrl).replace('https://',''):'Claude 订阅登录'))}</span></div>
       ${p.vision===false?'<div class="kv"><span class="kk">识图</span><span class="vv" title="纯文本模型:送给它的图片(群里发的图/网页截图/读取的图片文件)自动降级成占位文本,不会 400 崩掉整轮">不支持 · 图片自动降级</span></div>':''}
       ${usage[p.name]?`<div class="kv"><span class="kk" style="flex:none">${esc(usage[p.name].label)}${usageRefreshBtn(false)}</span><span class="vv wrap" title="${esc(usage[p.name].value)}${usage[p.name].label==='订阅额度'?' —— 百分比 = 已用,括号 = 距重置,与这台机器上交互式 Claude Code 共享的订阅窗口':''}" style="color:var(--ok);font-weight:500">${esc(usage[p.name].value)}</span></div>`:''}
       ${(cs&&cs.usageText)?`<div class="kv"><span class="kk" style="flex:none">订阅额度${usageRefreshBtn(true)}</span><span class="vv wrap" title="百分比 = 已用,括号 = 距重置 —— 与交互式 Codex 共享的订阅窗口(时长随官方口径)" style="color:var(--ok);font-weight:500">${esc(cs.usageText)}</span></div>`:''}
@@ -1936,7 +1990,7 @@ function renderProviders(){
       <div class="reply-slot"></div>
     </div>`;
   }).join('');
-  const extra=S.providers.filter(p=>p.hidden||(!p.configured&&p.name!=='deepseek')).length;
+  const extra=S.providers.filter(p=>p.hidden||(!p.configured&&!(rec&&p.name===rec.id))).length;
   const provLead=runtimeAllows('POST','/api/providers/add')?RUNTIME_UI_TEXT.providers:RUNTIME_UI_TEXT.providersView;
   const provLeadOpen=!!($('#providers .lead-more')||{}).open;
   const toggle=extra?`<button class="btn ghost" id="showAll">${showAll?'只看已配置':`显示全部 (${extra})`}</button>`:'';
@@ -1987,7 +2041,7 @@ function renderProviders(){
     const name=card.dataset.prov, slot=$('.reply-slot',card), preset=card.classList.contains('is-preset');
     card.addEventListener('click',async e=>{
       const b=e.target.closest('button[data-act]'); if(!b)return;
-      if(b.dataset.act==='edit'){openProviderModal(preset?null:name,preset?{preset:'DeepSeek (deepseek)'}:{});return;}
+      if(b.dataset.act==='edit'){openProviderModal(preset?null:name,preset?{preset:rec.preset}:{});return;}
       if(b.dataset.act==='usage'){
         const cx=b.dataset.cx==='1', row=b.closest('.kv'), vv=row&&$('.vv',row);
         b.disabled=true;const old=b.innerHTML;b.innerHTML='<span class="spin"></span>';
@@ -2059,10 +2113,108 @@ function renderProviders(){
   libRefresh();
 }
 
+/* 第三方(走 API key)模型卡的面板:新建用清单里的预设、编辑清单里认得的卡都走这里(订阅登录与 Codex 面板不变)。
+   顺序 = 预设 → API key(唯一要填的,打开就聚焦)+「验证 Key」→ 名称 → 「高级」(端点、小模型 / 子代理、默认思考深度、
+   上下文与压缩、识图、环境变量)。没有型号这一项:型号按群在「群·项目」或 /model 里选,卡上存的型号只是没选时的默认。
+   「验证 Key」跑一轮短试(与终端向导同一个),失败按人话说原因;成功顺带取一次实时型号清单。不验证也能存,按钮写明「未验证」。
+   端点:清单里登记了显示地址的,这里只显示那个地址、不给编辑(存的地址不变),「改用自定义端点」才换成输入框。 */
+function openKeyRouteModal(name,opts){
+  opts=opts||{};
+  const p=name?S.providers.find(x=>x.name===name):null, edit=!!p;
+  const presetKey=edit?'':(opts.preset||''), pr=edit?null:(PRESETS[presetKey]||{});
+  const r=edit?keyRouteOf(p):keyRouteOf(pr);
+  if(!r){openProviderModal(name,{...opts,plain:true});return;}
+  const base=edit?p.baseUrl:pr.baseUrl;
+  const env=edit?{...(p.env||{})}:{...(pr.env||{})};
+  const small=env.ANTHROPIC_DEFAULT_HAIKU_MODEL||r.small||'';
+  const effDef=env.CLAUDE_CODE_EFFORT_LEVEL||'';
+  const shown=displayBase(base), locked=shown!==base;
+  const keyPh=edit?(p.keyStatus==='set'?'已设置 · 留空保持':p.keyStatus==='env'?'env:'+esc(p.keyRef)+' · 留空保持':'粘贴 key'):'粘贴 key(存进本地 gitignored 配置)';
+  const presetSel=edit?'':`<div class="field"><label class="f">预设(自动填端点/模型/调优)</label><select id="amPreset">${Object.keys(PRESETS).map(k=>`<option value="${esc(k)}" data-logo="${esc(modelLogoId(PRESETS[k]))}" ${presetKey===k?'selected':''}>${esc(k)}</option>`).join('')}</select></div>`;
+  const envRows=Object.entries(env).filter(([k])=>!/TOKEN|KEY|SECRET/i.test(k)).map(([k,v])=>`<div><span>${esc(k)}</span>=<span>${esc(v)}</span></div>`).join('');
+  $('#modal').innerHTML=`<h3>${edit?'配置 '+esc(name):'添加模型'}</h3>
+    ${presetSel}
+    <div class="field"><label class="f" for="amKey">API key</label><input id="amKey" autocomplete="off" spellcheck="false" placeholder="${keyPh}"/>
+      <div class="inline" style="gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center"><button class="btn" id="amVerify" type="button">验证 Key</button><span class="hint" id="amVerifyOut" role="status"></span></div></div>
+    ${edit?'':`<div class="field"><label class="f" for="amName">名称</label><input id="amName" value="${esc(pr.name||'')}" placeholder="如 glm / my-model"/></div>`}
+    <div class="hint" style="margin-bottom:12px">型号与思考深度按群在「群·项目」里选。</div>
+    <details class="field library-fold" id="amAdv"><summary><span class="caret">${IC.chevronRight}</span><span>高级</span></summary>
+      <div class="library-fold-content">
+      <div class="field"><label class="f" for="amBase">端点 baseUrl</label>
+        ${locked?`<div class="mono" id="amBaseShow" data-i18n-skip style="padding:6px 0">${esc(shown)}</div><a href="#" class="lnk2" id="amBaseEdit">改用自定义端点</a><input id="amBase" type="hidden" value="${esc(base)}"/>`
+          :`<input id="amBase" value="${esc(base)}" placeholder="https://.../anthropic"/>`}</div>
+      <div class="field"><label class="f" for="amSmall">小模型 / 子代理</label><input id="amSmall" class="mono" value="${esc(small)}"/>
+        <div class="hint" style="margin-top:4px">后台小任务与子代理用这个型号，已按这家的文档预填。</div></div>
+      <div class="field"><label class="f" for="amEffDef">默认思考深度</label><select id="amEffDef">${EFFORTS.map(v=>`<option value="${v}" ${v===effDef?'selected':''}>${v||'跟随 Claude Code 默认'}</option>`).join('')}</select>
+        <div class="hint" style="margin-top:4px">群里没选思考深度时用它。</div></div>
+      <h4 class="sec">上下文与压缩</h4>
+      <details class="field"><summary class="hint" style="cursor:pointer">容量与运行信息</summary><div class="dim" id="amWindow" style="padding:9px 0">${edit?esc(providerWindowText(p,true)):'添加后按模型目录或会话上报显示'}</div></details>
+      <div class="field"><label class="f" for="amCompMode">自动压缩</label><select id="amCompMode"><option value="default" ${!edit||!p.autocompactTokens?'selected':''}>执行器默认</option><option value="custom" ${edit&&p.autocompactTokens>0?'selected':''}>自定义</option></select></div>
+      <div class="field" id="amCompField"><label class="f" for="amComp">压缩窗口(token)</label><input id="amComp" type="number" min="100000" max="1000000" step="1" value="${edit?(p.autocompactTokens||400000):400000}"/>
+        <div class="hint" style="margin-top:5px">自定义压缩窗口为 10万–100万。Claude Code 会预留空间，可能提前压缩。</div></div>
+      <div class="inline" style="margin:2px 0 2px"><input type="checkbox" class="switch" id="amVision" ${(edit?p.vision===false:pr.vision===false)?'checked':''}/> <span class="dim">此模型不支持识图(纯文本模型)</span></div>
+      <div class="field" style="margin-top:10px"><label class="f">环境变量</label><div class="hint mono" id="amEnvSum" data-i18n-skip style="word-break:break-all">${envRows||'—'}</div></div>
+      ${edit?`<div class="inline" style="margin:2px 0 10px"><input type="checkbox" class="switch" id="amHide" ${p.hidden?'checked':''}/> <span class="dim">在列表中隐藏此模型</span></div>`:''}
+      </div>
+    </details>
+    <div class="mfoot" style="justify-content:space-between">
+      ${edit?'<button class="btn ghost" id="amDel">移除</button>':'<span></span>'}
+      <div class="inline"><button class="btn" id="amCancel">取消</button><button class="btn primary" id="amSave"></button></div></div>`;
+  $('#modalBg').classList.add('show');
+  $('#modal').oninput=null;$('#modal').onchange=null;
+  const compSync=()=>{$('#amCompField').hidden=$('#amCompMode').value!=='custom';};
+  $('#amCompMode').onchange=compSync;compSync();
+  // 保存按钮的字:新填的 key 没验证过就写明「未验证」;编辑时留空保持原 key 不算新填。
+  let verified=false;
+  const label=()=>{const typed=!!$('#amKey').value.trim();$('#amSave').textContent=(edit?'保存':'添加')+((typed||!edit)&&!verified?'（未验证）':'');};
+  label();
+  $('#amKey').oninput=()=>{verified=false;const o=$('#amVerifyOut');o.textContent='';o.style.color='';label();};
+  if(!edit)$('#amPreset').onchange=()=>{const k=$('#amPreset').value,np=PRESETS[k]||{};
+    if(np.registry)openKeyRouteModal(null,{preset:k});else openProviderModal(null,{codex:np.runner==='codex',preset:k});};
+  const be=$('#amBaseEdit');
+  if(be)be.onclick=(e)=>{e.preventDefault();const v=$('#amBase').value;const wrap=be.parentElement;
+    $('#amBaseShow').remove();be.remove();$('#amBase').remove();
+    wrap.insertAdjacentHTML('beforeend',`<input id="amBase" value="${esc(v)}" placeholder="https://.../anthropic"/>`);$('#amBase').focus();};
+  // 要交给服务端的 env:预设 / 卡上的调优,小模型替换后台与子代理两档,默认深度只在选了时写。
+  const envOut=()=>{const out={},sm=$('#amSmall').value.trim(),ed=$('#amEffDef').value;
+    if(!edit)Object.assign(out,env);
+    if(sm&&sm!==small){out.ANTHROPIC_DEFAULT_HAIKU_MODEL=sm;if(env.CLAUDE_CODE_SUBAGENT_MODEL)out.CLAUDE_CODE_SUBAGENT_MODEL=sm;}
+    if(ed&&ed!==effDef)out.CLAUDE_CODE_EFFORT_LEVEL=ed;
+    return out;};
+  $('#amVerify').onclick=async()=>{const vb=$('#amVerify'),o=$('#amVerifyOut');
+    if(!edit&&!$('#amKey').value.trim()){o.textContent='先填 API key';o.style.color='var(--fail)';$('#amKey').focus();return;}
+    vb.disabled=true;const old=vb.innerHTML;vb.innerHTML='<span class="spin"></span>验证中';o.textContent='';o.style.color='';
+    try{const t=await api('/api/providers/test','POST',{name:edit?name:'',baseUrl:$('#amBase').value.trim(),apiKey:$('#amKey').value.trim(),env:{...(edit?{}:env),...envOut()},vision:!$('#amVision').checked,en:langOf()==='en'});
+      if($('#amVerifyOut')!==o)return;
+      if(t.ok){verified=true;o.textContent=`可用 ✓ · 取到 ${t.count} 个型号，到「群 · 项目」里按群选`;o.style.color='var(--ok)';}
+      else{verified=false;o.textContent=t.reason||'没验证通过';o.style.color='var(--fail)';}
+      label();
+    }catch(e){o.textContent=e.message;o.style.color='var(--fail)';}
+    finally{if(document.body.contains(vb)){vb.disabled=false;vb.innerHTML=old;}}};
+  $('#amCancel').onclick=closeModal;
+  if(edit)$('#amDel').onclick=async()=>{if(!await askConfirm('移除模型 '+name+' ?'))return;try{S=await api('/api/providers?name='+encodeURIComponent(name),'DELETE');toast('已移除','ok');closeModal();renderProviders();}catch(e){toast(e.message,'err');}};
+  $('#amSave').onclick=async()=>{const nm=edit?name:$('#amName').value.trim();if(!nm){toast('名称必填','err');$('#amName').focus();return;}
+    if($('#amCompMode').value==='custom'&&!$('#amComp').value.trim()){toast('请填写压缩值','err');return;}
+    const b={name:nm,baseUrl:$('#amBase').value.trim(),autocompactTokens:$('#amCompMode').value==='default'?0:Number($('#amComp').value),vision:!$('#amVision').checked};
+    if(!Number.isInteger(b.autocompactTokens)||b.autocompactTokens<0||($('#amCompMode').value==='custom'&&(b.autocompactTokens<100000||b.autocompactTokens>1000000))){toast('压缩阈值须为 0 或 10万–100万 token','err');return;}
+    const k=$('#amKey').value.trim();if(k)b.apiKey=k;
+    // 新卡存清单推荐的型号作为默认(群没选时用它);编辑不动卡上存的型号。
+    if(!edit)b.model=pr.model;
+    const e=envOut();if(Object.keys(e).length)b.env=e;
+    if(edit)b.hidden=$('#amHide').checked;
+    try{const res=await api('/api/providers/add','POST',b);S=res;
+      let msg=edit?'已保存':'已添加 '+nm;if(S.runtimeCapabilities)msg+=runtimeChangeNote(res.providerChange||{});
+      toast(msg,'ok');closeModal();renderAll();loadUsage();
+    }catch(err){toast(err.message,'err');}};
+  setTimeout(()=>{const kf=$('#amKey');if(kf)kf.focus();},0);
+}
+
 // unified add / edit model panel (⚙ on a card = edit; 添加模型 = add)
 function openProviderModal(name,opts){
   opts=opts||{};
   const p=name?S.providers.find(x=>x.name===name):null, edit=!!p;
+  // 清单里的第三方(新建选了它的预设,或编辑认得出的卡):换用上面的 API key 面板。
+  if(!opts.plain&&((edit&&keyRouteOf(p))||(!edit&&(PRESETS[opts.preset]||{}).registry))){openKeyRouteModal(name,opts);return;}
   // Codex CLI backend: 无 baseUrl / 无 key / 无 claude 思考深度,订阅登录。
   // 新建时由预设决定(选「GPT via Codex」⇒ 面板整个换形态,靠下面 apply() 里重开一次实现)——
   // 这些字段的**有无**是结构性的,不是显隐,拿 CSS 藏不干净。
@@ -2073,21 +2225,22 @@ function openProviderModal(name,opts){
   const isClaudeLogin=edit&&!isCodex&&!p.baseUrl;
   // ⚠ option 必须写 value:没有 value 时 select.value 读的是**显示文本**,而下面拿它当 PRESETS[key]
   //    查表 —— 界面语言一切成英文,选项文本变了,预设联动就整个失效(逻辑不许依赖显示文本)。
-  const preset=edit?'':`<div class="field"><label class="f">预设(自动填端点/模型/调优)</label><select id="amPreset">${Object.keys(PRESETS).map(k=>`<option value="${esc(k)}" ${opts.preset===k?'selected':''}>${esc(k)}</option>`).join('')}</select></div>`;
+  const preset=edit?'':`<div class="field"><label class="f">预设(自动填端点/模型/调优)</label><select id="amPreset">${Object.keys(PRESETS).map(k=>`<option value="${esc(k)}" data-logo="${esc(modelLogoId(PRESETS[k]))}" ${(opts.preset||'自定义')===k?'selected':''}>${esc(k)}</option>`).join('')}</select></div>`;
   const keyPh=edit?(p.keyStatus==='set'?'已设置 · 留空保持':p.keyStatus==='env'?'env:'+esc(p.keyRef)+' · 留空保持':'粘贴 key'):'粘贴 key(存进本地 gitignored 配置)';
   const codexNote=isCodex?'<div class="hint" style="margin-bottom:12px">使用本机 ChatGPT 订阅登录，额度与本机 Codex 共享。</div>':'';
   // Durable hosts: model and thinking depth are chosen per group (group card / /model);
   // only a third-party endpoint keeps its model here as connection configuration.
-  const isDeepSeek=(edit&&isDeepSeekCard(p))||(!edit&&opts.preset==='DeepSeek (deepseek)');
-  const perGroup=!!S.runtimeCapabilities||isDeepSeek;
-  const showModelSec=!edit||!perGroup||(!isCodex&&!isClaudeLogin&&!isDeepSeek);
+  // 清单里的第三方(按群选型号):编辑时按卡的端点认,新建时按选中的预设认。
+  const isKeyRoute=(edit&&!!keyRouteOf(p))||(!edit&&!!(PRESETS[opts.preset]||{}).registry);
+  const perGroup=!!S.runtimeCapabilities||isKeyRoute;
+  const showModelSec=!edit||!perGroup||(!isCodex&&!isClaudeLogin&&!isKeyRoute);
   $('#modal').innerHTML=`<h3>${edit?'配置 '+esc(name):'添加模型'}</h3>
     ${preset}
     ${codexNote}
     ${showModelSec?`<h4 class="sec">${perGroup?'名称与型号':'型号与推理'}</h4>`:''}
     ${edit?'':'<div class="field"><label class="f" for="amName">名称</label><input id="amName" placeholder="如 glm / my-model"/></div>'}
-    ${perGroup?`<div class="hint" style="margin-bottom:12px">型号与思考深度按群在「群·项目」里选${(isCodex||isClaudeLogin||isDeepSeek)?'':'；这个端点的型号在下面填，各群共用'}。</div>`:''}
-    ${isDeepSeek?'':isCodex&&perGroup?'':isCodex?`<div class="field"><label class="f">模型 model</label>
+    ${perGroup?`<div class="hint" style="margin-bottom:12px">型号与思考深度按群在「群·项目」里选${(isCodex||isClaudeLogin||isKeyRoute)?'':'；这个端点的型号在下面填，各群共用'}。</div>`:''}
+    ${isKeyRoute?'':isCodex&&perGroup?'':isCodex?`<div class="field"><label class="f">模型 model</label>
       <select id="amModelSel"><option value="${edit?esc(p.model):''}" selected>${edit&&p.model?esc(p.model):'(未设 — 用 codex 默认)'}</option></select>
       <input id="amModel" value="${edit?esc(p.model):''}" placeholder="如 gpt-5.6-sol" style="display:none;margin-top:8px"/>
       <div class="hint" id="amModelSrc" style="margin-top:4px">加载模型列表…</div></div>`
@@ -2114,6 +2267,7 @@ function openProviderModal(name,opts){
       <div id="clStatus" class="statbox">${clStatusHtml()}</div>
       <button class="btn" id="clVerify" style="margin-top:8px">检测登录</button>
       <div class="hint" id="clModelsNote" style="margin-top:6px;display:none"></div>
+      <div class="hint" id="clCli" style="margin-top:6px;display:none"></div>
       <div class="hint" style="margin-top:6px">检查本机 Claude Code 登录状态，不发起模型对话。</div></div>`:''}
     ${isCodex?`<div class="field"><label class="f">Codex 订阅登录 / 额度</label>
       <div id="cxStatus" class="statbox">${cxStatusHtml(cxKey)}</div>
@@ -2142,7 +2296,7 @@ function openProviderModal(name,opts){
   if(!edit){const apply=()=>{const key=$('#amPreset').value,pr=PRESETS[key]||{};
     // ⚠ codex 形态是**结构性**的(没有端点/key/思考深度,多出模型下拉与订阅额度),
     //   靠显隐凑不出来 ⇒ 切换时原地重开一次面板,把选中的预设带过去。
-    if(!!pr.runner!==!!isCodex||(key==='DeepSeek (deepseek)')!==!!isDeepSeek){openProviderModal(null,{codex:pr.runner==='codex',preset:key});return;}
+    if(!!pr.runner!==!!isCodex||!!pr.registry!==!!isKeyRoute){openProviderModal(null,{codex:pr.runner==='codex',preset:key});return;}
     const $b=$('#amBase'),$m=$('#amModel');
     if(pr.name)$('#amName').value=pr.name;if(pr.baseUrl&&$b){$b.value=pr.baseUrl;if($m)$m.value=pr.model||'';}
     // 订阅登录预设:端点/key 清空并隐藏 —— 留着只会让人以为"还得填点什么"。
@@ -2175,6 +2329,7 @@ function openProviderModal(name,opts){
       if(sel)sel.onchange=()=>{const c=sel.value==='__custom__';inp.style.display=c?'':'none';if(c){inp.value='';inp.focus();}};
     };
     (async()=>{try{paintModels(await api('/api/claude/models'));}catch(e){paintModels(null);}})();
+    loadClaudeCli();
     const btn=$('#clVerify');
     if(btn)btn.onclick=async()=>{const t=btn.textContent;btn.disabled=true;btn.innerHTML='<span class="spin"></span> 检测中…';
       try{const r=await api('/api/claude/verify','POST',{force:true});S.claudeStatus=r;
@@ -2239,7 +2394,7 @@ function openProviderModal(name,opts){
       // 订阅登录:端点/key/识图三项面板里就没有 ⇒ 不回传(回传空串会把已有值清掉)。
       // 型号可以被清空成「跟随 Claude Code 默认」,那要显式 modelClear —— 但只在控件真在时才发。
       if(!perGroup){b.effort=$('#amEff').value; if(hasModelCtl&&!selModel)b.modelClear=true;}
-    } else {if(selModel!==null)b.model=selModel;if(isDeepSeek&&!edit)b.model='deepseek-flash[1m]';b.baseUrl=$('#amBase').value.trim();b.apiKey=$('#amKey').value.trim();if($('#amEff'))b.effort=$('#amEff').value;b.vision=!$('#amVision').checked;}
+    } else {if(selModel!==null)b.model=selModel;if(isKeyRoute&&!edit)b.model=(PRESETS[($('#amPreset')||{}).value]||{}).model;b.baseUrl=$('#amBase').value.trim();b.apiKey=$('#amKey').value.trim();if($('#amEff'))b.effort=$('#amEff').value;b.vision=!$('#amVision').checked;}
     if(!edit)b.env=JSON.parse($('#amPreset').dataset.env||'{}');
     if(edit)b.hidden=$('#amHide').checked;
     try{const r=await api('/api/providers/add','POST',b);S=r;
@@ -2991,7 +3146,10 @@ function groupBrainRows(g){
   else if(cat.models===null)model=`<span class="vv" title="这个端点的型号在「模型」页设置,各群共用">${b.model?esc(modelName(b.model)||b.model):'—'} <span class="faint">· 在「模型」页改</span></span>`;
   else{
     const list=cat.models||[];
-    const opts=list.map(m=>`<option value="${esc(m.id)}" ${m.id===b.model?'selected':''}>${esc(m.name||modelName(m.id))}${cat.recommended&&cat.recommended.model===m.id?' ★':''}</option>`);
+    const optOf=m=>`<option value="${esc(m.id)}" ${m.id===b.model?'selected':''}>${esc(m.name||modelName(m.id))}${cat.recommended&&cat.recommended.model===m.id?' ★':''}</option>`;
+    // 长清单(第三方实时清单按模型来源清单过滤后带 family):不止一家时按家分组,组按首次出现的顺序;只有一家就是平铺列表。
+    const fams=[...new Set(list.map(m=>m.family||''))];
+    const opts=fams.filter(Boolean).length>1?fams.map(f=>{const items=list.filter(m=>(m.family||'')===f).map(optOf).join('');return f?`<optgroup label="${esc(f)}">${items}</optgroup>`:items;}):list.map(optOf);
     if(b.model&&!list.some(m=>m.id===b.model))opts.unshift(`<option value="${esc(b.model)}" selected>${esc(modelName(b.model)||b.model)}</option>`);
     if(!b.model)opts.unshift('<option value="" selected disabled>未选</option>');
     opts.push('<option value="__custom__">自定义…</option>');
@@ -4366,7 +4524,7 @@ function lcOpenNew(){
     <div class="field"><label class="f">模型</label><select id="lcnProv">${provs.map(p=>`<option ${p.name===S.defaultProvider?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div>
     <div class="mfoot"><button class="btn" id="lcnCancel">取消</button><button class="btn primary" id="lcnSave" disabled>创建</button></div>`;
   $('#modalBg').classList.add('show');
-  const show=()=>{$('#lcnWd').textContent=wd||'未选择';$('#lcnSave').disabled=!wd||!provs.length;};show();
+  const show=()=>{$('#lcnWd').textContent=wd||trText('未选择');   /* 这一格显示路径,不进翻译层(data-i18n-skip);空着时那三个字是界面文字 */$('#lcnSave').disabled=!wd||!provs.length;};show();
   $('#lcnBrowse').onclick=()=>openFsPicker(p=>{if(p){wd=p;show();}});
   $('#lcnCancel').onclick=closeModal;
   $('#lcnSave').onclick=async()=>{const b=$('#lcnSave');b.disabled=true;
@@ -4459,7 +4617,7 @@ function renderSettings(){
     ${INJECTED_TOKEN?'':'<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="logoutBtn" title="作废这次登录;其它设备上的登录不受影响">退出登录</button><button class="btn" id="logoutAllBtn" title="作废这台机器签发过的全部登录(所有设备都要重新登录),手机丢了用这个">退出所有设备</button></div>'}
     ${prSection}
   </div>`;
-  // 关于:一句话介绍 + 官网 / 源码与文档 / 反馈。版本号取品牌字标旁的徽章(服务端注入的 PKG_VERSION),与版本历史的「当前」同源。
+  // 关于:一句话介绍 + 官网 / 源码与文档 / 反馈。版本号取品牌字标旁的徽章(服务端注入的 PKG_VERSION)。
   const linkRow=(label,u,text)=>`<div class="kv"><span class="kk">${label}</span><span class="vv mono"><a href="${u}" target="_blank" rel="noopener" style="color:var(--ember-soft)">${text}</a></span></div>`;
   const aboutCard=`<div class="card" style="grid-column:1/-1" id="aboutCard"><div class="lbl">关于 SintBot</div>
     <div class="hint" style="margin:0 0 10px;color:var(--ink)">SintBot 是在聊天群里干活的自托管 AI 助手:一个群绑一个项目,无头驱动 Claude Code 或 Codex,模型随时换、项目记忆不丢,全程在你自己的机器上。</div>
@@ -4496,7 +4654,7 @@ function renderSettings(){
     :updMode==='dev'?'开发版不在控制台升级，请用部署脚本。':'只安装检测到的稳定版本;所有群任务与队列清空后才会安装。需要可写的全局安装目录,不会提权;后台服务会自动重启,前台运行需手动重启。';
   const updateCard=`<div class="card" style="grid-column:1/-1" id="updateCard"><div class="lbl">软件更新</div>
     <div id="updateStatus" class="hint" style="margin:0 0 12px;color:var(--ink);display:flex;align-items:center;gap:8px">${updMode==='managed'&&updateBusy?'<span class="spin"></span>':''}<span>${updateText}</span></div>
-    ${upd&&upd.available?`<div class="hint" style="margin:-4px 0 12px">版本差异与发布说明：<a href="https://github.com/sintlab/sintbot/releases/tag/v${encodeURIComponent(upd.latestVersion)}" target="_blank" rel="noopener" style="color:var(--ember-soft)">查看 v${esc(upd.latestVersion)} 发布说明</a></div>`:''}
+    ${upd&&upd.available?`<div class="hint" style="margin:-4px 0 12px">版本差异与发布说明：<a href="${esc(changelogUrl(upd.latestVersion))}" data-changelog="${esc(upd.latestVersion)}" target="_blank" rel="noopener" style="color:var(--ember-soft)">查看 v${esc(upd.latestVersion)} 发布说明</a></div>`:''}
     <div class="inline" style="gap:14px;flex-wrap:wrap;margin-bottom:12px">
       <span class="dim">自动检查稳定版(启动时及每天)</span>
       ${upd&&upd.announceSupported===false?'':`<label class="inline" style="gap:6px;cursor:pointer"><input type="checkbox" class="switch" id="updAnnounce" ${upd&&upd.announce!==false?'checked':''}/> <span class="dim">升级后向群里播报(记住选择)</span></label>`}
@@ -4509,10 +4667,13 @@ function renderSettings(){
       <button class="btn" id="updIgnore" ${!upd||!upd.available?'disabled':''}>忽略此版本</button>
     </div>
     <div class="hint" style="margin-top:10px">${updHint}</div>
-    <div class="update-history"><div class="subhead">版本历史</div>
-      <div id="verhistBox"><div class="empty">加载中…</div></div></div>
+    <div class="update-notes"><a href="${esc(changelogUrl())}" data-changelog="" target="_blank" rel="noopener">更新记录 →</a></div>
   </div>`;
+  // 界面(1.4.30):界面语言从侧栏移到这里;主题按钮仍在侧栏
+  const uiCard=`<div class="card" id="uiCard" style="grid-column:1/-1"><div class="lbl">界面</div>
+    <div class="kv lang-row"><span class="kk">语言</span>${langPickHtml()}</div></div>`;
   $('#settings').innerHTML=`<div class="stoc" id="setToc" role="navigation" aria-label="本页内容"></div><div class="grid cols2 stagger">
+    ${uiCard}
     ${fxFeishuCard(fe)}
     ${S.runtimeCapabilities?fxWecomAttachCard():''}
     ${S.runtimeCapabilities?fxSlackAttachCard():''}
@@ -4537,7 +4698,6 @@ function renderSettings(){
   </div>`;
   buildSettingsToc();
   updateTopUpdateBadge();
-  loadChangelog();
   $('#bSave').onclick=async()=>{const brand=$('#bBrand').value.trim(),http=$('#pxHttp').value.trim();
     if(http&&!/^https?:\/\/\S+$/i.test(http)){toast('代理地址要像 http://127.0.0.1:7890','err');return;}
     try{await api('/api/agent','POST',{brand});S=await api('/api/proxy','POST',{enabled:!!http,http});toast('已保存','ok');renderSettings();}catch(e){toast(e.message,'err');}};
@@ -4688,7 +4848,36 @@ function fxIdentity(fe){
 const fxFoldUser={};
 function bindFxFolds(){
   $$('details[data-fold]').forEach(d=>{const sm=d.querySelector(':scope>summary');if(sm)sm.onclick=()=>{fxFoldUser[d.dataset.fold]=!d.open;};});
+  $$('#settings .pfold>.hfold').forEach(b=>{b.onclick=()=>{const c=b.parentElement,open=!c.classList.toggle('folded');
+    fxFoldUser['pf-'+c.dataset.pf]=open;b.setAttribute('aria-expanded',String(open));};});
 }
+/* PF_BEGIN 设置页三张平台卡的折叠头(1.4.30):平台图标、名字、状态点,后面一行摘要(飞书:应用名 · N 个群;企微:机器人名 · N 个会话;
+   Slack:工作区 · N 个会话;没接入写「尚未接入」)。正文默认收起;点开记进 fxFoldUser(本页有效),保存 / 热更新重画照样展开。
+   连接出错只把点变红,不自动展开。点与摘要随连接状态就地刷新(pfSync),不重画卡里的表单。 */
+function pfFacts(p){
+  const c=connDict(S.conn)[p],n=(S.groups||[]).filter(g=>p==='feishu'?(!g.platform||g.platform==='feishu'):g.platform===p).length;
+  let on,running=false,name='';
+  if(p==='feishu'){const fe=S.feishu;on=!!(fe&&(fe.appId||fe.appIdRef)&&fe.appSecretStatus&&fe.appSecretStatus!=='none');name=(fe&&fe.identity&&fe.identity.name)||'';}
+  else if(p==='wecom'){const we=S.wecom||{};on=!!(S.platforms&&S.platforms.wecom);running=!!(WA.job&&WA.job.phase==='running');name=we.botName||(c&&c.botNameLearned)||'';}
+  else{on=!!(S.platforms&&S.platforms.slack);running=!!(SA.job&&SA.job.phase==='running');name=(S.slack&&S.slack.team)||'';}
+  const st=on?connStatus(c):'';
+  return {dot:running?'warn':!on?'skip':st,
+    tip:running?'接入中':!on?'尚未接入':st==='ok'?'已连接':st==='warn'?(c?'连接中':'等待连接'):'连接中断',
+    sum:!on?(running?'接入中':'尚未接入'):[name,n+(p==='feishu'?' 个群':' 个会话')].filter(Boolean).join(' · ')};
+}
+function pfCard(p,id,name,body){
+  const open=!!fxFoldUser['pf-'+p],f=pfFacts(p);
+  return `<div class="card hcard pfold feishu-setup${open?'':' folded'}" id="${id}" data-pf="${p}" data-sig="${esc(f.dot+'|'+f.tip+'|'+f.sum)}" style="grid-column:1/-1">
+    <button type="button" class="hfold" aria-expanded="${open}" aria-controls="${id}Body"><span class="lbl">${platLogo(p)}${name}</span><span class="dot ${f.dot}" data-pfdot role="img" title="${f.tip}" aria-label="${f.tip}"></span><span class="hsum" data-pfsum>${esc(f.sum)}</span><span class="hcaret">${IC.chevronDown}</span></button>
+    <div class="pfold-body" id="${id}Body">${body}</div></div>`;
+}
+function pfSync(){
+  if(!S)return;
+  $$('#settings .pfold').forEach(c=>{const f=pfFacts(c.dataset.pf),sig=f.dot+'|'+f.tip+'|'+f.sum;if(c.dataset.sig===sig)return;c.dataset.sig=sig;
+    const d=c.querySelector('[data-pfdot]'),s=c.querySelector('[data-pfsum]');
+    if(d){d.className='dot '+f.dot;d.title=f.tip;d.setAttribute('aria-label',f.tip);}if(s)s.textContent=f.sum;});
+}
+/* PF_END */
 // 企微「身份与连接」条:企微没有应用身份接口,能展示的身份就是配置里的机器人名 + Bot ID;长连接状态来自 S.conn.wecom(SSE 实时推)。
 // 与飞书身份条同一形状,让两张卡读起来是一套。
 function wecomConnText(c){
@@ -4717,21 +4906,13 @@ function fxWecomIdent(we){
    保存配置、激活连接);这里只轮询 /api/wecom/attach。任务状态放在 WA 里,设置页重画时照样显示二维码与进度;
    密钥只在提交那一下经过页面,任务状态里没有密钥和扫码会话。 */
 const WA={job:null,polling:false,loaded:false};
-// 企微连接状态 → 卡头状态胶囊(与飞书卡同一套 fx-status);接入任务进行中优先显示「接入中」
-function waStatusPill(){
- const on=!!(S.platforms&&S.platforms.wecom),c=connDict(S.conn).wecom,st=on?connStatus(c):'',running=!!(WA.job&&WA.job.phase==='running');
- const txt=running?'接入中':!on?'尚未接入':st==='ok'?'已连接':st==='warn'?(c?'连接中':'等待连接'):'连接中断';
- const dot=running?'warn':!on?'skip':st;
- return `<span class="fx-status ${on&&st==='ok'?'on':''}" id="waPill"><span class="dot ${dot}"></span>${txt}</span>`;
-}
 function fxWecomAttachCard(){
- const head=`<div class="feishu-heading"><div class="lbl">${platLogo('wecom')}企业微信</div>${waStatusPill()}</div>`;
  const guide=(label,ext)=>`<a class="btn" data-guide="install/#wecom" href="${guideBase()}install/#wecom" target="_blank" rel="noopener">${label}${ext?' '+IC.ext:''}</a>`;
  // 已接入:与飞书卡同一结构 —— 三行要点 + 主操作,机器人信息与连接细节收进「高级」
  if(S.platforms&&S.platforms.wecom){
   const we=S.wecom||{},c=connDict(S.conn).wecom,bound=(S.groups||[]).filter(g=>g.platform==='wecom');
   const name=we.botName||(c&&c.botNameLearned)||'';
-  return `<div class="card feishu-setup" id="wecomStatusCard" style="grid-column:1/-1">${head}
+  return pfCard('wecom','wecomStatusCard','企业微信',`
    <div class="kv"><span class="kk">机器人名称</span><span class="vv">${esc(name||'企业微信智能机器人')}</span></div>
    <div class="kv"><span class="kk">已绑定项目</span><span class="vv">${bound.length}</span></div>
    <div class="kv"><span class="kk">消息响应</span><span class="vv">单聊直接回复，群里回复 @ 机器人的消息</span></div>
@@ -4742,12 +4923,12 @@ function fxWecomAttachCard(){
     <div class="kv"><span class="kk">连接</span><span class="vv" id="wConnLine">${esc(wecomConnText(c))}</span></div>
     <p class="hint">再绑一个项目：在企业微信建群，把机器人加进群并 @它一次，再到「群 · 项目 → 配置群项目」选这个群。每个机器人只由一台 SintBot 连接；凭据只保存在这台 Mac。</p>
     <div class="feishu-actions"><button class="btn" id="waRetryConnection">刷新连接状态</button><a class="btn" href="https://work.weixin.qq.com/wework_admin/frame" target="_blank" rel="noopener">打开企业微信管理后台 ${IC.ext}</a>${guide('查看完整安装指南',true)}</div>
-   </details></div>`;
+   </details>`);
  }
  // 未接入:表单 + 扫码为主操作,手动填写收进「高级」
  const provs=(S.providers||[]).filter(p=>!p.hidden&&(S.wecomAttachProviders||[]).includes(p.name)&&['codex','claude'].includes(p.runner||'claude'));
  const root=(S.projectsRoots&&S.projectsRoots[0])||'';
- return `<div class="card feishu-setup" id="wecomAttachCard" style="grid-column:1/-1">${head}
+ return pfCard('wecom','wecomAttachCard','企业微信',`
   <p class="hint">用手机企业微信扫码创建机器人，再给它发一句话就绑定项目。现有飞书和项目都保留。</p>
   <div class="field" style="margin-top:12px"><label for="waWorkdir">项目目录</label><div class="feishu-actions" style="margin:0"><input id="waWorkdir" placeholder="${esc(root?root.replace(/\/+$/,'')+'/my-project':'选择已有项目的完整目录')}" spellcheck="false" autocomplete="off"><button class="btn" id="waBrowse" type="button">${IC.folder} 选择…</button></div></div>
   <div class="field" style="margin-bottom:0"><label for="waProvider">执行器</label><select id="waProvider">${provs.map(({name})=>`<option value="${esc(name)}"${name===S.defaultProvider?' selected':''}>${esc(name)}</option>`).join('')}</select>${provs.length?'':'<div class="hint" style="margin-top:5px">没有可用的执行器：先在「模型 · 库」里登录 Codex 或 Claude Code。</div>'}</div>
@@ -4760,7 +4941,7 @@ function fxWecomAttachCard(){
    <div class="field"><label for="waSecret">Secret</label><input id="waSecret" type="password" autocomplete="off" spellcheck="false"></div>
    <div class="feishu-actions" style="margin-top:0"><button class="btn" id="waStart">连接并绑定项目</button></div>
    <p class="hint">密钥只保存在这台 Mac。连接后，在企业微信里给机器人发一句话（单聊，或在群里 @它）。</p>
-  </details></div>`;
+  </details>`);
 }
 function waPaint(){
  const card=$('#wecomAttachCard');if(!card)return;const j=WA.job,running=!!(j&&j.phase==='running');
@@ -4768,7 +4949,7 @@ function waPaint(){
  if(j&&j.notice)$('#waStatus').textContent=j.notice;
  $('#waCancel').classList.toggle('wa-off',!running);$('#waScan').disabled=running;$('#waStart').disabled=running;
  for(const id of ['waWorkdir','waProvider','waBrowse','waId','waSecret'])if($('#'+id))$('#'+id).disabled=running;
- const pill=$('#waPill');if(pill)pill.outerHTML=waStatusPill();
+ pfSync();
 }
 async function waPoll(){
  if(WA.polling)return;WA.polling=true;
@@ -4824,19 +5005,12 @@ function slackConnText(c){
   if(c.fatal)bits.push('令牌已失效，需要重新接入');
   return bits.join(' · ');
 }
-function saStatusPill(){
- const on=!!(S.platforms&&S.platforms.slack),c=connDict(S.conn).slack,st=on?connStatus(c):'',running=!!(SA.job&&SA.job.phase==='running');
- const txt=running?'接入中':!on?'尚未接入':st==='ok'?'已连接':st==='warn'?(c?'连接中':'等待连接'):'连接中断';
- const dot=running?'warn':!on?'skip':st;
- return `<span class="fx-status ${on&&st==='ok'?'on':''}" id="saPill"><span class="dot ${dot}"></span>${txt}</span>`;
-}
 function fxSlackAttachCard(){
- const head=`<div class="feishu-heading"><div class="lbl">${platLogo('slack')}Slack</div>${saStatusPill()}</div>`;
  const guide=(label,ext)=>`<a class="btn" data-guide="install/#slack" href="${guideBase()}install/#slack" target="_blank" rel="noopener">${label}${ext?' '+IC.ext:''}</a>`;
  if(S.platforms&&S.platforms.slack){
   const sl=S.slack||{},c=connDict(S.conn).slack,bound=(S.groups||[]).filter(g=>g.platform==='slack');
   const settings=sl.appId?`https://api.slack.com/apps/${encodeURIComponent(sl.appId)}/general`:'https://api.slack.com/apps';
-  return `<div class="card feishu-setup" id="slackStatusCard" style="grid-column:1/-1">${head}
+  return pfCard('slack','slackStatusCard','Slack',`
    <div class="kv"><span class="kk">工作区</span><span class="vv">${esc(sl.team||'Slack 工作区')}</span></div>
    <div class="kv"><span class="kk">已绑定项目</span><span class="vv">${bound.length}</span></div>
    <div class="kv"><span class="kk">消息响应</span><span class="vv">私聊直接回复，频道里回复 @ 机器人的消息；命令以 ! 开头</span></div>
@@ -4847,11 +5021,11 @@ function fxSlackAttachCard(){
     <div class="kv"><span class="kk">连接</span><span class="vv" id="sConnLine">${esc(slackConnText(c))}</span></div>
     <p class="hint">再绑一个项目：在 Slack 的目标频道里发 /invite @机器人名 把它请进频道，再到「群 · 项目 → 配置群项目」选这个频道。每个 Slack 应用只由一台 SintBot 连接；令牌只保存在这台 Mac。</p>
     <div class="feishu-actions"><button class="btn" id="saRetryConnection">刷新连接状态</button><a class="btn" href="${esc(settings)}" target="_blank" rel="noopener">打开 Slack 应用设置 ${IC.ext}</a>${guide('查看完整安装指南',true)}</div>
-   </details></div>`;
+   </details>`);
  }
  const provs=(S.providers||[]).filter(p=>!p.hidden&&(S.wecomAttachProviders||[]).includes(p.name)&&['codex','claude'].includes(p.runner||'claude'));
  const root=(S.projectsRoots&&S.projectsRoots[0])||'';
- return `<div class="card feishu-setup" id="slackAttachCard" style="grid-column:1/-1">${head}
+ return pfCard('slack','slackAttachCard','Slack',`
   <p class="hint">在 Slack 创建你自己的应用，粘贴两枚令牌，再给它发一句话就绑定项目。现有连接和项目都保留。</p>
   <div class="field" style="margin-top:12px"><label for="saWorkdir">项目目录</label><div class="feishu-actions" style="margin:0"><input id="saWorkdir" placeholder="${esc(root?root.replace(/\/+$/,'')+'/my-project':'选择已有项目的完整目录')}" spellcheck="false" autocomplete="off"><button class="btn" id="saBrowse" type="button">${IC.folder} 选择…</button></div></div>
   <div class="field"><label for="saProvider">执行器</label><select id="saProvider">${provs.map(({name})=>`<option value="${esc(name)}"${name===S.defaultProvider?' selected':''}>${esc(name)}</option>`).join('')}</select>${provs.length?'':'<div class="hint" style="margin-top:5px">没有可用的执行器：先在「模型 · 库」里登录 Codex 或 Claude Code。</div>'}</div>
@@ -4869,8 +5043,7 @@ function fxSlackAttachCard(){
   <div id="saNet" style="margin-top:12px"></div>
   <div class="feishu-actions"><button class="btn primary" id="saStart">连接并绑定项目</button><button class="btn wa-off" id="saCancel">取消接入</button><a class="btn wa-off" id="saOpen" href="https://slack.com/" target="_blank" rel="noopener">在 Slack 里打开机器人 ${IC.ext}</a>${guide('查看 Slack 接入指南',false)}</div>
   <p class="hint" id="saStatus" role="status" aria-live="polite" style="margin-top:8px">连接后在 Slack 里给机器人发一句话（私聊，或在已邀请它的频道里 @它）即可完成接入。令牌只保存在这台 Mac。</p>
-  <p class="hint sa-note bad" id="saNetHint"></p>
- </div>`;
+  <p class="hint sa-note bad" id="saNetHint"></p>`);
 }
 function saPaint(){
  const card=$('#slackAttachCard');if(!card)return;const j=SA.job,running=!!(j&&j.phase==='running');
@@ -4880,7 +5053,7 @@ function saPaint(){
  for(const id of ['saWorkdir','saProvider','saBrowse','saName','saAgent','saAppToken','saBotToken','saSaveProxy'])if($('#'+id))$('#'+id).disabled=running;
  const open=$('#saOpen'),link=running&&j.open&&j.open.web;open.classList.toggle('wa-off',!link);if(link)open.href=j.open.web;
  if(SA.app&&SA.app.links)$('#saInstall').href=SA.app.links.install;
- const pill=$('#saPill');if(pill)pill.outerHTML=saStatusPill();
+ pfSync();
 }
 async function saPoll(){
  if(SA.polling)return;SA.polling=true;
@@ -5003,13 +5176,10 @@ function bindWecomCard(){
 const guideBase=()=>document.documentElement.lang==='zh'?'https://sintbot.com/zh/guide/':'https://sintbot.com/guide/';
 function fxFeishuCard(fe){
   const configured=!!(fe&&(fe.appId||fe.appIdRef)&&fe.appSecretStatus&&fe.appSecretStatus!=='none');
-  const c=connDict(S.conn).feishu,online=!!(c&&c.state==='connected');
-  const status=online?'已连接':configured?'等待连接':'尚未接入';
   const app=(fe&&fe.identity)||{};
   const appUrl=fe&&/^cli_[A-Za-z0-9]+$/.test(fe.appId||'')?'https://open.feishu.cn/app/'+encodeURIComponent(fe.appId):'https://open.feishu.cn/app';
   const groupCount=(S.groups||[]).filter(g=>!g.platform||g.platform==='feishu').length;
-  return `<div class="card feishu-setup" id="feishuCard" style="grid-column:1/-1">
-    <div class="feishu-heading"><div class="lbl">${platLogo('feishu')}飞书</div><span class="fx-status ${online?'on':''}"><span class="dot ${online?'ok':configured?'warn':'skip'}"></span>${status}</span></div>
+  return pfCard('feishu','feishuCard','飞书',`
     ${configured?'':(S.runtimeCapabilities&&S.runtimeCapabilities.localChat&&(S.groups||[]).some(g=>g.platform==='local')
       ?'<p class="hint">现在只在这台电脑上对话。要在飞书里也能找它：先停止 SintBot，在终端运行 <code data-i18n-skip style="margin:0 4px">sintbot connect --attach</code>，用手机飞书扫码确认，再启动。本机对话、记录和现有设置都会保留。</p>'
       :'<p class="hint">用手机飞书确认一次，自动创建机器人和项目群。</p>')}
@@ -5024,8 +5194,7 @@ function fxFeishuCard(fe){
       <div class="kv"><span class="kk">Bot ID</span><span class="vv">${esc(fe&&fe.botOpenId||'尚未获取')}</span></div>
       <p class="hint">更换应用或凭据需要在这台 Mac 上完成，并在所有任务结束后重新启动。请保留已有配置和任务记录。</p>
       <div class="feishu-actions"><a class="btn" href="${appUrl}" target="_blank" rel="noopener">打开飞书应用后台 ${IC.ext}</a><a class="btn" data-guide="install/#feishu" href="${guideBase()}install/#feishu" target="_blank" rel="noopener">查看完整安装指南 ${IC.ext}</a></div>
-    </details>`:''}
-  </div>`;
+    </details>`:''}`);
 }
 function fxFeishuAccessCard(fe){
   const fl=Object.assign({},(S.net||{}).feishuLogin||{},{publicUrl:(S.net||{}).publicUrl||''});
@@ -5354,8 +5523,8 @@ function updateConnLive(){
   if(!S)return;
   const d=connDict(S.conn);
   // 设置页企微卡的「身份与连接」条先同步(就地改文案,不重渲染表单 —— 用户可能正在填);放在最前:下面概览那段遇到行增减会整卡重画后 return
-  {const wp=$('#waPill'); if(wp)wp.outerHTML=waStatusPill();}
-  {const sp=$('#saPill'); if(sp)sp.outerHTML=saStatusPill(); const sl=$('#sConnLine'); if(sl)sl.textContent=slackConnText(d.slack);}
+  pfSync();
+  {const sl=$('#sConnLine'); if(sl)sl.textContent=slackConnText(d.slack);}
   {const wl=$('#wConnLine'); if(wl){const c=d.wecom; wl.textContent=wecomConnText(c); const ws=$('#wConnSt'); if(ws){const st=connStatus(c); ws.className='fx-ident-st '+(st==='ok'?'on':(st==='fail'?'off':'')); ws.textContent=c?(c.state==='connected'?'长连接在线':connDetail(c)):'未连接';}}}
   if(!$('#overview').innerHTML)return;
   for(const [k,label] of Object.entries(CONN_LABEL)){
@@ -5914,7 +6083,6 @@ const I18N_EN=[
   ["自定义","Custom"],
   ["Claude 订阅登录 (claude)","Claude subscription sign-in (claude)"],
   ["智谱 GLM (glm)","Zhipu GLM (glm)"],
-  ["火山方舟 (volcano)","Volcano Ark (volcano)"],
   ["未登录 — 机器上跑 codex login","Not signed in — run codex login on this machine"],
   ["登录:","Sign-in: "],
   ["百分比 = 已用,括号 = 距重置","Percent = used, parentheses = time to reset"],
@@ -7131,6 +7299,67 @@ const I18N_EN=[
   ["每个群绑定一个项目目录，在这里选模型、执行模式和忙时跟进。", "Each group is bound to one project folder; choose its model, execution mode and follow-up behaviour here."],
   ["在这里管理模型的端点、密钥与登录状态；型号与思考深度按群在「群·项目」里选。", "Manage each model's endpoint, key and sign-in status here; the model and thinking depth are chosen per group under Groups · Projects."],
   ["本页内容", "On this page"],
+  // 1.4.30 settings
+  ["界面", "Interface"],
+  ["语言", "Language"],
+  ["选择语言", "Choose language"],
+  ["更新记录 →", "Release notes →"],
+  // end 1.4.30 settings
+  // 1.4.30 models
+  ["Claude Code 程序","Claude Code program"],
+  ["通过 npm 安装","installed with npm"],
+  ["通过官方安装器安装","installed with the native installer"],
+  ["这台机器上没找到 Claude Code 程序","The Claude Code program was not found on this machine"],
+  ["这台机器的 Claude Code 不是用 npm 或官方安装器装的，需要在机器上手动升级","Claude Code on this machine was installed neither with npm nor with the native installer; upgrade it on the machine by hand"],
+  ["安装没成功：升级后读不到版本","The install did not succeed: the version could not be read afterwards"],
+  ["验证 Key","Verify key"],
+  ["高级","Advanced"],
+  ["小模型 / 子代理","Small / sub-agent model"],
+  ["后台小任务与子代理用这个型号，已按这家的文档预填。","Background tasks and sub-agents use this model; it is filled in from the provider's docs."],
+  ["默认思考深度","Default thinking depth"],
+  ["跟随 Claude Code 默认","Claude Code default"],
+  ["群里没选思考深度时用它。","Used when a group has not chosen a thinking depth."],
+  ["环境变量","Environment variables"],
+  ["改用自定义端点","Use a custom endpoint"],
+  ["型号与思考深度按群在「群·项目」里选。","Model and thinking depth are chosen per group under Groups · Projects."],
+  ["先填 API key","Enter the API key first"],
+  ["没验证通过","Not verified"],
+  ["添加（未验证）","Add (not verified)"],
+  ["保存（未验证）","Save (not verified)"],
+  // end 1.4.30 models
+  // 1.4.30 en-sweep
+  // 英文界面全页扫描(tests/helpers/console-i18n-scan.js)找出的漏译;同一中文键排在后面的覆盖前面的译文
+  // 概览 ·「需要你处理」里的新版本一行
+  ["更新", "Update"],
+  ["打开版本更新", "Go to Software updates"],
+  // 群卡 · 第三方端点的型号行
+  ["这个端点的型号在「模型」页设置,各群共用", "This endpoint's model is set on the Models page and shared by every group"],
+  ["· 在「模型」页改", "· change on the Models page"],
+  // 群卡 · 定时任务的时间格式:中文简写只认中文,英文界面只举 cron 与别名的例子(覆盖原译文)
+  ["10:20 · 07-16 10:20 · 每天 09:00 · 工作日 8:30 · @daily", "10:20 · 07-16 10:20 · 0 9 * * * · 30 8 * * 1-5 · @daily"],
+  ["一次性写完整时间，如 2026-07-16 13:10；循环写「每天 09:00」「工作日 8:30」或 cron 五段。时间按所填时区，留空用默认时区。", "One-off: the full time, e.g. 2026-07-16 13:10. Recurring: a five-field cron expression such as 0 9 * * * (daily at 09:00) or 30 8 * * 1-5 (weekdays at 08:30), or an alias such as @daily. Times use the time zone you enter; empty means the default zone."],
+  // 群卡 · 暂停的确认框(新版服务)
+  ["暂停本群?只有任务结束且记录全部结账后才能暂停；暂停期间不处理新消息，配置和会话保留。", "Pause this group? It can pause only once its task has finished and every record is settled. While paused, new messages are not processed; configuration and session are kept."],
+  // 配置群项目 · 选 Slack 频道 / 企业微信群的指引(企业微信那句后面接服务端的提示)
+  ["在频道里发", "In the channel, send"],
+  ["把它拉进来,刷新后就会出现在这里", "to add the bot; it shows up here after a refresh"],
+  [",刷新后就会出现在这里", ", and it shows up here after a refresh"],
+  ["请在目标群 @机器人 一次，再刷新。这里只列出本次运行收到过消息的群。", "@mention the bot once in that group, then refresh. Only groups that sent a message since the service started are listed."],
+  ["只列了机器人被 @ 过的群 —— 手填的 id 若机器人不在群里,绑了也收不到消息;单聊填对方账号", "Only groups where the bot was @mentioned are listed — if you type an id for a group the bot is not in, binding it still receives nothing; for a direct chat, enter the other person's account"],
+  // 模型卡设置 / 添加模型
+  ["型号与思考深度按群在「群·项目」里选。", "The model and thinking depth are chosen per group under Groups · Projects."],
+  ["型号与思考深度按群在「群·项目」里选；这个端点的型号在下面填，各群共用。", "The model and thinking depth are chosen per group under Groups · Projects; this endpoint's model is entered below and shared by every group."],
+  // 设置页 · 软件更新(非托管安装的说明)、飞书管理员、企业微信接入的服务端提示
+  ["只安装检测到的稳定版本;所有群任务与队列清空后才会安装。需要可写的全局安装目录,不会提权;后台服务会自动重启,前台运行需手动重启。", "Installs only the detected stable version, once every group task and queue is empty. It needs a writable global install folder and never asks for admin rights; the background service restarts by itself, a run in the foreground has to be restarted by hand."],
+  ["先填 appId/appSecret(明文)", "Enter the App ID and App Secret first (as plain values)"],
+  ["拉取通讯录失败 — 需在开放平台开通 contact:department.base:readonly + 用户读权限并发版", "Could not read the contacts — in the Feishu developer console, grant contact:department.base:readonly and user read access, then publish a new app version"],
+  ["当前服务不能添加企业微信连接", "This service cannot add a WeCom connection"],
+  ["企业微信接入不可用", "WeCom setup is not available"],
+  // 登录页(服务端的回答)
+  ["密码错误", "Wrong password"],
+  // 概览 · 健康卡的一条警告(精确条目先于下面那条「N 警告」的正则)
+  ["1 警告", "1 warning"],
+  // end 1.4.30 en-sweep
 ];
 const I18N_EN_RX=[
   // 模型卡面板：重取可选型号的结果、本机 Codex 程序的版本与升级
@@ -7414,7 +7643,7 @@ const I18N_EN_RX=[
   [/^读取失败: ([\s\S]+)$/,"Failed to load: $1"],
   [/^向「(.+)」插一句$/,"Interject in \"$1\""],
   [/^配置里已忽略 (.+):([\s\S]*)$/,"Ignored in the config: $1 — $2"],
-  [/^(\d+) 个群在根之外:(.+) —— 照常运行,改目录时须搬进根内$/,"$1 groups are outside the roots: $2 — they keep running, but have to be moved inside when you change their folder"],
+  [/^(\d+) 个群在根之外:(.+) —— 照常运行,改目录时须搬进根内$/,(a,n,names)=>n+" groups are outside the roots: "+names.split("、").join(", ")+" — they keep running, but have to be moved inside when you change their folder"],
   [/^已退出 (\d+) 个登录$/,"Signed out of $1 sessions"],
   [/^通讯录较大,已取前 (\d+) 人,用搜索缩小$/,"Contacts are large; the first $1 people are loaded — use search to narrow it down"],
   [/^搜索姓名…\(共 (\d+) 人,点名即添加\)$/,"Search by name… ($1 people; click a name to add)"],
@@ -7467,6 +7696,32 @@ const I18N_EN_RX=[
   [/^等待群任务结束超时；可在任务空闲后重新发起$/,"Timed out waiting for group tasks; retry when they are idle"],
   [/^当前运行的是开发目录或非全局副本；请在终端手动更新$/,"This is a development or non-global install; update it from a terminal"],
   [/^将从 v([\d.]+) 升级到 v([\d.]+)。([\s\S]*)$/,(a,from,to,what)=>`Upgrade from v${from} to v${to}. ${what.replace('等所有群空闲、记录结清后装到单独的目录，再切换后台服务；切换期间约一分钟不处理新消息，新版本没连上全部群会自动换回。','Once every group is idle and settled, it installs into its own folder and switches the background service; new messages wait about a minute during the switch, and the previous version is restored if the new one does not connect every group. ').replace('所有群任务结束后才开始安装，后台服务会重启。','Installation waits until all group tasks finish, then restarts the background service.').replace('本次不向群播报。','This update will not be announced in groups.').replace('安装完成后会向未暂停的群播报；','After installation, it will be announced in active groups;')}`],
+  // 1.4.30 settings
+  [/^1 个群$/,"1 group"],
+  [/^(\d+) 个群$/,"$1 groups"],
+  [/^1 个会话$/,"1 conversation"],
+  [/^(\d+) 个会话$/,"$1 conversations"],
+  [/^查看 v(\S+) 发布说明$/,"View the v$1 release notes"],
+  // end 1.4.30 settings
+  // 1.4.30 models
+  [/^Claude Code 程序 (\d[\w.\-]*)$/,"Claude Code program $1"],
+  [/^把这台机器上的 Claude Code 程序从 (\S+) 升级到 (\S+)？\n会用安装它的 npm 重新全局安装最新版，大约一分钟。所有用 Claude Code 的群从下一轮起用新版；有群正在用 Claude Code 处理任务时不会升级。$/,"Upgrade the Claude Code program on this machine from $1 to $2?\nThis reinstalls the latest version globally with the npm that installed it, about a minute. Every group on Claude Code uses the new version from its next turn; nothing is upgraded while a group is running a Claude Code task."],
+  [/^把这台机器上的 Claude Code 程序从 (\S+) 升级到 (\S+)？\n会用它自带的更新（官方安装器）装上新版，大约一分钟。所有用 Claude Code 的群从下一轮起用新版；有群正在用 Claude Code 处理任务时不会升级。$/,"Upgrade the Claude Code program on this machine from $1 to $2?\nThis installs the new version with its own updater (the native installer), about a minute. Every group on Claude Code uses the new version from its next turn; nothing is upgraded while a group is running a Claude Code task."],
+  [/^Claude Code 程序已从 (\S+) 升级到 (\S+)。$/,"The Claude Code program was upgraded from $1 to $2."],
+  [/^Claude Code 程序仍是 (\S+)，没有变化。$/,"The Claude Code program is still $1; nothing changed."],
+  [/^Claude Code 程序已升级到 (\S+)$/,"The Claude Code program was upgraded to $1"],
+  [/^有群正在用 Claude Code 处理任务（(.+)），等它结束再升级$/,"A group is running a Claude Code task ($1); upgrade after it finishes"],
+  [/^可用 ✓ · 取到 (\d+) 个型号，到「群 · 项目」里按群选$/,"Works ✓ · $1 models available; choose one per group under Groups · Projects"],
+  // end 1.4.30 models
+  // 1.4.30 en-sweep
+  // 概览 ·「需要你处理」里的新版本一行
+  [/^发现新版 v(\S+)$/,"New version v$1"],
+  // 模型卡 ·「型号与深度」行:按群选 · N 个群在用
+  [/^1 个群在用$/,"used by 1 group"],
+  [/^(\d+) 个群在用$/,"used by $1 groups"],
+  // 对话页 · 读不到对话记录
+  [/^读取失败：([\s\S]+)$/,"Failed to load: $1"],
+  // end 1.4.30 en-sweep
 ];
 /* I18N_DICT_END */
 
@@ -7566,49 +7821,44 @@ try{new MutationObserver((muts)=>{
 (function(){const c=window.confirm,p=window.prompt;
   window.confirm=(m)=>c.call(window,trText(m));
   window.prompt=(m,d)=>p.call(window,trText(m),d);})();
-function updateLangBtn(){const b=$('#langBtn');if(!b)return;
-  b.innerHTML=IC.languages;
-  const to=langOf()==='zh'?'Switch to English':'切换到中文';   // 用**目标语言**写
-  b.setAttribute('title',to);b.setAttribute('aria-label',to);}
+/* 界面语言的选择(设置页「界面」卡,1.4.30 从侧栏移来):结构与交互照官网页脚的 language-picker ——
+   <details> 的卡头是图标 · 当前语言名 · 箭头,点开两项「English」「简体中文」各用本语言书写、当前项打 ✓。
+   语言名不进翻译层(data-i18n-skip)。点一项立即切换并收起;点别处或按 Esc 收起(Esc 把焦点还给卡头)。 */
+const LANG_NAMES={en:'English',zh:'简体中文'},LANG_TAGS={en:'en',zh:'zh-CN'};
+function langPickHtml(){const cur=langOf();
+  return `<details class="lang-pick" id="langPick"><summary aria-label="选择语言"><svg class="ic" aria-hidden="true"><use href="#lu-languages"/></svg><span class="lang-cur" data-i18n-skip lang="${LANG_TAGS[cur]}">${LANG_NAMES[cur]}</span><span class="lang-arrow" aria-hidden="true">⌃</span></summary>
+    <div class="lang-opts" role="group" aria-label="语言">${['en','zh'].map(l=>`<button type="button" data-setlang="${l}" lang="${LANG_TAGS[l]}"${l===cur?' aria-current="true"':''} data-i18n-skip>${LANG_NAMES[l]}</button>`).join('')}</div></details>`;}
+function updateLangBtn(){const p=$('#langPick');if(!p)return;const cur=langOf(),n=p.querySelector('.lang-cur');
+  if(n){n.textContent=LANG_NAMES[cur];n.lang=LANG_TAGS[cur];}
+  p.querySelectorAll('[data-setlang]').forEach(b=>{if(b.dataset.setlang===cur)b.setAttribute('aria-current','true');else b.removeAttribute('aria-current');});}
+document.addEventListener('click',e=>{const p=$('#langPick');if(!p||!p.open)return;
+  const o=e.target.closest&&e.target.closest('#langPick [data-setlang]');
+  if(o){p.open=false;p.querySelector('summary').focus();if(o.dataset.setlang!==langOf())setLang(o.dataset.setlang);return;}
+  if(!p.contains(e.target))p.open=false;});
+document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;const p=$('#langPick');if(p&&p.open){p.open=false;p.querySelector('summary').focus();}});
 function setLang(l){
   l=(l==='en')?'en':'zh';
   try{localStorage.setItem('sbot-lang',l);}catch(e){}
   const d=document.documentElement;d.dataset.lang=l;d.lang=l;
-  for(const a of document.querySelectorAll('#feishuCard a[data-guide]'))a.href=guideBase()+a.dataset.guide;
+  for(const a of document.querySelectorAll('a[data-guide]'))a.href=guideBase()+a.dataset.guide;
   document.title=l==='zh'?I18N_TITLE_ZH:trText(I18N_TITLE_ZH);
   applyI18n(document.body);updateLangBtn();
   if(S&&$('#groups .schedbox'))paintAllSched();   // 定时任务的时间说法按语言二选一(中文说法 / 原始表达式),不经词典 ⇒ 换语言重画那几格
-  if($('#verhistBox'))loadChangelog();   // 版本历史正文来自数据文件、不经词典 ⇒ 换语言得重画那张卡
+  syncChangelogLinks();   // 更新记录在官网,按界面语言分两页
 }
-$('#langBtn').onclick=()=>setLang(langOf()==='zh'?'en':'zh');
 document.title=langOf()==='zh'?I18N_TITLE_ZH:trText(I18N_TITLE_ZH);
 updateLangBtn();applyI18n(document.body);   // 首屏静态 HTML 先翻一遍,其余交给上面的 observer
 /* ══════════ 界面语言 · 完 ════════════════════════════════════════════════════ */
 
-/* 版本历史:CHANGELOG.json 经 /api/changelog 一次拉取;当前版本(=品牌字标旁的徽章)标「当前」。
-   版本徽章可点 → 跳设置页并滚动到软件更新与版本历史卡片(短暂高亮指位)。
-   英文界面另拉一份英文本(/api/changelog-en,按 version 对应):正文是数据不是界面文案,词典翻不了它
-   ⇒ 有英文用英文、没有的版本(与条数对不上的条目)原样回退中文;日期与「当前」徽章两语言共用一套。 */
-let CHANGELOG=null,CHANGELOG_EN=null;
-async function loadChangelog(){
-  if(!CHANGELOG){try{CHANGELOG=(await api('/api/changelog')).changelog||[];}catch(e){CHANGELOG=[];}}
-  if(langOf()==='en'&&!CHANGELOG_EN){try{CHANGELOG_EN=(await api('/api/changelog-en')).changelog||[];}catch(e){CHANGELOG_EN=[];}}
-  const box=$('#verhistBox');if(!box)return;
-  const badge=(document.querySelector('.mark .ver')||{}).textContent||'';
-  const EN=langOf()==='en'?new Map((CHANGELOG_EN||[]).map(v=>[v.version,v])):null;
-  box.innerHTML=CHANGELOG.length?CHANGELOG.map(v=>{const cur=('v'+v.version)===badge;
-    const e=(EN&&EN.get(v.version))||null,ei=(e&&e.items)||[];   // 条目按下标对齐
-    return `<div class="vh-row${cur?' cur':''}">
-    <div class="vh-head"><span class="vh-ver">v${esc(v.version)}</span>${cur?'<span class="chip" style="color:var(--ember);border-color:rgba(var(--ember-rgb),.35)">当前</span>':''}<span class="vh-name">${esc((e&&e.name)||v.name||'')}</span><span class="vh-date">${esc(v.date||'')}</span></div>
-    <ul class="vh-items">${(v.items||[]).map((i,n)=>`<li><b>${esc((ei[n]&&ei[n].t)||i.t)}</b> — ${esc((ei[n]&&ei[n].d)||i.d)}</li>`).join('')}</ul>
-  </div>`;}).join(''):'<div class="empty">暂无记录</div>';
+/* 版本历史在官网(1.4.30 起控制台不再带正文):中文界面链 /zh/changelog/,英文界面链 /changelog/,每版一节、锚点 #v<版本>。
+   品牌旁的版本徽章打开当前版本那一节,有新版时的说明链到新版那一节,软件更新卡底部「更新记录 →」链到页首。
+   都是 target=_blank 的普通链接:浏览器开新标签页,桌面 App 的壳把这类链接交给系统浏览器。换语言时重设地址。 */
+function changelogUrl(v){return (langOf()==='zh'?'https://sintbot.com/zh/changelog/':'https://sintbot.com/changelog/')+(v?'#v'+encodeURIComponent(v):'');}
+function syncChangelogLinks(){
+  const b=document.querySelector('.mark .ver');if(b)b.href=changelogUrl(String(b.textContent||'').trim().replace(/^v/,''));
+  for(const a of document.querySelectorAll('a[data-changelog]'))a.href=changelogUrl(a.dataset.changelog);
 }
-(()=>{const v=document.querySelector('.mark .ver');if(!v)return;v.style.cursor='pointer';v.title='查看版本历史';
-  v.onclick=()=>{if(!S)return;
-    $$('nav button').forEach(x=>x.classList.toggle('active',x.dataset.tab==='settings'));
-    $$('.tab').forEach(t=>t.classList.toggle('on',t.id==='settings'));
-    const c=$('#updateCard');if(c){c.scrollIntoView({behavior:'smooth',block:'start'});
-      c.style.boxShadow='0 0 0 2px rgba(var(--ember-rgb),.45)';setTimeout(()=>c.style.boxShadow='',1400);}};})();
+syncChangelogLinks();
 
 /* ── 自绘下拉组件(见 .csel CSS)：原生 <select> 的弹出列表是 OS 渲染、CSS 改不动 —— 保留 select
    作数据源与可访问性，叠一层可完全主题化的按钮 + 弹层。change 照常派发，所有既有 onchange 零改动。
@@ -7627,9 +7877,11 @@ function enhanceSelect(sel){
   const chev=document.createElement('span'); chev.className='csel-chev';
   chev.innerHTML=IC.chevronDown;
   btn.append(lbl,chev); wrap.appendChild(btn); sel.after(wrap);
-  const sync=()=>{const o=sel.options[sel.selectedIndex]; lbl.textContent=o?o.textContent:'';}; sync();
+  // 选项带 data-logo(「添加模型」的预设)时,标签与弹层里各画一枚 20px 小 logo;空值 = 中性图标。
+  const logoOf=o=>o&&o.dataset.logo!==undefined?modelLogo(o.dataset.logo):'';
+  const sync=()=>{const o=sel.options[sel.selectedIndex]; lbl.textContent=o?o.textContent:''; if(logoOf(o))lbl.insertAdjacentHTML('afterbegin',logoOf(o));}; sync();
   let pop=null,hl=-1;
-  const opts=()=>pop?[...pop.children]:[];
+  const opts=()=>pop?[...pop.querySelectorAll('.csel-opt')]:[];
   const setHl=i=>{opts().forEach((el,k)=>el.classList.toggle('hl',k===i)); if(opts()[i])opts()[i].scrollIntoView({block:'nearest'}); hl=i;};
   function close(){if(!pop)return; pop.remove(); pop=null; hl=-1; btn.setAttribute('aria-expanded','false');
     document.removeEventListener('mousedown',onDoc,true); window.removeEventListener('scroll',onScroll,true); window.removeEventListener('resize',close);}
@@ -7640,7 +7892,11 @@ function enhanceSelect(sel){
     if(sel.disabled||btn.disabled)return;
     if(pop){close();return;}
     pop=document.createElement('div'); pop.className='csel-pop'; pop.setAttribute('role','listbox');
-    [...sel.options].forEach((o,i)=>{const it=document.createElement('div'); it.className='csel-opt'+(i===sel.selectedIndex?' sel':''); it.setAttribute('role','option'); it.textContent=o.textContent;
+    // 分组(optgroup):组名一行,不可选,不算进键盘上下移动的序号。
+    let grp=null;
+    [...sel.options].forEach((o,i)=>{const g=o.parentElement&&o.parentElement.tagName==='OPTGROUP'?o.parentElement:null;
+      if(g&&g!==grp){const h=document.createElement('div');h.className='csel-grp';h.setAttribute('role','presentation');h.setAttribute('data-i18n-skip','');h.textContent=g.label;pop.appendChild(h);}
+      grp=g;const it=document.createElement('div'); it.className='csel-opt'+(i===sel.selectedIndex?' sel':''); it.setAttribute('role','option'); it.textContent=o.textContent; if(logoOf(o))it.insertAdjacentHTML('afterbegin',logoOf(o));
       it.addEventListener('mouseenter',()=>setHl(i)); it.addEventListener('mousedown',e=>{e.preventDefault(); pick(i);}); pop.appendChild(it);});
     document.body.appendChild(pop);
     const r=btn.getBoundingClientRect();
@@ -7721,6 +7977,39 @@ function drawCodexCli(box,name,r,fail){
       if($('#cxCli')!==box)return;
       const why='升级没成功：'+e.message;
       drawCodexCli(box,name,r,why);await loadCodexCli(name,why);
+    }
+  };
+}
+/* 这台机器上 Claude Code 程序的版本：Claude 订阅卡面板里一行，照 Codex 那一行做。所有 Claude Code 模型卡（含第三方端点）
+   跑的都是这一个程序；行里写明它是怎么装的（npm / 官方安装器），升级走同一条路。有新版且能升级时带「升级」按钮，先确认，
+   做完写明从哪版到哪版，并接着重取一次可选型号；没成功时按钮马上回来，失败原因留在行下，再重读一次版本。 */
+const CL_VIA={npm:'通过 npm 安装',native:'通过官方安装器安装'};
+async function loadClaudeCli(fail){
+  const box=$('#clCli');if(!box||!runtimeAllows('GET','/api/claude/cli'))return;
+  let r=null;try{r=await api('/api/claude/cli');}catch(e){return;}
+  if($('#clCli')!==box||!r||(!r.version&&!r.why))return;
+  drawClaudeCli(box,r,fail);
+}
+function drawClaudeCli(box,r,fail){
+  const v=(r.version?'Claude Code 程序 '+esc(r.version):'Claude Code 程序')+(CL_VIA[r.via]?' · '+CL_VIA[r.via]:'');
+  const canUp=r.canUpgrade&&runtimeAllows('POST','/api/claude/cli/upgrade');
+  box.innerHTML=(r.newer?`${v} · 有新版 ${esc(r.latest)}${canUp?' <button class="btn" id="clUp" style="padding:2px 10px;font-size:12px;margin-left:6px">升级</button>':''}`
+    :`${v}${r.latest?' · 已是最新':''}${r.why?' · '+esc(r.why):''}`)
+    +(fail?`<div id="clUpFail" style="margin-top:4px;color:var(--fail)">${esc(fail)}</div>`:'');
+  box.style.color='';box.style.display='';
+  const b=$('#clUp');if(!b)return;
+  b.onclick=async()=>{
+    const how=r.via==='native'?'会用它自带的更新（官方安装器）装上新版':'会用安装它的 npm 重新全局安装最新版';
+    if(!await askConfirm(`把这台机器上的 Claude Code 程序从 ${r.version} 升级到 ${r.latest}？\n${how}，大约一分钟。所有用 Claude Code 的群从下一轮起用新版；有群正在用 Claude Code 处理任务时不会升级。`))return;
+    b.disabled=true;b.innerHTML='<span class="spin"></span>升级中';
+    try{const u=await api('/api/claude/cli/upgrade','POST',{});
+      box.textContent=u.changed?`Claude Code 程序已从 ${u.from} 升级到 ${u.to}。`:`Claude Code 程序仍是 ${u.to}，没有变化。`;box.style.color='var(--ok)';
+      toast('Claude Code 程序已升级到 '+u.to,'ok');
+      await refreshModelList('claude',$('#clModelsNote'));
+    }catch(e){
+      if($('#clCli')!==box)return;
+      const why='升级没成功：'+e.message;
+      drawClaudeCli(box,r,why);await loadClaudeCli(why);
     }
   };
 }

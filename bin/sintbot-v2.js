@@ -159,7 +159,7 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
   const { createC2ServiceStartGate } = require('../src/core/c2servicestartgate')
   const { C2PayloadHandles } = require('../src/core/c2payloadhandles')
   const { createC2LocalEffectExecutor, resolveC2LocalEffectTurn } = require('../src/core/c2localeffectexecutor')
-  const { createWecomRecoverySender, createSlackRecoverySender, createFeishuRecoverySender, createLocalRecoverySender, createRoutedRecoverySender } = require('../src/core/c2platformrecoverysender')
+  const { createWecomRecoverySender, createSlackRecoverySender, createFeishuRecoverySender, createLocalRecoverySender, createRoutedRecoverySender, createRecoveryNotes } = require('../src/core/c2platformrecoverysender')
   const { createC2V2SourceQuarantine } = require('../src/core/c2sourcequarantine')
   const { Engine } = require('../src/core/v2engine')
   const { createC2MultiGroupService } = require('../src/c2multigroupservice')
@@ -180,6 +180,8 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
   const modelCatalog = require('../src/modelcatalog').createModelCatalog({
     codexstatus: require('../src/agent/codexstatus'), claudemodels: require('../src/agent/claudemodels'),
     claudeBin: cfg.agent?.bin || 'claude', cacheFile: path.join(stateDir, 'model-lists.json'),
+    // Key-route cards (src/providers.js) list the provider's live models once their key answers.
+    fetchImpl: globalThis.fetch,
     log: message => process.stderr.write(`C2 multi-group · ${message}\n`) })
   const groupBrainMod = require('../src/groupbrain')
   const { buildModelCard } = require('../src/platform/modelcard')
@@ -207,6 +209,14 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
     assertRunnerExecutable(route.provider, cfg)
   }
   const capacity = new C2MultiGroupCapacity({ maxConcurrent: cfg.agent.maxConcurrent })
+  // Notices the core wrote for receipts the next recovery settles (ABI 40):
+  // a start that failed before the executor began, a turn a crash cut off.
+  const recoveryNotes = createRecoveryNotes()
+  // What the last crash recorded before its stop sealed the journals (rule 2);
+  // read once, removed once every group has been opened below.
+  const crashStops = require('../src/c2crashstop')
+  const { settleCrashedTurn } = require('../src/core/c2crashinterrupt')
+  const crashStop = preflightOnly ? null : crashStops.readCrashStop(stateDir, message => process.stderr.write(`C2 multi-group · ${message}\n`))
   const quarantine = createC2V2SourceQuarantine([
     process.env.SBOT_C2_V2_BLOCK_SOURCE_ID, process.env.SBOT_C2_V2_BLOCK_SOURCE_ID_2],
     { required: process.env.SBOT_C2_V2_REQUIRE_BLOCK_SOURCE_ID === '1' })
@@ -394,10 +404,10 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
         const platform = createMultiPlatform({ adapters,
           resolve: chatId => chatPlatform(cfg, chatId) })
         const senders = {
-          local: createLocalRecoverySender({ cfg, platform }),
-          ...(adapters.wecom ? { wecom: createWecomRecoverySender({ cfg, platform }) } : {}),
-          ...(adapters.slack ? { slack: createSlackRecoverySender({ cfg, platform }) } : {}),
-          ...(client ? { feishu: createFeishuRecoverySender({ cfg, platform, client }) } : {}) }
+          local: createLocalRecoverySender({ cfg, platform, notes: recoveryNotes }),
+          ...(adapters.wecom ? { wecom: createWecomRecoverySender({ cfg, platform, notes: recoveryNotes }) } : {}),
+          ...(adapters.slack ? { slack: createSlackRecoverySender({ cfg, platform, notes: recoveryNotes }) } : {}),
+          ...(client ? { feishu: createFeishuRecoverySender({ cfg, platform, client, notes: recoveryNotes }) } : {}) }
         const sender = createRoutedRecoverySender({ cfg, senders })
         liveTransport = { platform, sender,
           addWecom: async config => {
@@ -407,12 +417,12 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
               inboxDir: path.join(stateDir, 'wecom-inbox'),
               log: message => process.stderr.write(`WeCom · ${message}\n`) })
             await platform.add('wecom', adapter)
-            senders.wecom = createWecomRecoverySender({ cfg, platform })
+            senders.wecom = createWecomRecoverySender({ cfg, platform, notes: recoveryNotes })
           },
           addSlack: async config => {
             if (platform.get('slack')) throw new Error('Slack 连接已存在')
             await platform.add('slack', slackAdapter(config))
-            senders.slack = createSlackRecoverySender({ cfg, platform })
+            senders.slack = createSlackRecoverySender({ cfg, platform, notes: recoveryNotes })
           },
           stopPlatform: async () => {
             platform.seal()
@@ -442,11 +452,21 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
           assertJournalScope(journal, route.chatId)
           journals.set(route.chatId, journal)
         }
+        // Rule 2 (ABI 40): a turn still running in this journal asks the core
+        // first. A turn the last crash cut off is closed here and told once in
+        // the recovery below; anything else is left for that recovery to hold.
+        let interrupted = null
+        if (!recoveredJournal) {
+          interrupted = settleCrashedTurn({ journal, chatId: route.chatId, crash: crashStop,
+            lang: chatLang(cfg.groups?.[route.chatId]), assertWriterLock, notes: recoveryNotes, store,
+            log: message => process.stderr.write(`C2 multi-group · ${message}\n`) })?.receiptId || null
+        }
         const gate = createC2ServiceStartGate({ enabled: true, journal, assertWriterLock,
           resolveTarget: transport.sender.resolveTarget, send: transport.sender.send,
           singleNoticePerGroup: true, ...limits })
         try {
-          await gate.start()
+          try { await gate.start() }
+          finally { if (interrupted) recoveryNotes.delete(interrupted) }
           const runtime = gate.runtime
           if (!runtime || runtime.blocked || !assertWriterLock()) throw new Error('C2 group recovery did not open ingress')
           const handles = new C2PayloadHandles({ journal })
@@ -490,8 +510,12 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
               ? typeof result === 'object' && closedResults.has(result)
               : !!error && typeof error === 'object' && closedErrors.has(error),
             durableV2AssertWriterLock: assertWriterLock, durableV2Journal: journal,
-            durableV2AcquireCapacity: options => capacity.acquire(options),
+            durableV2AcquireCapacity: options => capacity.acquire({ ...options, owner: route.chatId }),
             durableV2CapacitySnapshot: () => capacity.snapshot(),
+            durableV2RecoveryNotes: recoveryNotes,
+            // An upgrade switch that has not confirmed this release can still
+            // start the previous one on these journals (unfinished_step, ABI 40).
+            durableV2RollbackWindow: () => updater ? updater.rollbackWindowOpen() : false,
             durableV2CompactSession: compactSession,
             // A route fault holds or recovers its group alone. Shared grants
             // are sealed only when the process writer lease itself is gone.
@@ -605,11 +629,19 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
     // Last resort (src/fatal.js): an uncaught exception or unhandled rejection
     // is logged with its stack, runs this same stop (scheduled tasks first,
     // then the service) and exits 1, so a launchd job with KeepAlive starts
-    // the service again. Nothing about recovery changes: a turn it interrupts
-    // is settled by the journal as after SIGTERM.
+    // the service again. A turn it interrupts is recorded first and told once
+    // at the next start, never redone (rule 2); SIGTERM records nothing.
     fatalHandlers = require('../src/fatal').installFatalHandlers({
       log: message => process.stderr.write(message + '\n'),
-      shutdown: kind => { stopSchedules(); return service.stop(kind, 1).then(finish) },
+      // The running turns are written down before the stop seals the journals,
+      // so the next start can tell their conversations (rule 2, src/c2crashstop.js).
+      shutdown: kind => {
+        crashStops.recordCrashStop({ stateDir, kind, bindings: service.bindings, stopping: service.stopping,
+          version: require('../package.json').version,
+          log: message => process.stderr.write(`C2 multi-group · ${message}\n`) })
+        stopSchedules()
+        return service.stop(kind, 1).then(finish)
+      },
       // At the ceiling: let the last line reach a piped stderr, but never wait on it.
       exit: code => {
         process.stderr.write('', () => process.exit(code))
@@ -653,6 +685,8 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
       await wecomTools.listen()
     }
     const started = await service.start({ preflightOnly })
+    // Every group has been opened (or held): the crash record has done its work.
+    if (crashStop) crashStops.clearCrashStop(stateDir, message => process.stderr.write(`C2 multi-group · ${message}\n`))
     if (preflightOnly) {
       process.stdout.write(`SintBot startup preflight passed for ${started.groups} groups; Feishu socket stayed disconnected\n`)
       return

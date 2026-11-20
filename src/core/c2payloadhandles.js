@@ -6,6 +6,7 @@
 const RECEIPT_ID = /^[0-9a-f]{32}$/
 const MAX_HANDLES = 1024
 const { taskId } = require('./enginecheckpoint')
+const { provedNotStartedEffect } = require('./c2recoverygate')
 
 function receiptId(value) {
   if (typeof value !== 'string' || !RECEIPT_ID.test(value)) {
@@ -345,7 +346,11 @@ class C2PayloadHandles {
         Object.values(snapshot.state.lanes.queue || {}).some(lane => lane.queue.length) ||
         Object.values(snapshot.state.lanes.handoff || {}).some(lane =>
           lane.phase === 'handoff' || lane.phase === 'releasing') ||
-        [...snapshot.effects.values()].some(status => status !== 'acked') ||
+        // A start proven never begun (its runner-not-started proof and the
+        // committed abort) is settled, as the recovery gate reads it. Without
+        // this every restart after one such start held the group.
+        [...snapshot.effects].some(([effectId, status]) => status !== 'acked' &&
+          !provedNotStartedEffect(effectId, this.#journal)) ||
         [...snapshot.notices.values()].some(notice =>
           notice.status === 'attempting' || notice.status === 'unknown')) {
       throw new Error('C2 payload recovery has unresolved durable work')

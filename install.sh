@@ -2,7 +2,7 @@
 # The function is parsed in full before installation starts, including when piped.
 sintbot_install() (
   set -eu
-  version=1.4.29
+  version=1.4.30
   prefix="${SINTBOT_INSTALL_DIR:-$HOME/.local/share/sintbot}"
   fail() { printf 'SintBot: %s\n' "$*" >&2; exit 1; }
   case "${1:-}" in
@@ -32,6 +32,7 @@ require(path.join(root, 'src/platform/feishu.js'));
 NODE
   [ "$("$prefix/bin/sintbot" --version)" = "$version" ] || fail 'Executable verification failed.'
   printf '\nInstalled and verified SintBot %s.\n' "$version"
-  printf 'Connect your project: https://sintbot.com/guide/install/#feishu\n'
+  printf 'Connect your project in Slack: https://sintbot.com/guide/install/#slack\n'
+  printf 'Feishu and WeCom are also supported: https://sintbot.com/guide/install/#feishu and https://sintbot.com/guide/install/#wecom\n'
 )
 sintbot_install "$@"

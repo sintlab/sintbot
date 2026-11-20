@@ -2,7 +2,7 @@
 
 English · [简体中文](./CONTRIBUTING.zh-CN.md)
 
-This repository contains platform integration, documentation and runtime artifacts for SintBot 1.4.29 with its built-in core. The release supports macOS, 1–32 Slack conversations (direct or channel), Feishu groups or WeCom chats (direct or group), Codex or Claude Code per project, chat commands and the local console.
+This repository contains platform integration, documentation and runtime artifacts for SintBot 1.4.30 with its built-in core. The release supports macOS, 1–32 Slack conversations (direct or channel), Feishu groups or WeCom chats (direct or group), Codex or Claude Code per project, chat commands and the local console.
 
 ## Check a change
 

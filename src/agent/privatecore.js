@@ -1,9 +1,9 @@
-// ABI v39 adapter for the built-in decision core. Manifest assembly still stays in JS.
+// ABI v40 adapter for the built-in decision core. Manifest assembly still stays in JS.
 const fs = require('node:fs')
 const path = require('node:path')
 const { createHash } = require('node:crypto')
 
-const EXPECTED_SHA256 = 'ec929dc4e4f95a5acfe72b922233ddc11a9ebde1a5eb179d391559290a392c2d'
+const EXPECTED_SHA256 = '8ff4af0e233e8cacabd3be504c299598f42609117e43d04ac9743fd494447227'
 let bytes
 try {
   bytes = fs.readFileSync(path.join(__dirname, 'privatecore.wasm'))
@@ -26,7 +26,7 @@ try {
 } catch (cause) {
   throw new Error('SintBot binary core cannot start on this runtime', { cause })
 }
-if (core.abi_version() !== 39) throw new Error('SintBot binary core ABI mismatch')
+if (core.abi_version() !== 40) throw new Error('SintBot binary core ABI mismatch')
 const encoder = new TextEncoder()
 const decoder = new TextDecoder('utf-8', { fatal: true })
 
@@ -980,4 +980,24 @@ function scheduleStep(input) {
   return value
 }
 
-module.exports = { ...entries, scheduleStep: guarded(scheduleStep), engineStep, resetBinaryCore, HUMAN_BY_KIND: HUMAN, slackManifestShapeOk }
+// ABI 40: unfinished turns. The host reports what it saw when a start failed
+// before the executor began ("prestart") or when a turn a crash cut off is
+// still running at the next start ("restart"); the core decides whether the
+// turn is closed with one notice or held as unknown, and writes the notice.
+// Nothing it answers grants a retry. Malformed input is refused.
+const UNFINISHED_PRESTART = ['not-started', 'unknown']
+const UNFINISHED_RESTART = ['interrupted', 'hold']
+function unfinishedStep(input) {
+  const value = coreJson('unfinished_step', input, 'decide an unfinished turn')
+  const type = input && input.type
+  const closes = type === 'prestart' ? value?.decision === 'not-started' : value?.decision === 'interrupted'
+  const ok = isObject(value) && typeof value.reason === 'string' && value.reason !== '' &&
+    (type === 'prestart' ? UNFINISHED_PRESTART.includes(value.decision) && typeof value.resetSession === 'boolean'
+      : type === 'restart' ? UNFINISHED_RESTART.includes(value.decision) : false) &&
+    // A closing answer always carries its notice; a hold or an unknown never does.
+    (closes ? typeof value.notice === 'string' && value.notice.trim() !== '' : value.notice === null)
+  if (!ok) throw new Error('SintBot binary core returned an invalid unfinished-turn decision')
+  return value
+}
+
+module.exports = { ...entries, scheduleStep: guarded(scheduleStep), unfinishedStep: guarded(unfinishedStep), engineStep, resetBinaryCore, HUMAN_BY_KIND: HUMAN, slackManifestShapeOk }

@@ -17,6 +17,7 @@
 
 const crypto = require('node:crypto')
 const { usageParse } = require('./agent/privatecore')
+const { quotaFor } = require('./providers') // which quota recipe and host a stored endpoint has (src/providers.js)
 
 const CACHE = new Map() // provider name -> { val, ts }
 const TTL = 5 * 60 * 1000
@@ -47,14 +48,12 @@ async function request(url, headers, { fetchImpl = globalThis.fetch, timeoutMs =
   } catch { return { status: null, body: null } } finally { clearTimeout(timer) }
 }
 
-// baseUrl → 哪一家的余额接口(null = 这家根本没有公开余额接口,如火山 coding plan)。
+// baseUrl → 哪一家的余额接口(null = 这家根本没有公开余额接口,如火山 coding plan)。按端点的主机名查
+// 模型来源清单(src/providers.js 各地区的 quota),不再按字符串猜。
 // 抽出来是为了「能不能查」与「怎么查」共用同一份判定 —— 两处各写一份必然漂移,而漂移的
 // 后果正是群里那句错话:明明这家没接口,却说成「暂时没查到,稍后再试」让人白等。
-const balanceKind = (base = '') =>
-  base.includes('deepseek') ? 'deepseek'
-    : (base.includes('bigmodel.cn') || base.includes('api.z.ai')) ? 'glm'
-      : base.includes('minimax') ? 'minimax'
-        : null
+const balanceKind = (base = '') => { const q = quotaFor(base); return q ? q.kind : null }
+const quotaHost = (base) => quotaFor(base).host
 
 // 核心的 windows[] → 与 Claude 订阅额度同一种一行:`5h:42% │ 7d:10% (5d)`。
 // 复用 claudeusage.formatClaudeUsage,窗口名映射:session=5h · weekly=7d · weekly_scoped=模型名。
@@ -87,7 +86,7 @@ function render(parsed, now, lang = 'zh') {
 
 // 每家的取数顺序。返回核心的 usage_parse 结果(成功或失败),不在这里解释。
 async function probeGlm(base, key, io) {
-  const host = base.includes('api.z.ai') ? 'https://api.z.ai' : 'https://open.bigmodel.cn'
+  const host = quotaHost(base)
   const now = io.now()
   // coding plan 配额(5 小时 / 周窗口)。鉴权头不带 Bearer(智谱监控接口的口径)。
   const quota = await request(`${host}/api/monitor/usage/quota/limit`,
@@ -105,7 +104,9 @@ async function probeGlm(base, key, io) {
 }
 
 async function probeMinimax(base, key, io) {
-  const host = base.includes('minimaxi.com') ? 'https://api.minimaxi.com' : 'https://api.minimax.io'
+  // A card asks its own region's host: api.minimax.cn (current mainland docs), api.minimaxi.com (older docs, still
+  // served) or api.minimax.io. Both mainland quota routes exist (11-20, no key: 200 with the same auth error body).
+  const host = quotaHost(base)
   const headers = { Authorization: `Bearer ${key}` }
   const plan = await request(`${host}/v1/api/openplatform/coding_plan/remains`, headers, io)
   const p = usageParse('minimax', 'quota', plan.status, plan.body, io.now())
@@ -115,8 +116,8 @@ async function probeMinimax(base, key, io) {
   return usageParse('minimax', 'quota', legacy.status, legacy.body, io.now())
 }
 
-async function probeDeepseek(_base, key, io) {
-  const r = await request('https://api.deepseek.com/user/balance', { Authorization: `Bearer ${key}` }, io)
+async function probeDeepseek(base, key, io) {
+  const r = await request(`${quotaHost(base)}/user/balance`, { Authorization: `Bearer ${key}` }, io)
   return usageParse('deepseek', 'balance', r.status, r.body, io.now())
 }
 

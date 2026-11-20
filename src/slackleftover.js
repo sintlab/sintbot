@@ -106,8 +106,23 @@ async function markSlackLeftovers({ stateDir, cfg, adapter, incidents = [], held
     sources: [...(incident.sourceIds || [])].filter(id => ownMessage(incident.chatId, id)) }))
   const facts = { now: now(), record: notes, sealed }
   // The built-in core decides what is marked, what is noted and how, and
-  // what the record says before and after each attempt.
-  const scan = leftoverStep({ type: 'scan', ...facts, held: heldFacts })
+  // what the record says before and after each attempt. A call it cannot
+  // answer ends this start's pass with one line in the log.
+  const decide = input => {
+    try { return leftoverStep(input) } catch (error) {
+      log(`Slack leftover notes skipped: the built-in core could not decide them (${error?.message || String(error)})`)
+      return null
+    }
+  }
+  // Held conversations first, in a call of their own: their ⚠️ does not
+  // depend on anything about the seals.
+  if (heldFacts.length) {
+    const heldScan = decide({ type: 'scan', now: facts.now, record: notes, held: heldFacts, sealed: [] })
+    if (!heldScan) return done
+    for (const effect of heldScan.effects) mark(effect.chatId, effect.ids)
+  }
+  const scan = decide({ type: 'scan', ...facts, held: [] })
+  if (!scan) return done
   for (const effect of scan.effects) mark(effect.chatId, effect.ids)
   if (scan.stop) {
     log('Slack leftover notes skipped: their record cannot be read; nothing is posted until it is restored')
@@ -120,7 +135,8 @@ async function markSlackLeftovers({ stateDir, cfg, adapter, incidents = [], held
     if (told) noticed[index] = [...told]
     else log(`Slack leftover notes skipped for ${sealed[index].chatId}: its sealed journal cannot be read`)
   }
-  const plan = leftoverStep({ type: 'plan', ...facts, noticed })
+  const plan = decide({ type: 'plan', ...facts, noticed })
+  if (!plan) return done
   const keep = new Set(plan.keep)
   const kept = Object.fromEntries(Object.entries(notes).filter(([key]) => keep.has(key)))
   const save = () => atomicWriteJSON(file, { version: 1, notes: kept }, { mode: 0o600 })

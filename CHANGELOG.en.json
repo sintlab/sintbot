@@ -1,5 +1,28 @@
 [
   {
+    "version": "1.4.29",
+    "date": "2026-11-19",
+    "name": "Scheduled tasks, and a clean exit on crashes",
+    "items": [
+      {
+        "t": "Scheduled tasks",
+        "d": "Create, edit, pause and delete them on a conversation's console card under More settings → Scheduled tasks. There are three kinds: Model (at the time, a line marked [Scheduled] is posted and then handled like an ordinary message), Message (posts the text only) and Script (runs a command in the project folder without the model, and posts one line if it fails or times out). The time can be a cron expression, an alias such as @daily, a shorthand such as 每天 09:00, or one date and time; each task can have its own time zone. Each due time fires at most once; runs missed while the service was down, or reached more than two minutes late, are not made up; failed runs and runs with an unknown result are not retried. In this release tasks are created and changed only in the console, and WeCom conversations do not have them yet."
+      },
+      {
+        "t": "A clean exit on crashes",
+        "d": "When the service hits an error nothing caught, it logs the time and stack trace, stops scheduled tasks and running executors, releases its lock and removes temporary files, then exits with code 1 so the system starts it again; the cleanup waits at most 20 seconds. Before, it exited on the spot and Codex or Claude Code child processes could keep running in the background. The interrupted turn is still treated as having an unknown result after the restart."
+      },
+      {
+        "t": "Stricter proxy addresses",
+        "d": "In Slack setup and settings, the proxy host must be an IP address or a host name in plain ASCII: names in other scripts, labels starting with xn--, and full-width dots and digits are refused; IPv6 addresses in brackets are checked by the standard rules. Before, some of these could be saved and only failed with a different error when connecting."
+      },
+      {
+        "t": "Slack and console fixes",
+        "d": "In Slack, ⚠️ on a held conversation is no longer skipped when checking sealed records fails, and the failure is written to the service log; the log line for another machine connected to the same Slack app is worded more precisely. The busy follow-up switch in the console has English text: Add follow-up messages to the current task."
+      }
+    ]
+  },
+  {
     "version": "1.4.28",
     "date": "2026-11-19",
     "name": "Slack speaks English, stopping inside a thread, a full queue no longer holds the group",

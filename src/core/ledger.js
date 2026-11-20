@@ -7,19 +7,34 @@
 // The in-memory activity feed is just a view; this file is the durable record
 // and the data source for usage / cost accounting.
 // Best-effort by design: a ledger failure must never break a turn.
+//
+// Rows reach the file in the order append() was called. Appends are still
+// asynchronous and append() still returns at once, but each one waits for the
+// previous append to the same file, from any ledger in this process (the
+// console and the service each keep one for the audit file): concurrent
+// writes could otherwise land in any order. A failed write is logged and the
+// next one goes ahead.
 
 const fs = require('node:fs')
 const path = require('node:path')
 
+const pending = new Map() // absolute file path -> the last append to it (never rejects)
+
 function createLedger(file, log = () => {}) {
   let dirReady = false
+  const key = path.resolve(file)
   return {
     file,
     append(rec) {
       try {
         if (!dirReady) { fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 }); dirReady = true }
+        const line = JSON.stringify(rec) + '\n'
         // 账本里有发送者和消息正文:新建时只给自己读写(mode 只在创建时生效,旧文件由 core/datadir 启动时收紧)
-        fs.appendFile(file, JSON.stringify(rec) + '\n', { mode: 0o600 }, (e) => { if (e) log('ledger append failed: ' + e.message) })
+        const write = (pending.get(key) || Promise.resolve())
+          .then(() => fs.promises.appendFile(file, line, { mode: 0o600 }))
+          .then(() => {}, (e) => { try { log('ledger append failed: ' + (e && e.message)) } catch {} })
+        pending.set(key, write)
+        write.then(() => { if (pending.get(key) === write) pending.delete(key) })
       } catch (e) {
         log('ledger append failed: ' + (e && e.message))
       }

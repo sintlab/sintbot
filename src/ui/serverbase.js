@@ -242,7 +242,7 @@ function bindNoticeText(workdir, platform = 'feishu', cmd = '/help', chatId = ''
   return `✅ ${here}已绑定项目「${path.basename(String(workdir || '')) || '(未命名)'}」\n${platform === 'wecom' ? '@我 派单(只有 @ 我的消息我才收得到)' : slackDm ? '直接发消息派单' : platform === 'slack' ? '在频道里 @我 派单(不 @ 我的消息不处理)' : '直接发消息或 @我 派单'};${cmd} 查看命令`
 }
 
-function createUiServer({ configPath, getLiveState = null, getConnHealth = null, onConfigChange = null, onHostChange = null, control = null, updater = null, host = '127.0.0.1', log = () => {}, issuesPath = null, sessionsPath = null, auditPath = null, ledgerPath = null, inboxDismissPath = null, fetchImpl = null, cdpImpl = null, onTakeoverClaim = null, onTakeoverExpire = null, onTakeoverEnd = null, takeoverNow = null, wecomExec = null, verifyFile = null, setupMode = null, cronRecoveryEnabled = false, runtimePolicy = null, cronTools = null, wecomAttach = null, getWecomChats = null, slackAttach = null, getSlackChats = null, publicReachOptions = null, codexCli = null } = {}) {
+function createUiServer({ configPath, getLiveState = null, getConnHealth = null, onConfigChange = null, onHostChange = null, control = null, updater = null, host = '127.0.0.1', log = () => {}, issuesPath = null, sessionsPath = null, auditPath = null, ledgerPath = null, inboxDismissPath = null, fetchImpl = null, cdpImpl = null, onTakeoverClaim = null, onTakeoverExpire = null, onTakeoverEnd = null, takeoverNow = null, wecomExec = null, verifyFile = null, setupMode = null, cronRecoveryEnabled = false, runtimePolicy = null, cronTools = null, wecomAttach = null, getWecomChats = null, slackAttach = null, getSlackChats = null, publicReachOptions = null, codexCli = null, schedules = null } = {}) {
   // Legacy scheduling rules are injected by its compatibility wrapper only.
   // The durable console cannot acquire those rules through this base module.
   const unsupportedCron = () => { throw new Error('当前控制台未接入定时任务') }
@@ -1059,6 +1059,49 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       }
       if (!cronTools && p.startsWith('/api/groups/cron/')) {
         return sendJSON(res, 409, { error: '当前控制台未接入定时任务', code: 'C2_CONSOLE_UNSUPPORTED' })
+      }
+      // Scheduled tasks of the running service (src/scheduleservice.js). They
+      // are kept under the data directory, never in the configuration file, so
+      // nothing here goes through the configuration writer or waits for a
+      // conversation to be idle; the next minute tick reads the edit. The
+      // older /api/groups/cron/* endpoints above stay refused.
+      if (p === '/api/schedules' || p.startsWith('/api/schedules/')) {
+        if (!schedules) return sendJSON(res, 409, { error: require('../scheduleservice').SCHEDULES_UNAVAILABLE, code: 'SCHEDULES_UNAVAILABLE' })
+        const refused = error => {
+          if (!error || error.name !== 'ScheduleError') throw error
+          return sendJSON(res, [400, 404, 409].includes(error.status) ? error.status : 409, { error: error.message, code: error.code || null })
+        }
+        if (p === '/api/schedules' && req.method === 'GET') {
+          try { return sendJSON(res, 200, schedules.list(String(url.searchParams.get('chatId') || ''))) } catch (error) { return refused(error) }
+        }
+        const action = req.method === 'POST' ? { '/api/schedules/add': 'add', '/api/schedules/update': 'update',
+          '/api/schedules/toggle': 'toggle', '/api/schedules/remove': 'remove' }[p] : null
+        if (action) {
+          const input = await body(req)
+          const chatId = String(input && input.chatId != null ? input.chatId : '')
+          // The audit keeps who-what-when. A prompt or a message is not kept
+          // (typed by hand, it may hold anything). A script task's command is:
+          // it is the one way from the console to a shell on this route, and
+          // after an edit or a removal the audit is the only place it remains.
+          const row = { kind: 'schedule-' + action, chatId, id: typeof (input && input.id) === 'string' ? input.id.slice(0, 32) : null }
+          let before = null
+          try { before = action !== 'add' && typeof schedules.peek === 'function' ? schedules.peek(chatId, input && input.id) : null } catch { before = null }
+          const commands = task => ({
+            ...(task && task.kind === 'script' ? { command: task.text } : {}),
+            ...(before && before.kind === 'script' && (!task || task.kind !== 'script' || task.text !== before.text)
+              ? { [task ? 'previousCommand' : 'command']: before.text } : {}) })
+          let result
+          try { result = schedules[action]({ ...(input && typeof input === 'object' && !Array.isArray(input) ? input : {}), chatId }) } catch (error) {
+            audit.append({ ...row, ok: false, reason: error && error.name === 'ScheduleError' ? error.code || null : 'error', ts: Date.now() })
+            return refused(error)
+          }
+          const task = result.task || null
+          audit.append({ ...row, ...(task ? { id: task.id, taskKind: task.kind, name: redact(task.name).slice(0, 60),
+            when: task.at || task.expr, tz: task.tz, enabled: task.enabled, chars: task.text.length }
+            : before ? { taskKind: before.kind, name: redact(before.name).slice(0, 60) } : {}), ...commands(task), ok: true, ts: Date.now() })
+          return sendJSON(res, 200, result)
+        }
+        return sendJSON(res, 404, { error: 'not found' })
       }
       // 登出:作废本次会话令牌(落盘,重启后也不再认)
       if (p === '/api/logout' && req.method === 'POST') { sessions.remove(String(req.headers['x-sbot-token'] || '')); return sendJSON(res, 200, { ok: true }) }

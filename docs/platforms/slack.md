@@ -35,7 +35,7 @@ Both tokens are saved only on this Mac, in the configuration file that only your
 
 ### Reaching Slack through a proxy
 
-If this Mac reaches Slack only through a proxy (for example on mainland-China networks), enter an address starting with `http://` under **Proxy** in the Slack step, such as `http://127.0.0.1:7890`. When the terminal that opened the setup page has a proxy set, the field is filled in for you; you can change it or clear it, and a user name and password show only as `***`. Both token checks and the connection afterwards go through this proxy. It is saved with the connection as the SintBot service's network proxy, not only for Slack: other chat platforms and the model tools on this Mac also reach the network through it, and Feishu, WeCom and local addresses are saved as direct. The service keeps using it when the system or the desktop app starts it later without the terminal's proxy settings. The service started right after setup also follows this field, even if the terminal set a different proxy or you cleared the field. Only http proxies work.
+If this Mac reaches Slack only through a proxy (for example on mainland-China networks), enter an address starting with `http://` under **Proxy** in the Slack step, such as `http://127.0.0.1:7890`. When the terminal that opened the setup page has a proxy set, the field is filled in for you; you can change it or clear it, and a user name and password show only as `***`. Both token checks and the connection afterwards go through this proxy. It is saved with the connection as the SintBot service's network proxy, not only for Slack: other chat platforms and the model tools on this Mac also reach the network through it, and Feishu, WeCom and local addresses are saved as direct. The service keeps using it when the system or the desktop app starts it later without the terminal's proxy settings. The service started right after setup also follows this field, even if the terminal set a different proxy or you cleared the field. Only http proxies work, and the host must be an IP address or a host name in plain ASCII: a name in another script, or full-width dots and digits, is refused.
 
 When you add Slack under **Settings → Slack** in the console, the service uses the proxy it was started with, and the card shows the one it really uses (a proxy set in the terminal that started the service wins over the saved one). If that proxy came from the terminal and the configuration has none yet, the card offers **Also save the proxy the service is using now**, ticked by default; once saved, it is the whole service's network proxy as well.
 
@@ -71,7 +71,7 @@ Keep your Mac awake and the SintBot service running. Closing the window does not
 
 - Sending files or images from the task into Slack. The answer names the file's path in the project instead.
 - Progress text while a task runs. You see the status and the final answer.
-- Canvas, scheduled tasks and reading channel history.
+- Canvas and reading channel history.
 
 ## Troubleshooting
 

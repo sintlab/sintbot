@@ -198,9 +198,21 @@ function createLocalPlatform({ stateDir, onEvent = () => {}, log = () => {}, now
         return null
       }
     },
-    async send(chatId, content) {
+    // `requestId` (32 hex, optional): the line's id is derived from it, as for
+    // a typed line, so the same request posted again is the same line and is
+    // not stored twice. A scheduled task passes one per due occurrence.
+    async send(chatId, content, { requestId } = {}) {
       if (!isLocalChatId(chatId) || typeof content !== 'string' || !content) return null
-      try { return outbound(chatId, 'notice', content) } catch (error) {
+      try {
+        if (requestId === undefined || requestId === null) return outbound(chatId, 'notice', content)
+        const id = messageIdFor(chatId, requestId)
+        const prior = load(chatId).ids.get(id)
+        if (prior) {
+          if (prior.role === 'notice' && prior.text === content) return id
+          throw new LocalChatError('request-id', 'request key was already used for another line')
+        }
+        return record(chatId, { id, role: 'notice', text: content, ts: now() }).id
+      } catch (error) {
         log('local send failed: ' + (error?.message || String(error)))
         return null
       }

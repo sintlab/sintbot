@@ -1123,7 +1123,7 @@ function createSlackPlatform({
       log(`slack 同一个应用上另有 ${step.others} 条连接(也可能是 Slack 还没清掉的本机旧连接),约 ${Math.max(1, Math.round(step.recheckMs / 60_000))} 分钟后换一条连接再核对`)
     } else if (step.change === 'raised') {
       shared.flagged = { since: Date.now(), others: step.others, connections: reported }
-      log(`⚠ slack 两次核对同一个应用上都另有 ${step.others} 条连接:${SHARED_APP_WARNING}(Slack 把每条事件随机交给其中一条连接)。每台机器请各建各的 Slack 应用`)
+      log(`⚠ slack 换连接复核后同一个应用上仍另有 ${step.others} 条连接:${SHARED_APP_WARNING}(Slack 把每条事件随机交给其中一条连接)。每台机器请各建各的 Slack 应用`)
       try { onIssue({ issue: 'shared-app', detail: `num_connections=${reported}, own=${ours}` }) } catch {}
       try { onConn(adapter.connHealth()) } catch {}
     }
@@ -1497,8 +1497,9 @@ function createSlackPlatform({
       return postMessage(channel, localizeCommands(content, { commands, alias: commandAlias }), { threadTs })
     },
 
-    async send(chatId, content) {
-      return postMessage(chatId, localizeCommands(content, { commands, alias: commandAlias }))
+    // `verbatim`: text someone wrote (a scheduled task's words), posted as written.
+    async send(chatId, content, { verbatim = false } = {}) {
+      return postMessage(chatId, verbatim ? content : localizeCommands(content, { commands, alias: commandAlias }))
     },
 
     /**
@@ -1865,10 +1866,14 @@ function createSlackPlatform({
   adapter.openOutbound = () => !stopped && !fatal
   // A line shown in the conversation (console say, service notices): one
   // attempt, its durable id or null.
-  adapter.send = async (chatId, content) => {
+  // The service's own words name commands with `/` and are reworded for
+  // Slack. `verbatim` is for text a person wrote (what a scheduled task posts:
+  // its message, its name and prompt, a script's output): a "/status" in it is
+  // not a command and stays as written.
+  adapter.send = async (chatId, content, { verbatim = false } = {}) => {
     const channel = channelOfChat(chatId)
     if (!channel || typeof content !== 'string' || !content.trim()) return null
-    const parts = partsOf(worded(content, { notice: true }), channel)
+    const parts = partsOf(verbatim ? content : worded(content, { notice: true }), channel)
     const response = await deliverOnce(channel, parts, null)
     return response.code === 0 ? response.data.message_id : null
   }

@@ -247,6 +247,16 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
   let wecomTools, wecomToolDir, wecomSocketPath
   let activity
   let onSigint, onSigterm
+  let fatalHandlers
+  // Scheduled tasks (src/scheduleservice.js): built below, started once the
+  // service serves, and stopped before the service on every way out.
+  let schedules = null
+  const stopSchedules = () => {
+    try {
+      const left = schedules?.stop()
+      if (left?.scripts || left?.inflight) process.stderr.write(`Schedules · stopped with ${left.scripts} script(s) ended and ${left.inflight} effect(s) in flight; an effect without a recorded result reads as unknown\n`)
+    } catch (error) { process.stderr.write(`Schedules · stop failed: ${error?.message || String(error)}\n`) }
+  }
   try {
     const migrationFence = require('../src/c2migration').loadC2MigrationFence({ stateDir, routes })
     const incidentQuarantine = require('../src/core/c2sourcequarantine').loadC2IncidentQuarantine(stateDir)
@@ -297,6 +307,7 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
     const finish = async (result, { seal = null } = {}) => {
       if (finishing) return
       finishing = true
+      stopSchedules()
       ui?.close()
       updater?.close()
       await activity?.close()
@@ -338,6 +349,7 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
       },
       onFatal: (error, result) => {
         process.stderr.write(`C2 multi-group failure: ${error?.message || String(error)}\n`)
+        stopSchedules()
         finish(result)
       },
       createTransport: () => {
@@ -555,14 +567,54 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
         consoleSeal = sealing.createConsoleSeal({ getHeld: () => service.held, gate: upgradeGate,
           upgradeActive: () => ['queued', 'installing', 'switching'].includes(updater.status().job?.state),
           beginMaintenance: () => service.beginMaintenance(), endMaintenance: () => service.endMaintenance(),
-          requestStop: chatId => { void service.stop('console seal', 0).then(result => finish(result, { seal: chatId })) } })
+          requestStop: chatId => { stopSchedules(); void service.stop('console seal', 0).then(result => finish(result, { seal: chatId })) } })
       }
     }
-    const stop = reason => { void service.stop(reason, 0).then(finish) }
+    if (!preflightOnly) {
+      // Scheduled tasks. Definitions and the fire ledger live under the data
+      // directory (schedules/), written only by this process while it holds
+      // the writer lock. A due task reads the same conversation facts as the
+      // console's say gate, asks the core, and enters a conversation through
+      // the service ingress with that conversation's own adapter. A store that
+      // cannot be read keeps scheduled tasks off and nothing else.
+      const scheduleLog = message => process.stderr.write(`Schedules · ${message}\n`)
+      const scheduleStore = require('../src/schedules').createScheduleStore({ stateDir, canWrite: assertWriterLock, log: scheduleLog })
+      scheduleStore.open()
+      const chatFacts = require('../src/c2chatfacts').createC2ChatFacts({ getBindings: () => service.bindings,
+        getConfig: () => cfg, getHeld: () => service.held, assertWriterLock,
+        isServing: () => service.serving, isFrozen: () => service.inMaintenance })
+      const firing = require('../src/schedulefire').createScheduleFire({
+        getGroup: chatId => cfg.groups && Object.hasOwn(cfg.groups, chatId) ? cfg.groups[chatId] || null : null,
+        getPlatform: chatId => liveTransport?.platform.forChat(chatId) || null,
+        route: (msg, adapter) => service.routeMessage(msg, adapter), receiptState: chatFacts.receiptState,
+        platformOf: chatId => chatPlatform(cfg, chatId),
+        // A script gets what a turn's own commands get (the conversation, the
+        // data directory, this release's command first on PATH).
+        scriptEnv: chatId => ({ ...process.env,
+          ...(service.bindings.get(chatId)?.engine.baseSkillEnv(chatId) || { SBOT_CHAT_ID: chatId }) }),
+        log: scheduleLog })
+      schedules = require('../src/scheduleservice').createScheduleService({ store: scheduleStore,
+        getConfig: () => cfg, chatFacts: chatFacts.scheduleChat, firing,
+        platformOf: chatId => chatPlatform(cfg, chatId) || 'feishu', log: scheduleLog })
+    }
+    const stop = reason => { stopSchedules(); void service.stop(reason, 0).then(finish) }
     onSigint = () => stop('SIGINT')
     onSigterm = () => stop('SIGTERM')
     process.on('SIGINT', onSigint)
     process.on('SIGTERM', onSigterm)
+    // Last resort (src/fatal.js): an uncaught exception or unhandled rejection
+    // is logged with its stack, runs this same stop (scheduled tasks first,
+    // then the service) and exits 1, so a launchd job with KeepAlive starts
+    // the service again. Nothing about recovery changes: a turn it interrupts
+    // is settled by the journal as after SIGTERM.
+    fatalHandlers = require('../src/fatal').installFatalHandlers({
+      log: message => process.stderr.write(message + '\n'),
+      shutdown: kind => { stopSchedules(); return service.stop(kind, 1).then(finish) },
+      // At the ceiling: let the last line reach a piped stderr, but never wait on it.
+      exit: code => {
+        process.stderr.write('', () => process.exit(code))
+        setTimeout(() => process.exit(code), 1000).unref()
+      } })
     if (uiEnabled && !preflightOnly) {
       ui = require('../src/c2console').createC2Console({
         configPath: cfg._path, stateDir, host: uiHost, activity, store, wecomAttach, slackAttach,
@@ -578,7 +630,7 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
         getLocal: () => liveTransport?.platform.get('local') || null,
         routeMessage: (msg, adapter) => service.routeMessage(msg, adapter),
         isServing: () => service.serving, isFrozen: () => service.inMaintenance,
-        assertWriterLock, ...configControl, setGroupBrain, modelCatalog, updater,
+        assertWriterLock, ...configControl, setGroupBrain, modelCatalog, updater, schedules,
         sealHeld: consoleSeal ? chatId => consoleSeal.request(chatId) : null,
         lastSealFailure: () => require('../src/c2consoleseal').lastSealFailure(stateDir),
         log: message => process.stderr.write(`Console · ${message}\n`) })
@@ -611,6 +663,9 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
     for (const item of started.held || []) {
       process.stderr.write(`SintBot group ${item.chatId} is held: ${item.reason}\n`)
     }
+    // The service serves: scheduled tasks start now. The first tick asks the
+    // core about what came due while the service was down (missed, not made up).
+    if (schedules?.start()) process.stderr.write('SintBot scheduled tasks started\n')
     // Groups hear about a version change once, as a notice card. A console
     // upgrade to this version that cannot connect every group is rolled back
     // by the switch process, so that start announces nothing and leaves the
@@ -655,12 +710,14 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
     throw error
   } finally {
     if (!running) {
+      stopSchedules()
       await wecomTools?.close()
       if (wecomToolDir) { try { fs.rmdirSync(wecomToolDir) } catch {} }
       await activity?.close()
       updater?.close()
       if (onSigint) process.off('SIGINT', onSigint)
       if (onSigterm) process.off('SIGTERM', onSigterm)
+      fatalHandlers?.uninstall()
       capacity.close(); lock.release()
       if (forceStartupExit) process.stderr.write('C2 multi-group startup cleanup was not confirmed; exiting with evidence preserved\n', () => process.exit(1))
     }
@@ -718,7 +775,8 @@ connect --attach adds Feishu to such an installation later: stop the service, ru
 conversations, their journals and the configuration stay, and a backup of the configuration is kept.
 WeCom can also be added from console Settings without replacing existing Feishu groups.
 wecom sends messages and project files through the running service, from its own group task context.
-Canvas, scheduled tasks, terminal chat and other chat platforms are unavailable.
+Scheduled tasks are managed in the console; they are kept in the data directory, fire at most once and are
+not made up for when missed. Canvas, terminal chat and other chat platforms are unavailable.
 A group whose last result cannot be proven is held alone; the other groups keep serving.
 Restart first: a journal that can recover reopens on its own. If the group is still held,
 stop the service, run incident seal for that group, then start again.

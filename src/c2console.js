@@ -7,6 +7,7 @@ const { assertJournalScope } = require('./c2install')
 const { createDurableConsoleSay } = require('./consolesay')
 const { isLocalChatId, LocalChatError } = require('./platform/local')
 const { taskId } = require('./core/enginecheckpoint')
+const { createC2ChatFacts } = require('./c2chatfacts')
 
 // A host facade over existing v2 authorities, not a second execution engine.
 // The allowlist applies after the existing console's authentication boundary.
@@ -23,6 +24,8 @@ const READ_PATHS = ['/api/wecom/chats', '/api/wecom/attach', '/api/slack/channel
   // Counts only, for the desktop shell: also answered to a loopback request
   // without credentials (see serverbase).
   '/api/shell/activity',
+  // Scheduled tasks of one conversation (src/scheduleservice.js).
+  '/api/schedules',
   START_PATH, CALLBACK_PATH]
 const WRITE_PATHS = ['/api/wecom/attach', '/api/wecom/attach/cancel', '/api/wecom/attach/retry',
   '/api/slack/attach', '/api/slack/attach/cancel', '/api/slack/attach/retry', '/api/slack/verify', '/api/login', '/api/logout', '/api/logout/all',
@@ -62,6 +65,10 @@ const WRITE_PATHS = ['/api/wecom/attach', '/api/wecom/attach/cancel', '/api/weco
   // Seal a held group: only offered where launchd starts the service again
   // after the stop (see src/c2consoleseal.js).
   '/api/groups/seal',
+  // Scheduled tasks: kept under the data directory, outside the configuration
+  // and every journal; an edit is read by the next minute tick and does not
+  // wait for the conversation.
+  '/api/schedules/add', '/api/schedules/update', '/api/schedules/toggle', '/api/schedules/remove',
   // Software updates: check and ignore anywhere; install only when launchd
   // manages this exact entry (the updater refuses every other run mode).
   '/api/update/check', '/api/update/start', '/api/update/ignore']
@@ -111,28 +118,13 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
     sealHeld: typeof sealHeld === 'function',
     groupCommands: GROUP_COMMANDS,
     reason: '此操作尚未接入当前版本的持久处理流程，未执行。',
-    summary: '实时状态、认证管理、停止任务、空闲群开新会话、支持忙时跟进的控制台插话、绑定新群、空闲群的模型切换（Codex / Claude Code）和项目目录修改、模型的添加与设置，以及后台运行时的软件升级已接入；该群有任务或未结记录时不能修改，也不能开新会话；改模型的型号、后端或端点时，用它的群须空闲，并会开始新的一段对话。插话会把这句话（标着「管理员」）和回复都发进群，群忙时按该群的忙时跟进设置尝试加入当前任务，关闭或暂不支持时排队；确认模型读取后才显示已加入；静默插话和不回复的插话暂不支持。解除绑定、移除模型、定时任务和画布暂不可用。',
+    summary: '实时状态、认证管理、停止任务、空闲群开新会话、支持忙时跟进的控制台插话、绑定新群、空闲群的模型切换（Codex / Claude Code）和项目目录修改、模型的添加与设置，以及后台运行时的软件升级已接入；该群有任务或未结记录时不能修改，也不能开新会话；改模型的型号、后端或端点时，用它的群须空闲，并会开始新的一段对话。插话会把这句话（标着「管理员」）和回复都发进群，群忙时按该群的忙时跟进设置尝试加入当前任务，关闭或暂不支持时排队；确认模型读取后才显示已加入；静默插话和不回复的插话暂不支持。定时任务已接入：到点在会话里发一行并按普通消息处理、只发一句话，或在项目目录运行一条命令；同一次至多触发一次，错过的不补。解除绑定、移除模型和画布暂不可用。',
     allowed: { GET: READ_PATHS, POST: WRITE_PATHS } })
   function held() {
     if (assertWriterLock() !== true) throw new Error('服务写入权限已失效，操作未执行')
   }
-  const bindings = () => {
-    const value = getBindings()
-    if (!(value instanceof Map)) throw new TypeError('C2 console bindings must be a Map')
-    return value
-  }
-  // The engine's /new guard, read from the same runtime and journal the live
-  // view uses: a running, admitted, controlled or queued turn, any receipt of
-  // this group's journal not yet settled, or an outbound effect still in
-  // flight keeps the current session.
-  function groupBusy(chatId, binding) {
-    const rt = binding.engine?.rts?.get(chatId)
-    const snapshot = binding.journal?.consoleSnapshot?.() || binding.journal?.snapshot()
-    return !!(rt?.v2NormalRouteActive || rt?.v2AdmissionPending || rt?.v2Controller ||
-      rt?.v2QueueReceiptIds?.length || snapshot?.receipts?.pending?.length ||
-      snapshot?.state?.lanes?.queue?.[chatId]?.queue?.length ||
-      binding.gate?.blocked || binding.runtime?.blocked)
-  }
+  const chatFacts = createC2ChatFacts({ getBindings, getConfig, getHeld, assertWriterLock, isServing, isFrozen })
+  const { bindings, groupBusy, receiptState } = chatFacts
   function clearSession(chatId) {
     held()
     const binding = bindings().get(chatId)
@@ -155,28 +147,14 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
   // before the line is posted, so a refused group shows nothing, and again
   // right after; the service ingress remains the final authority.
   function sayGate(chatId) {
-    let locked = false
-    try { locked = assertWriterLock() === true } catch {}
-    if (!locked || isServing() !== true) return 'not-serving'
-    if (getConfig().groups?.[chatId]?.paused) return 'paused'
-    if (getHeld().has(chatId)) return 'held'
-    if (isFrozen() === true) return 'upgrading'
-    const binding = bindings().get(chatId)
-    if (!binding || binding.runtime?.closed === true) return 'not-serving'
-    const rt = binding.engine?.rts?.get(chatId)
-    const snapshot = binding.journal?.consoleSnapshot?.() || binding.journal?.snapshot()
-    if (rt?.v2StopControl || rt?.v2SkipWaiter || snapshot?.state?.lanes?.stopIntent?.[chatId]) return 'busy'
-    // A normal active turn may accept ordinary messages. Unowned pending work
-    // still refuses; it must not become a new execution path or bypass recovery.
-    if (!rt?.v2NormalRouteActive && !rt?.v2AdmissionPending && (groupBusy(chatId, binding) || rt?.v2RunningJobs)) return 'busy'
-    const queued = snapshot?.state?.lanes?.queue?.[chatId]?.queue?.length || 0
-    if (queued >= (rt?.v2AdmissionPending ? 3 : 2)) return 'queue-full'
-    return null
-  }
-  function receiptState(chatId, receiptId) {
-    const receipts = bindings().get(chatId)?.journal?.snapshot()?.receipts
-    if (receipts?.pending?.some(item => item.id === receiptId)) return 'pending'
-    if (receipts?.completed?.some(item => item.id === receiptId)) return 'completed'
+    const facts = chatFacts.read(chatId)
+    if (!facts.open) return 'not-serving'
+    if (facts.paused) return 'paused'
+    if (facts.held) return 'held'
+    if (facts.upgrading) return 'upgrading'
+    if (!facts.bound) return 'not-serving'
+    if (facts.stopping) return 'busy'
+    if (facts.queued >= (facts.admissionPending ? 3 : 2)) return 'queue-full'
     return null
   }
   function locateSay(chatId, receiptId) {
@@ -412,6 +390,9 @@ function createC2Console(options = {}) {
   const ui = createUiServer({
     getWecomChats: options.getWecomChats, wecomAttach: options.wecomAttach,
     getSlackChats: options.getSlackChats, slackAttach: options.slackAttach, configPath, host, log, getConnHealth, updater: options.updater || null,
+    // The service's scheduled tasks (null where this run has none: every
+    // /api/schedules request is then refused).
+    schedules: options.schedules || null,
     onHostChange: options.onHostChange, codexCli: options.codexCli || null,
     getLiveState: facade.getLiveState, control: facade.control, runtimePolicy: facade,
     issuesPath: path.join(stateDir, 'issues.jsonl'),

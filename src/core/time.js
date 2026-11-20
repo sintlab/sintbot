@@ -12,11 +12,25 @@ function isValidTz(tz) {
 // 无效/缺省一律回退默认(fail-safe:配置写错不至于让时间口径漂到主机时区)
 function normalizeTz(tz) { return isValidTz(tz) ? tz : DEFAULT_TZ }
 
+// One formatter per time zone, kept for the life of the process: building one
+// costs far more than using it, and the scheduled-task searches ask for the
+// parts of many instants. The output is the same as a fresh formatter's.
+const FORMATTERS = new Map()
+function formatterOf(tz) {
+  const zone = normalizeTz(tz)
+  let fmt = FORMATTERS.get(zone)
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: zone, hourCycle: 'h23',
+      year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+    })
+    if (FORMATTERS.size < 64) FORMATTERS.set(zone, fmt)
+  }
+  return fmt
+}
+
 function tzParts(ts, tz) {
-  const fmt = new Intl.DateTimeFormat('en-US', {
-    timeZone: normalizeTz(tz), hourCycle: 'h23',
-    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
-  })
+  const fmt = formatterOf(tz)
   const p = {}
   for (const x of fmt.formatToParts(new Date(ts))) if (x.type !== 'literal') p[x.type] = x.value
   return p

@@ -1,9 +1,9 @@
-// ABI v38 adapter for the built-in decision core. Manifest assembly still stays in JS.
+// ABI v39 adapter for the built-in decision core. Manifest assembly still stays in JS.
 const fs = require('node:fs')
 const path = require('node:path')
 const { createHash } = require('node:crypto')
 
-const EXPECTED_SHA256 = '998ebc68788df3312720ce05cff65e4183af1708dfe8cc1633e692523c58956e'
+const EXPECTED_SHA256 = 'ec929dc4e4f95a5acfe72b922233ddc11a9ebde1a5eb179d391559290a392c2d'
 let bytes
 try {
   bytes = fs.readFileSync(path.join(__dirname, 'privatecore.wasm'))
@@ -26,7 +26,7 @@ try {
 } catch (cause) {
   throw new Error('SintBot binary core cannot start on this runtime', { cause })
 }
-if (core.abi_version() !== 38) throw new Error('SintBot binary core ABI mismatch')
+if (core.abi_version() !== 39) throw new Error('SintBot binary core ABI mismatch')
 const encoder = new TextEncoder()
 const decoder = new TextDecoder('utf-8', { fatal: true })
 
@@ -909,12 +909,19 @@ function leftoverStep(input) {
   return value
 }
 
+// The host keeps the warning by `change` alone and passes it back as
+// `flagged`, so the two must tell the same story: each change names the state
+// it leaves (and the one it starts from); `none` leaves it as it was.
+const SHARED_CHANGE = { none: null, first: [false, false], raised: [false, true], still: [true, true], cleared: [true, false] }
+const sharedChangeOk = (change, before, after) => Object.hasOwn(SHARED_CHANGE, change) &&
+  (SHARED_CHANGE[change] ? SHARED_CHANGE[change][0] === before && SHARED_CHANGE[change][1] === after : after === before)
+
 // One greeting's count of the app's connections against the host's own.
 function sharedConnectionStep(input) {
   const value = coreJson('shared_connection_step', input, 'check the shared app connections')
   if (!isObject(value) || !['ok', 'wait', 'warn'].includes(value.verdict) ||
-      !['none', 'first', 'raised', 'still', 'cleared'].includes(value.change) ||
       !Number.isSafeInteger(value.streak) || value.streak < 0 || typeof value.flagged !== 'boolean' ||
+      !sharedChangeOk(value.change, input?.flagged === true, value.flagged) ||
       !(value.others === null || Number.isFinite(value.others)) ||
       !Number.isFinite(value.recheckMs) || value.recheckMs < 0) {
     throw new Error('SintBot binary core returned an invalid shared connection check')
@@ -952,4 +959,25 @@ function claudeFollowupStep(state, event) { return followupCall('claude_followup
 const entries = { followupEnabled, claudeFollowupStep, classifyError, routeBackend, sandboxTier, appErrorOverride, appNormalizeItem, appStreamTail, appNoticeAction, appDeltaNext, appLandedAction, appCompletionAction, appCompletionNoticeAction, manifestFeatures, manifestHeader, manifestContext, manifestSkills, manifestStyleBoard, manifestImagenAsset, manifestRuntime, manifestPolicy, systemAppendix, codexEffortRejection, wecomGatePrompt, imagenPrompt, turnPrompt, compactEvent, engineQueueStep, engineSlotsStep, engineTurnStep, engineSessionStep, engineHandoffStep, engineIntakeStep, engineLifecycleStep, engineTerminalStep, engineSteerStep, engineRecoveryStep, engineFailoverStep, parseResetFields, chooseResetEpoch, codexBuildPrompt, codexBuildArgs, appUsageFromTotal, settleUsage, appBuildRequest, claudeBaseSkillAllows, claudeBuildArgs, claudePluginAllowRules, claudeNormalizeEvent, codexNormalizeEvent, codexParseError, connectManifest, connectSlackManifest, connectPlan, connectConfig, qrMatrix, usageParse, envConflicts, idleCompactPlan, idleCompactSettle, leftoverStep, sharedConnectionStep }
 for (const name of Object.keys(entries)) entries[name] = guarded(entries[name])
 
-module.exports = { ...entries, engineStep, resetBinaryCore, HUMAN_BY_KIND: HUMAN, slackManifestShapeOk }
+
+// ABI 39: scheduled tasks. The host keeps
+// the task definitions and the fire ledger and tells the time; the core
+// decides whether a due occurrence fires ("due"), what a turn started by a
+// scheduled task may do ("turn") and how a finished occurrence reads
+// ("result"). Malformed input is refused.
+function scheduleStep(input) {
+  const value = coreJson('schedule_step', input, 'decide a scheduled task step')
+  const type = input && input.type
+  const ok = isObject(value) && (
+    type === 'due' ? ['fire', 'skip'].includes(value.decision) &&
+      (value.reason === null || typeof value.reason === 'string') &&
+      typeof value.record === 'boolean' && typeof value.retire === 'boolean'
+    : type === 'turn' ? typeof value.followups === 'boolean' &&
+      (value.speed === null || ['fast', 'standard'].includes(value.speed))
+    : type === 'result' ? ['ok', 'failed', 'unknown', 'skipped'].includes(value.status) && value.retry === false
+    : false)
+  if (!ok) throw new Error('SintBot binary core returned an invalid schedule decision')
+  return value
+}
+
+module.exports = { ...entries, scheduleStep: guarded(scheduleStep), engineStep, resetBinaryCore, HUMAN_BY_KIND: HUMAN, slackManifestShapeOk }

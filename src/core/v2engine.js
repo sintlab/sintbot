@@ -10,7 +10,7 @@ const { redact } = require('./redact')
 const { fmtStamp, normalizeTz } = require('./time')
 const { settleUsage, manifestPolicy, manifestHeader, manifestContext, manifestFeatures, manifestSkills,
   followupEnabled, systemAppendix, turnPrompt, engineTerminalStep, engineQueueStep,
-  idleCompactPlan, idleCompactSettle, compactEvent, classifyError } = require('../agent/privatecore')
+  idleCompactPlan, idleCompactSettle, compactEvent, classifyError, scheduleStep } = require('../agent/privatecore')
 const { taskId } = require('./enginecheckpoint')
 const { prepareCardTerminalPath } = require('./c2cardterminalpath')
 const { terminalReplyText, terminalNoticeText } = require('./c2terminaleffectbridge')
@@ -109,10 +109,25 @@ function brainLabel(name, brain, lang = 'zh') {
     .filter(Boolean).join(' · ')
 }
 const MAX_TIMER_MS = 2 ** 31 - 1 // the longest delay setTimeout can represent
-// The brain a turn actually runs with: a scheduled (cron) turn never runs
-// Fast, nobody is waiting for it and Fast costs more quota.
+// A message posted by a scheduled task (src/schedulefire.js). The mark lives on
+// the message object in this process only, like a Slack thread: it is in no
+// journal, so after a restart the same message is an ordinary one. (`cron` is
+// the older routes' mark for the same thing.)
+const isScheduledMessage = msg => msg?.scheduled === true || msg?.cron === true
+// What a turn may do is the core's answer (schedule_step "turn"): a turn a
+// scheduled task started takes no follow-ups and never runs Fast (nobody is
+// waiting for it and Fast costs more quota); any other turn keeps what it was
+// given.
+function scheduledTurnPolicy(scheduled, followups, speed) {
+  const turn = scheduleStep({ type: 'turn', scheduled: scheduled === true, followups: followups === true,
+    speed: speed === 'fast' ? 'fast' : null })
+  return { followups: turn.followups, speed: turn.speed === 'fast' ? 'fast' : '' }
+}
+// The brain a turn actually runs with: the group's, at the speed the core allows.
 function turnBrain(brain, msg) {
-  return msg?.cron && brain?.speed ? { ...brain, speed: '' } : brain
+  if (!brain || typeof brain !== 'object') return brain
+  const speed = scheduledTurnPolicy(isScheduledMessage(msg), false, brain.speed).speed
+  return speed === (brain.speed || '') ? brain : { ...brain, speed }
 }
 function cardModelDetail(info, result) {
   // A rejected configured effort may have been retried at the model default.
@@ -507,8 +522,9 @@ function v2QueueSelection(queue, threads = null) {
 // The group skills the release entry serves through `sbot feishu` (the same
 // executable as `sintbot`): messages, notice cards, history, reply, edit,
 // recall, download and reactions. Canvas, image generation and takeover cards
-// are not in this release, and neither are scheduled tasks, so the cron
-// section the core renders after the skills is cut off.
+// are not in this release, and neither is the agent's own scheduling command
+// (scheduled tasks are managed from the console), so the cron section the
+// core renders after the skills is cut off.
 function releaseSkillLines(platform, named = {}) {
   const features = manifestFeatures({ ...(platform?.features || {}),
     boards: false, imagen: false, takeoverCard: false })
@@ -1336,9 +1352,12 @@ async runDurableV2Message(msg, platform) {
       if (consistent) {
         try { this.durableV2Payloads.auditOrdinaryQueue(msg.chatId, rt.v2QueueReceiptIds || []) }
         catch (error) { authority.close(); throw error }
+        // A message a scheduled task posted never joins the running task: the
+        // core closes follow-ups for it, so it waits its turn like any other.
+        const joinable = scheduledTurnPolicy(isScheduledMessage(msg), ready, null).followups
         const queued = this.stageDurableV2Message(msg, platform, {
-          busy: { followups: ready, waitable, ...this._durableV2ThreadFacts(rt, msg) },
-          accept: route => route === 'join' ? ready : waitable })
+          busy: { followups: joinable, waitable, ...this._durableV2ThreadFacts(rt, msg) },
+          accept: route => route === 'join' ? joinable : waitable })
         if (queued.route === 'refuse') {
           const full = queued.refusal === 'full'
           throw rejectC2Input('C2 v2 busy message refused before receipt', {
@@ -2299,14 +2318,21 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
         throw new Error('C2 v2 runner provider unavailable')
       }
       // Runner input, card footer and activity all use this one brain; a
-      // scheduled turn runs at standard speed.
-      rt.v2Brain = turnBrain(this._brain(job.group, name, provider), job.msg)
+      // scheduled turn runs at standard speed. The turn is a scheduled one
+      // when any message it starts with was posted by a scheduled task.
+      const scheduledTurn = cohort.jobs.some(item => isScheduledMessage(item.msg))
+      rt.v2Brain = turnBrain(this._brain(job.group, name, provider), { scheduled: scheduledTurn })
       rt.v2CardModelInfo = cardModelInfo(rt.v2Brain, this._chatLang(chatId))
       this._observeActivity('start', { chatId, receiptId, receiptIds: cohort.receiptIds, generation,
         sessionId: this.store.getSession(chatId), model: rt.v2Brain.model, effort: rt.v2Brain.effort,
         ...(rt.v2Brain.speed === 'fast' ? { speed: 'fast' } : {}),
         runner: provider.runner, project: projectName(job.group) })
-      rt.v2FollowupEnabled = followupEnabled(job.group, provider.runner)
+      // Follow-ups as the group has them, unless the core closes them for a
+      // scheduled turn: then the runner's control is never taken, so later
+      // messages wait in the queue instead of joining it.
+      const groupFollowups = followupEnabled(job.group, provider.runner)
+      rt.v2FollowupEnabled = scheduledTurnPolicy(scheduledTurn, groupFollowups, null).followups
+      const followupsClosed = groupFollowups && !rt.v2FollowupEnabled
       rt.v2SteerControl = null
       rt.v2SteerEntries = new Map()
       rt.v2SteerClosing = false
@@ -2315,7 +2341,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
       const steerAlive = () => rt.v2RunnerGeneration === generation && !rt.v2SteerClosing &&
         !controller?.signal.aborted && !rt.v2TerminalStarted
       const onSteerReady = control => {
-        if (!steerAlive()) return
+        if (!steerAlive() || followupsClosed) return
         if (typeof control?.steerDurable !== 'function') {
           authority.close(); controller?.abort(); return
         }
@@ -2329,6 +2355,8 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
           for (const id of [...(rt.v2QueueReceiptIds || [])]) {
             if (!steerAlive()) break
             if (!rt.v2QueueReceiptIds?.includes(id)) continue
+            // A scheduled task's message keeps its place too: it is never a follow-up.
+            if (!scheduledTurnPolicy(isScheduledMessage(this.durableV2Payloads.requireQueued(id).msg), true, null).followups) continue
             // The core declines another thread's message: it keeps its place.
             await this._runDurableV2Steer(rt, id)
           }

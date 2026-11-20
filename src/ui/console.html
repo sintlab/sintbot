@@ -463,6 +463,35 @@ p.hint{margin:0 0 8px}
 .cfull .cbl-code{font-family:var(--mono);font-size:11px;color:var(--ink);background:var(--inset-bg);border:1px solid var(--line);border-radius:4px;padding:5px 8px;margin:5px 0;white-space:pre-wrap;word-break:break-all}
 .cfull .cbl-sp{height:6px}                                                               /* 空行=段距 */
 .cronbody+.cronrow{margin-top:2px}            /* 详情框插在两行之间时,行距照旧 */
+/* 定时任务(新版服务,/api/schedules):沿用上面 .cronrow / .cronbody / .cronform 的底、悬停与展开语言,只补差异。
+   行分两层 —— 上层(.stop):启停 · 名称 · 上次结果 · 编辑 / 展开 / 删除;下层(.sline,小一号):类型 · 时间 · 时区 · 下次运行 · 上次运行。
+   ⚠ 上层不换行、只有名称那一格会缩(省略号),其余都是定宽的小件:390px 的手机上也排得下,按钮不会被挤出卡片。
+     类型标签放下层正是为此 —— 「脚本 · 不经模型」加上「一次」「已暂停」和结果,窄屏上层放不下。
+   ⚠ 下层是普通的行内排版、允许折行:时间说法和跳过原因写多长都看得全,不靠省略号藏字。 */
+.cronrow.sched{display:block;padding:5px 8px}
+.cronrow .stop{display:flex;align-items:center;gap:8px;min-width:0;min-height:20px}
+.cronrow .sname{flex:0 1 auto;min-width:0;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cronrow .sfill{flex:1 1 0;min-width:0}
+.cronrow .sline{padding-left:26px;font-size:11px;line-height:20px;color:var(--muted);overflow-wrap:anywhere}
+.cronrow .sline .ctype,.cronrow .sline .cbadge{margin-right:6px;vertical-align:middle}
+.cronrow.off .sname,.cronrow.off .sline{opacity:.5}
+.cronrow .cdot:disabled{cursor:default}
+/* 上次结果:一个小圆点 + 两到四个字。失败用红(是真问题),结果不明用琥珀,跳过与其余走中性灰 */
+.sres{flex:none;display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:500;color:var(--muted);white-space:nowrap}
+.sres::before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor}
+.sres.ok{color:var(--ok)}
+.sres.failed{color:var(--fail)}
+.sres.unknown{color:var(--warn-ink)}
+.cronrow .sedit{flex:none;border:none;background:none;cursor:pointer;color:var(--muted);font:500 11px/1 var(--sans);padding:2px 4px;border-radius:var(--r-ctl);transition:var(--tr-ui)}
+.cronrow .sedit:hover{color:var(--ink);background:var(--hover)}
+.cronbody .slast{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center;font-size:11px;color:var(--muted);margin-bottom:8px}
+.cronbody .sdetail{flex:0 0 100%;font-family:var(--mono);font-size:11px;line-height:17px;color:var(--dim);white-space:pre-wrap;word-break:break-word;max-height:120px;overflow-y:auto}
+/* 表单:每格上面一行小标签(编辑时格里已有值,placeholder 看不见,不能只靠它说明这格填什么) */
+.cronform .sfl{display:flex;flex-direction:column;gap:4px;min-width:0;font-size:11px;line-height:14px;color:var(--muted)}
+.cronform .crow.sf{align-items:flex-end;flex-wrap:wrap}
+.cronform textarea.crontext{font-size:12px;line-height:18px;min-height:62px}
+.cronform .sferr{margin-top:8px;font-size:12px;line-height:18px;color:var(--fail)}
+.schedbox .snote{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center}
 
 /* ── 按钮 + 输入 ── */
 button.btn,a.btn{appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;height:var(--h-sm);padding:0 10px;
@@ -972,6 +1001,10 @@ button.btn.nsmini{height:20px;padding:0 8px;font-size:11px;vertical-align:1px}
   :root[data-lang="en"] #ggrid .kv:has(select)>.kk,:root[data-lang="en"] #ggrid .kv:has(.segtoggle)>.kk,:root[data-lang="en"] #ggrid .kv:has(textarea)>.kk,:root[data-lang="en"] #ggrid .kv:has(.plugbox)>.kk{flex:0 0 auto;width:auto;padding-top:0}
   /* 这些 kv 容器带内联 align-items:flex-start,列向后子项不再拉伸、按内容定宽 —— 一条 nowrap 的定时任务描述就把值那一格撑到两千像素(390px 真机 scrollWidth 2038)。align-self 压过容器的 align-items */
   #ggrid .kv:has(select)>:not(.kk),#ggrid .kv:has(.segtoggle)>:not(.kk),#ggrid .kv:has(textarea)>:not(.kk),#ggrid .kv:has(.plugbox)>:not(.kk){align-self:stretch;min-width:0;max-width:100%}
+  /* 定时任务行(新版):表单收着时里面没有 select,不补这三条的话一开表单整行才从横排跳成竖排 */
+  .kv:has(.schedbox){flex-direction:column;align-items:stretch;gap:6px}
+  #ggrid .kv:has(.schedbox)>.kk,:root[data-lang="en"] #ggrid .kv:has(.schedbox)>.kk{flex:0 0 auto;width:auto;padding-top:0}
+  #ggrid .kv:has(.schedbox)>:not(.kk){align-self:stretch;min-width:0;max-width:100%}
   /* 设置页:根目录路径与访问地址是整段无空格的串,窄屏允许任意处断行 */
   #prStatus .mono{word-break:break-all;min-width:0} .kv .vv.mono a{word-break:break-all;white-space:normal}
   #settings .mono{word-break:break-all;overflow-wrap:anywhere} /* 回调地址、openId 这类无空格长串,窄屏任意处断 */
@@ -2906,8 +2939,9 @@ function cronFullHtml(text){
 }
 const RUNTIME_UI_TEXT={
   "groups": "可绑定新群，修改后端、型号、思考深度、项目目录、权限、数据输出和忙时跟进；该群须没有进行中的任务和未结记录。换后端或项目会开始新的一段对话，换型号或调深度接着当前对话。停止任务和开新会话在「概览」，开新会话须等该群空闲。群里发 /model 也能改。",
-  "skills": "当前支持飞书文字消息、忙时跟进、任务回复和停止。定时任务、生图、群消息管理、画布与预览暂未接入。",
-  "cron": "当前不执行定时任务；已有定义仅供查看。",
+  "skills": "当前支持飞书文字消息、忙时跟进、任务回复和停止；服务开放定时任务后，在本卡「定时任务」一行创建和管理。生图、群消息管理、画布与预览暂未接入。",
+  "cron": "到点让模型处理任务、直接运行命令或发消息。在这里创建、修改、暂停和删除；这一版还不能在群里让模型创建定时任务。",
+  "cronLegacy": "这些是旧版定时任务定义，当前服务不执行，仅供查看。",
   "board": "画布创建、同步与反馈暂未接入；已有链接仅供查看。",
   "pause": "只有本群任务结束并完成结账后才能暂停；暂停后不接收本群新消息，配置与会话保留。",
   "paused": "已暂停：不接收本群新消息，配置与会话保留。",
@@ -3011,6 +3045,286 @@ async function saveGroupBrain(chatId,change){
       :`思考深度已调为 ${c.effort} · 下条消息生效`,'ok');
   }catch(e){toast(e.message,'err');renderGroups();}
 }
+/* ── 定时任务 · 新版服务(/api/schedules*)───────────────────────────────────────────────
+   与旧行(/api/groups/cron/*,读 /api/state 里的 g.crons)是两套:服务端白名单放行
+   /api/schedules/add 时群卡画这一套,旧行只留给旧版服务。
+   数据不进 /api/state,按群懒加载:群卡先画占位,这一行真正露出来(卡片展开 +「更多设置」打开)
+   才去取;取到后只重画这一格(paintSched),不重画整页 —— 别处正填着的东西不会被清掉。
+   三份状态都放在渲染之外,renderGroups() 整块重画后原样接上:
+     SCHED       按群缓存的清单(每次改动后、卡片重新打开时、缓存放久了再画时各取一次)
+     SCHED_FORM  正在填的表单草稿(新建与编辑共用一张表)
+     schedOpen   展开着的任务
+   名称、正文、表达式、时区、时间、运行详情都是数据,节点一律标 data-i18n-skip,不进翻译词典;
+   其余固定文字各占一个文本节点,词典里逐条有对应。 */
+const SCHED={};                 // chatId → {data,error,loading,at,seq}
+const SCHED_FORM={};            // chatId → {id:''|任务 id, v:{name,kind,when,tz,text,timeoutMin}, err, bad, busy}
+const schedOpen=new Set();      // chatId + '\n' + 任务 id
+const SCHED_TTL=20000;          // 重画群卡时缓存超过这么久就顺手再取一次(下次运行、上次结果会随时间变)
+// 一次性时间的写法(旧表单同一份):只填 10:20 / 07-16 10:20 / 完整日期 / 中文月日 → 发 at;其余当循环表达式发 expr。
+const CRON_ONEOFF=[/^\d{1,2}:\d{2}$/,/^\d{1,2}-\d{1,2}[ T]\d{1,2}:\d{2}$/,/^\d{4}-\d{1,2}-\d{1,2}[ T]\d{1,2}:\d{2}$/,/^\d{1,2}月\d{1,2}日\s*\d{1,2}:\d{2}$/,/^\d{4}年\d{1,2}月\d{1,2}日\s*\d{1,2}:\d{2}$/];
+// 三种类型。脚本任务不经过模型 —— 这一点在类型标签、下拉选项和表单说明里都直说,别让人以为命令会先交给模型看。
+const SCHED_KIND={
+  model:{cls:'do',chip:'模型',name:'模型任务',opt:'模型任务（交给模型处理）',tip:'到点把任务内容交给本群的模型处理',
+    label:'任务内容',ph:'到点让模型做的事',need:'填写任务内容',
+    help:'模型任务：到点把任务内容交给本群的模型处理。'},
+  script:{cls:'run',chip:'脚本 · 不经模型',name:'脚本任务',opt:'脚本任务（直接运行命令，不经模型）',tip:'到点直接运行这条命令，不经过模型',
+    label:'命令',ph:'到点直接运行的命令',need:'填写要跑的命令',
+    help:'脚本任务：到点直接运行这条命令，不经过模型 —— 模型不会看到这条命令，也不会替你判断结果。超时留空用默认值。'},
+  say:{cls:'say',chip:'消息',name:'消息',opt:'消息（原样发到群里）',tip:'到点把这段文字原样发到群里',
+    label:'消息内容',ph:'到点发到群里的文字',need:'填写要发送的消息',
+    help:'消息：到点把这段文字原样发到群里，不经过模型。'}
+};
+const SCHED_STATUS={ok:'成功',failed:'失败',unknown:'结果不明',skipped:'已跳过'};
+const SCHED_SKIP={missed:'漏触发（服务未运行或迟到）',paused:'群已暂停',held:'群挂起中','queue-full':'排队已满',upgrading:'升级中','not-serving':'服务未就绪',stopping:'正在停止','still-running':'上一次还在运行',
+  /* 失败或结果不明时后端给出的原因 */'post-failed':'消息没发出去','post-unknown':'发送结果不明','not-admitted':'发出后没能进入处理','unusable-id':'平台没有返回可用的消息标识','no-platform':'没有可用的平台连接',unconfirmed:'结果未确认','route-error':'进入处理时出错',interrupted:'服务中断，结果不明',exit:'命令退出码非 0',signal:'命令被信号终止',timeout:'运行超时','spawn-failed':'命令没能启动'};
+const SCHED_WHEN_PH='10:20 · 07-16 10:20 · 每天 09:00 · 工作日 8:30 · @daily';
+const schedOwn=(map,key)=>typeof key==='string'&&Object.prototype.hasOwnProperty.call(map,key)?map[key]:undefined;   // 键来自服务端,只认表里自己有的
+const schedLive=tasks=>(Array.isArray(tasks)?tasks:[]).filter(t=>!(t&&t.retired===true)).length;   // 占名额的任务数:已结束的一次性任务(retired)留着只为看结果,不计入上限(服务端同)
+function schedLang(){return typeof langOf==='function'?langOf():'zh';}
+function schedTzOk(tz){try{new Intl.DateTimeFormat('en-US',{timeZone:tz});return true;}catch(e){return false;}}
+/* 时间一律按任务自己的时区显示(11-19 06:34);不在今年的带上年份。null / 认不出的值显示「—」。
+   时区认不出时退回浏览器本地时区,不让一行字把整格画坏。 */
+function schedTime(ms,tz,nowMs){
+  if(ms==null||ms==='')return '—';
+  const at=typeof ms==='string'&&!/^\d+$/.test(ms)?Date.parse(ms):+ms;
+  if(!isFinite(at))return '—';
+  const read=zone=>{const f=new Intl.DateTimeFormat('en-US',{timeZone:zone||undefined,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
+    return [at,nowMs==null?Date.now():nowMs].map(v=>{const p={};for(const x of f.formatToParts(new Date(v)))p[x.type]=x.value;return p;});};
+  let a,n;
+  try{[a,n]=read(tz);}catch(e){try{[a,n]=read('');}catch(_){return '—';}}
+  return (a.year===n.year?'':a.year+'-')+a.month+'-'+a.day+' '+a.hour+':'+a.minute;
+}
+function schedTask(chatId,id){const d=(SCHED[chatId]||{}).data;return ((d&&d.tasks)||[]).find(t=>t&&String(t.id)===String(id))||null;}
+function schedTaskHtml(chatId,t,ro){
+  const id=String(t.id==null?'':t.id), k=schedOwn(SCHED_KIND,t.kind), off=t.enabled===false, open=schedOpen.has(chatId+'\n'+id);
+  const text=String(t.text==null?'':t.text), name=String(t.name||text.split('\n')[0]||id);
+  // 时间那一段:中文界面用服务端给的中文说法,英文界面用原始表达式(中文说法不进词典);悬停都给原始写法
+  const raw=String(t.at||t.expr||''), when=(schedLang()==='zh'&&t.describe)||raw;
+  const T=ms=>`<span data-i18n-skip>${esc(schedTime(ms,t.tz))}</span>`;
+  const L=t.last&&typeof t.last==='object'?t.last:null, word=L?schedOwn(SCHED_STATUS,L.status):'';
+  const mark=!L?'':word?`<span class="sres ${L.status}">${word}</span>`:`<span class="sres" data-i18n-skip>${esc(L.status||'')}</span>`;
+  // 跳过的原因用话说出来;认不出的原因码原样显示
+  const why=L&&L.status!=='ok'&&L.reason?(schedOwn(SCHED_SKIP,L.reason)?`<span>${SCHED_SKIP[L.reason]}</span>`:`<span data-i18n-skip>${esc(L.reason)}</span>`):'';
+  return `
+              <div class="cronrow sched${off?' off':''}${open?' open':''}" data-schedx="${esc(id)}" title="点击展开全文">
+                <div class="stop">
+                  <button class="cdot" ${ro?'disabled':`data-sa="toggle" data-id="${esc(id)}"`} aria-pressed="${off?'false':'true'}" title="${off?'已暂停，点击恢复':'已启用，点击暂停'}" style="color:${off?'var(--muted)':'var(--ok)'}">${off?'○':'●'}</button>
+                  <span class="sname" data-i18n-skip title="${esc(name)}">${esc(name)}</span>
+                  ${off?'<span class="cbadge">已暂停</span>':''}
+                  <span class="sfill"></span>
+                  ${mark}
+                  ${ro?'':`<button class="sedit" data-sa="edit" data-id="${esc(id)}">编辑</button>`}
+                  <span class="cexp">▼</span>
+                  ${ro?'':`<button class="crm" data-sa="rm" data-id="${esc(id)}" title="删除此定时任务">×</button>`}
+                </div>
+                <div class="sline">${k?`<span class="ctype ${k.cls}" title="${k.tip}">${k.chip}</span>`:`<span class="ctype say" data-i18n-skip>${esc(t.kind||'')}</span>`}${(t.once||t.at)?'<span class="cbadge" title="只运行一次">一次</span>':''}<span class="swhen"><span data-i18n-skip title="${esc(raw)}">${esc(when)}</span>${t.tzOwn?` · <span data-i18n-skip>${esc(t.tz||'')}</span>`:''} · <span>下次</span> ${off?'<span data-i18n-skip>—</span>':T(t.nextRun)}${L?` · <span>上次</span> ${T(L.occurrence)}${why?' '+why:''}`:''}</span></div>
+              </div>
+              <div class="cronbody" style="display:${open?'block':'none'}">
+                <div class="cmeta">
+                  <span>${t.at?'<span>一次性</span> ':''}<span data-i18n-skip>${esc(raw)}</span></span>
+                  <span><span>时区</span> <span data-i18n-skip>${esc(t.tz||'')}</span>${t.tzOwn?'':'<span>（默认）</span>'}</span>
+                  ${k?`<span>${k.name}</span>`:''}
+                  ${t.kind==='script'&&t.timeoutMin!=null?`<span><span>超时</span> <span data-i18n-skip>${esc(t.timeoutMin)}</span> <span>分钟</span></span>`:''}
+                  <span data-i18n-skip>id ${esc(id)}</span>
+                  <span><span>创建于</span> ${T(t.createdAt)}</span>
+                  <span><span>更新于</span> ${T(t.updatedAt)}</span>
+                  <span>${text.length} 字</span>
+                  <button class="ccopy" data-sa="copy" data-full="${esc(text)}">复制全文</button>
+                </div>
+                ${L?`<div class="slast"><span>上次运行</span>${mark}<span><span>计划时间</span> ${T(L.occurrence)}</span><span><span>记录于</span> ${T(L.at)}</span>${why}${L.detail?`<div class="sdetail" data-i18n-skip>${esc(L.detail)}</div>`:''}</div>`:''}
+                <div class="cfull" data-i18n-skip>${cronFullHtml(text)}</div>
+              </div>`;
+}
+function schedFormHtml(chatId,d){
+  const f=SCHED_FORM[chatId], v=f.v, k=schedOwn(SCHED_KIND,v.kind)||SCHED_KIND.model, bad=n=>f.bad===n?' aria-invalid="true"':'';
+  return `
+            <div class="cronform sched">
+              <div class="hint" style="margin-bottom:8px">${f.id?'编辑定时任务':'新建定时任务'}</div>
+              <div class="crow sf">
+                <label class="sfl" style="flex:1 1 160px"><span>名称</span><input data-sf="name" value="${esc(v.name)}" placeholder="如：每日构建报告"${bad('name')}/></label>
+                <label class="sfl"><span>类型</span><select data-sf="kind" style="width:auto;min-width:150px">${Object.keys(SCHED_KIND).map(x=>`<option value="${x}"${x===v.kind?' selected':''}>${SCHED_KIND[x].opt}</option>`).join('')}</select></label>
+              </div>
+              <div class="crow sf">
+                <label class="sfl" style="flex:1 1 180px"><span>运行时间</span><input class="cronexpr" data-sf="when" value="${esc(v.when)}" placeholder="${SCHED_WHEN_PH}"${bad('when')}/></label>
+                <label class="sfl" style="flex:0 1 150px"><span>时区（可留空）</span><input class="mono" data-sf="tz" data-i18n-skip value="${esc(v.tz)}" placeholder="${esc(d.timezone||'')}"${bad('tz')}/></label>
+                ${v.kind==='script'?`<label class="sfl" style="flex:0 1 96px"><span>超时（分钟）</span><input data-sf="timeoutMin" inputmode="numeric" value="${esc(v.timeoutMin)}" placeholder="默认"${bad('timeoutMin')}/></label>`:''}
+              </div>
+              <div class="crow sf">
+                <label class="sfl" style="flex:1 1 100%"><span>${k.label}</span><textarea class="crontext${v.kind==='script'?' mono':''}" data-sf="text" rows="3" placeholder="${k.ph}"${bad('text')}>${esc(v.text)}</textarea></label>
+              </div>
+              <div class="hint" style="margin-top:9px">${k.help}</div>
+              <div class="hint" style="margin-top:4px">一次性写完整时间，如 2026-07-16 13:10；循环写「每天 09:00」「工作日 8:30」或 cron 五段。时间按所填时区，留空用默认时区。</div>
+              ${f.err?`<div class="sferr" role="alert">${esc(f.err)}</div>`:''}
+              <div class="crow" style="justify-content:flex-end">
+                <button class="btn" data-sa="cancel">取消</button>
+                <button class="btn primary" data-sa="save"${f.busy?' disabled':''}>${f.id?'保存':'添加'}</button>
+              </div>
+            </div>`;
+}
+// 这一格的全部内容。没取到 / 取失败时只有一行安静的字,卡片其余部分照常。
+function schedBoxHtml(chatId){
+  const c=SCHED[chatId], d=c&&c.data;
+  if(!d){
+    if(c&&c.error&&!c.loading)return `<div class="hint snote"><span>暂时读不到定时任务</span><span>${esc(c.error)}</span><button class="btn" data-sa="retry">重试</button></div>`;
+    return '<div class="hint snote"><span class="spin"></span><span>加载中…</span></div>';
+  }
+  const tasks=Array.isArray(d.tasks)?d.tasks:[], ro=d.supported===false, max=+((d.limits||{}).tasks)||0, full=!ro&&max>0&&schedLive(tasks)>=max;
+  // 服务说不支持:只说原因,不给新建;已有的任务照样能看(启停、编辑、删除都不画)
+  const lead=ro?`<span class="hint">${esc(d.reason||'这台服务暂不支持定时任务。')}</span>`
+    :tasks.length?`<span class="hint" title="${esc(RUNTIME_UI_TEXT.cron)}">${tasks.length} 个任务 · 到点让模型处理任务、直接运行命令或发消息</span>`:'<span class="hint">暂无任务</span>';
+  const add=ro?'':full?`<span class="hint" style="flex:none">已到上限 ${max} 个</span>`:`<button class="btn" data-sa="new">${IC.plus} 新建</button>`;
+  return `<div class="inline" style="justify-content:space-between;gap:8px;margin-bottom:${tasks.length?'7px':'4px'}">
+              ${lead}
+              ${add}
+            </div>
+            ${c.error?'<div class="hint snote" style="margin-bottom:6px"><span>刷新没成功，显示的是上一次读到的内容</span><button class="btn" data-sa="retry">重试</button></div>':''}
+            ${tasks.length?`<div style="margin:2px 0">${tasks.map(t=>schedTaskHtml(chatId,t||{},ro)).join('')}</div>`
+              :ro?'':`<div class="hint" style="margin-bottom:4px">${esc(RUNTIME_UI_TEXT.cron)}</div>`/* 还没有任务时把整句说明摆出来(含「还不能在群里让模型创建」);有任务后收进上面那行的悬停提示 */}
+            ${!ro&&SCHED_FORM[chatId]?schedFormHtml(chatId,d):''}`;
+}
+function schedRowHtml(chatId){
+  return `        <div class="kv" style="align-items:flex-start"><span class="kk">定时任务</span>
+          <div class="schedbox" data-sched="${esc(chatId)}" style="flex:1;min-width:0">${schedBoxHtml(chatId)}</div></div>
+`;
+}
+function schedBox(chatId){return $$('#groups .schedbox').find(b=>b.dataset.sched===chatId)||null;}
+function schedFocus(box,field,pos){
+  const n=box&&box.querySelector&&box.querySelector('[data-sf="'+field+'"]');if(!n)return;
+  try{n.focus();if(pos!=null&&n.setSelectionRange)n.setSelectionRange(pos,pos);}catch(e){}
+}
+// 只重画这一格;正在这一格里打字的话,把焦点和光标位置接回去(后台刷新回来时不打断输入)
+function paintSched(chatId){
+  const box=schedBox(chatId);if(!box)return;
+  let field='',pos=null;
+  try{const a=typeof document!=='undefined'?document.activeElement:null;
+    if(a&&a.dataset&&a.dataset.sf&&box.contains(a)){field=a.dataset.sf;pos=a.selectionStart;}}catch(e){}
+  box.innerHTML=schedBoxHtml(chatId);
+  if(field)schedFocus(box,field,pos);
+}
+function paintAllSched(){$$('#groups .schedbox').forEach(b=>paintSched(b.dataset.sched));}
+async function loadSchedules(chatId){
+  const c=SCHED[chatId]||(SCHED[chatId]={data:null,error:'',loading:false,at:0,seq:0}), seq=++c.seq;
+  c.loading=true;
+  if(!c.data)paintSched(chatId);
+  let r=null,err='';
+  try{r=await api('/api/schedules?chatId='+encodeURIComponent(chatId));
+    if(!r||!Array.isArray(r.tasks))throw new Error('返回的内容认不出来');}
+  catch(e){err=(e&&e.message)||'原因不明';}
+  if(seq!==c.seq)return;          // 这期间又发起了一次(刚改完就刷新):以后发的那次为准
+  c.loading=false;c.at=Date.now();c.error=err;
+  if(!err)c.data=r;               // 刷新失败时留着上一次读到的清单,只多一行说明
+  paintSched(chatId);
+}
+// 这一行此刻看不看得见:卡片收着、或「更多设置」没打开,就先不取
+function schedShown(box,reopened){
+  const card=box.closest('.card'), more=box.closest('details');
+  if((card&&card.classList.contains('gfolded'))||(more&&!more.open))return;
+  const c=SCHED[box.dataset.sched];
+  if(c&&c.loading)return;
+  if(!c||reopened||Date.now()-c.at>SCHED_TTL)loadSchedules(box.dataset.sched);
+}
+// renderGroups() 每次重画后接线:这一格里所有点击 / 输入都由格子自己代理(格内之后只换 innerHTML,不必重接)
+function wireSchedules(){
+  $$('#groups .schedbox').forEach(box=>{
+    box.onclick=schedClick;box.oninput=schedInput;box.onchange=schedInput;
+    // ⚠ 重画出来就带 open 的 <details> 也会补发一次 toggle(浏览器对「解析时就开着」同样通知)⇒ 只认「原来收着、现在打开」,
+    //   否则整页每重画一次,每个群都白白再取一遍。
+    const more=box.closest('details');
+    if(more){let was=more.open;more.addEventListener('toggle',()=>{if(more.open&&!was)schedShown(box,true);was=more.open;});}
+    schedShown(box,false);
+  });
+}
+function schedClick(e){
+  const box=e.currentTarget, chatId=box.dataset.sched, t=e.target;
+  const a=t&&t.closest&&t.closest('[data-sa]');
+  if(a)return schedAct(chatId,a.dataset.sa,a.dataset.id||'',a);
+  const row=t&&t.closest&&t.closest('[data-schedx]');
+  if(!row)return;
+  const key=chatId+'\n'+row.dataset.schedx;
+  if(schedOpen.has(key))schedOpen.delete(key);else schedOpen.add(key);
+  paintSched(chatId);
+}
+function schedInput(e){
+  const chatId=e.currentTarget.dataset.sched, t=e.target, field=t&&t.dataset&&t.dataset.sf, f=SCHED_FORM[chatId];
+  if(!field||!f)return;
+  const was=f.v[field];f.v[field]=t.value;
+  if(field==='kind'&&was!==t.value)paintSched(chatId);   // 换类型:正文标签、说明和「超时」一格跟着换,已填的内容留着
+}
+function schedAct(chatId,act,id,el){
+  if(act==='retry')return loadSchedules(chatId);
+  if(act==='copy')return copyCronText(el);
+  if(act==='save')return schedSave(chatId);
+  if(act==='toggle')return schedToggle(chatId,id);
+  if(act==='rm')return schedRemove(chatId,id);
+  if(act==='cancel'){delete SCHED_FORM[chatId];return paintSched(chatId);}
+  if(act!=='new'&&act!=='edit')return;
+  const t=act==='edit'?schedTask(chatId,id):null, cur=SCHED_FORM[chatId];
+  if(act==='edit'&&!t)return;
+  // 同一张表已经开着就只把焦点放回去,不清掉填了一半的内容
+  if(!cur||cur.id!==(t?String(t.id):''))SCHED_FORM[chatId]={id:t?String(t.id):'',err:'',bad:'',busy:false,
+    v:t?{name:String(t.name||''),kind:t.kind||'model',when:String(t.at||t.expr||''),tz:t.tzOwn?String(t.tz||''):'',text:String(t.text==null?'':t.text),timeoutMin:t.timeoutMin==null?'':String(t.timeoutMin)}
+       :{name:'',kind:'model',when:'',tz:'',text:'',timeoutMin:''}};
+  paintSched(chatId);
+  const box=schedBox(chatId), form=box&&box.querySelector&&box.querySelector('.cronform');
+  if(form&&form.scrollIntoView)form.scrollIntoView({block:'nearest'});
+  schedFocus(box,'name',null);
+}
+async function schedSave(chatId){
+  const f=SCHED_FORM[chatId];if(!f||f.busy)return;
+  const d=(SCHED[chatId]||{}).data||{}, lim=d.limits||{}, v=f.v, k=schedOwn(SCHED_KIND,v.kind);
+  const name=String(v.name).trim(), when=String(v.when).trim(), tz=String(v.tz).trim(), text=String(v.text).trim(), mins=String(v.timeoutMin).trim();
+  const fail=(msg,field)=>{f.err=msg;f.bad=field||'';f.busy=false;paintSched(chatId);if(field)schedFocus(schedBox(chatId),field,null);};
+  if(!k)return fail('选择任务类型','kind');
+  if(!f.id&&+lim.tasks>0&&schedLive(d.tasks)>=+lim.tasks)return fail('本群定时任务已到上限 '+(+lim.tasks)+' 个，先删掉不用的再添加');
+  if(!name)return fail('填写名称','name');
+  if(+lim.name>0&&name.length>+lim.name)return fail('名称最多 '+(+lim.name)+' 个字符，现在 '+name.length+' 个','name');
+  if(!when)return fail('填写时间(如「10:20」「07-16 10:20」「每天 09:00」)','when');
+  if(tz&&!schedTzOk(tz))return fail('时区写法认不出来，例如 Asia/Shanghai；留空用默认时区','tz');
+  if(!text)return fail(k.need,'text');
+  if(+lim.text>0&&text.length>+lim.text)return fail(k.label+'最多 '+(+lim.text)+' 个字符，现在 '+text.length+' 个','text');
+  if(v.kind==='script'&&mins&&!/^[1-9]\d*$/.test(mins))return fail('超时填正整数（分钟），或留空用默认值','timeoutMin');
+  // 一次性与循环二选一,判断方式与旧表单相同;时区:新建时留空就不带,编辑时留空发 ''(= 回到默认时区);
+  // 超时只有脚本任务才带,编辑时清空发 null。
+  const once=CRON_ONEOFF.some(re=>re.test(when));
+  const body={chatId,...(f.id?{id:f.id}:{}),name,kind:v.kind,...(once?{at:when}:{expr:when}),...(f.id||tz?{tz}:{}),text,
+    ...(v.kind==='script'&&(mins||f.id)?{timeoutMin:mins?+mins:null}:{})};
+  f.busy=true;f.err='';f.bad='';paintSched(chatId);
+  try{await api(f.id?'/api/schedules/update':'/api/schedules/add','POST',body);}
+  catch(e){
+    // 服务端若在回执里点了是哪一格(code 与表单格同名),就把那一格标出来并把焦点放过去;没有就只显示那句话
+    const code=e&&e.payload&&e.payload.code;
+    return fail((e&&e.message)||'没保存成功',typeof code==='string'&&Object.prototype.hasOwnProperty.call(v,code)?code:'');
+  }
+  if(SCHED_FORM[chatId]===f)delete SCHED_FORM[chatId];
+  toast(f.id?'已保存':once?'已创建一次性任务':'已创建定时任务','ok');
+  await loadSchedules(chatId);
+}
+async function schedToggle(chatId,id){
+  const t=schedTask(chatId,id);if(!t)return;
+  try{await api('/api/schedules/toggle','POST',{chatId,id:t.id,enabled:t.enabled===false});}
+  catch(e){toast(e.message,'err');}
+  await loadSchedules(chatId);
+}
+async function schedRemove(chatId,id){
+  const t=schedTask(chatId,id);if(!t)return;
+  if(!await askConfirm('删除定时任务「'+(t.name||t.id)+'」?'))return;
+  try{await api('/api/schedules/remove','POST',{chatId,id:t.id});
+    schedOpen.delete(chatId+'\n'+t.id);
+    if(SCHED_FORM[chatId]&&SCHED_FORM[chatId].id===String(t.id))delete SCHED_FORM[chatId];
+    toast('已删除','ok');}
+  catch(e){toast(e.message,'err');}
+  await loadSchedules(chatId);
+}
+// 复制任务全文(新旧两套定时任务行共用)。⚠ 控制台常经局域网 http 访问 = 非 secure context,navigator.clipboard 在那儿是
+// undefined ⇒ 必须留 execCommand 兜底(与 toast 那颗复制按钮同一套写法)。
+function copyCronText(b){
+  const txt=b.dataset.full||''; if(!txt)return;
+  const done=()=>{b.textContent='已复制';setTimeout(()=>b.textContent='复制全文',1200);};
+  // 兜底走临时 textarea 而不是选中正文区:正文是按行拆开渲染的,选 DOM 复制出来会走样
+  const pick=()=>{const ta=document.createElement('textarea');ta.value=txt;ta.setAttribute('style','position:fixed;top:0;left:0;opacity:0');document.body.appendChild(ta);ta.select();try{document.execCommand('copy');}catch(_){}ta.remove();done();};
+  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(txt).then(done).catch(pick);
+  else pick();
+}
 function renderGroups(){
   const groupDetailsOpen=new Set($$('#ggrid details[open]').map(d=>d.dataset.gdetails));
   const leadOpen=!!($('#groups .lead-more')||{}).open;
@@ -3021,6 +3335,8 @@ function renderGroups(){
     const pr=provOf(g), isCodex=!!pr&&pr.runner==='codex';
     // 新版服务按白名单放行:不支持的行不画(有写接口的按白名单判断,服务端放行后自动回来);旧行为对照照旧全画。
     const rt=!!S.runtimeCapabilities, rtOff=(path,method)=>rt&&!runtimeAllows(method||'POST',path), plugRo=!isCodex&&rtOff('/api/groups/plugins');
+    // 定时任务:新版服务放行 /api/schedules/add 就画新的一行(schedRowHtml,数据另取);否则照旧 —— 旧版服务画旧行,没放行的新版服务不画。
+    const schedOn=rt&&runtimeAllows('POST','/api/schedules/add');
 
     // 群属于哪个平台(服务端按配置 / id 形态算好):企微群没有画布、没有解散、基础技能文案不同;徽标只在配了企微 / Slack 时出(只配飞书的机器零变化)
     const isWe=g.platform==='wecom', isSl=g.platform==='slack', showPlat=!!(S.platforms&&(S.platforms.wecom||S.platforms.slack));
@@ -3089,10 +3405,10 @@ function renderGroups(){
               <button class="btn" data-plug="${esc(g.chatId)}"${plugRo?' data-plugro="1"':''}>${isCodex||plugRo?'查看':'配置'}</button></div>
             <div class="plugbox" data-g="${esc(g.chatId)}" style="display:none;margin-top:6px;max-height:280px;overflow-y:auto"></div>
           </div></div>
-${rtOff('/api/groups/cron/add')?'':`        <div class="kv" style="align-items:flex-start"><span class="kk">定时任务</span>
+${schedOn?schedRowHtml(g.chatId):rtOff('/api/groups/cron/add')?'':`        <div class="kv" style="align-items:flex-start"><span class="kk">定时任务</span>
           <div style="flex:1;min-width:0">
             <div class="inline" style="justify-content:space-between;gap:8px;margin-bottom:${(g.crons&&g.crons.length)?'7px':'4px'}">
-              <span class="hint">${S.runtimeCapabilities?esc(RUNTIME_UI_TEXT.cron):(g.crons&&g.crons.length)?g.crons.length+' 个 · 到点触发 agent 或发消息':'暂无 · 到点触发 agent 或发消息'}</span>
+              <span class="hint">${S.runtimeCapabilities?esc(RUNTIME_UI_TEXT.cronLegacy):(g.crons&&g.crons.length)?g.crons.length+' 个 · 到点触发 agent 或发消息':'暂无 · 到点触发 agent 或发消息'}</span>
               <button class="btn" data-cronnew="${esc(g.chatId)}">${IC.plus} 新建</button>
             </div>
             ${(g.crons&&g.crons.length)?`<div style="margin:2px 0">${g.crons.map(c=>`
@@ -3245,7 +3561,7 @@ ${rtOff('/api/groups/cron/add')?'':`        <div class="kv" style="align-items:f
       </section>
     </div>
     <details class="gmore" data-gdetails="${esc(g.chatId)}"${groupDetailsOpen.has(g.chatId)?' open':''}>
-      <summary><span>更多设置</span><span class="hint">${rt?'插件与数据输出':'插件、数据输出与项目工具'}</span></summary>
+      <summary><span>更多设置</span><span class="hint">${rt?(schedOn?'插件、数据输出与定时任务':'插件与数据输出'):'插件、数据输出与项目工具'}</span></summary>
       <div class="${rt?'gdetail-list':'gdetail-grid'}">
     ${rt?'':`<div class="kv"><span class="kk">chatId</span><span class="vv mono">${esc(g.chatId)}</span></div>
     <div class="kv"><span class="kk">workdir</span><span class="vv mono" title="${esc(g.workdir)}">${esc(g.workdir)}</span></div>`}
@@ -3283,7 +3599,8 @@ ${langRow}    ${permPlug}
   // 群卡展开 / 收起:只切类与记录,不重画(卡里可能正填着东西)
   $$('#groups [data-gfold]').forEach(b=>b.onclick=()=>{const card=b.closest('.card');if(!card)return;
     const open=card.classList.contains('gfolded');card.classList.toggle('gfolded',!open);b.setAttribute('aria-expanded',String(open));
-    setGroupCardOpen(b.dataset.gfold,open);if(open&&typeof refitAllStrips==='function')refitAllStrips();});
+    setGroupCardOpen(b.dataset.gfold,open);if(open&&typeof refitAllStrips==='function')refitAllStrips();
+    const sched=open&&card.querySelector('.schedbox');if(sched)schedShown(sched,true);});   // 卡片重新打开:定时任务再取一次
   makeSortable($('#ggrid'),{item:'.card[data-gid]',key:c=>c.dataset.gid,
     save:o=>api('/api/groups/order','POST',{order:o}).then(r=>{S=r;renderOverview();return r;})});  // 概览群行同步新顺序
   $$('#groups [data-rm]').forEach(b=>b.onclick=async()=>{const gg=S.groups.find(x=>x.chatId===b.dataset.rm);if(!await askConfirm('解除本群与项目的绑定?\n(仅移除绑定配置,群本身保留'+(gg&&gg.platform==='wecom'?')':';要解散群请去「配置群项目」面板)')))return;try{S=await api('/api/groups?chatId='+encodeURIComponent(b.dataset.rm),'DELETE');toast('已解除绑定','ok');renderAll();}catch(e){toast(e.message,'err');}});
@@ -3388,10 +3705,10 @@ ${langRow}    ${permPlug}
       toast(r.empty?'✓ 可访问 · 远端是空仓库(等首次推送)':('✓ 可访问 · '+r.branches+' 个分支'),'ok');}
     catch(e){toast(e.message,'err');}
     finally{b.disabled=false;b.textContent=old;}});
-  // 定时任务:新建(展开内联表单)/添加/开关/删除。写 groups[chatId].crons → daemon 热重载后 scheduler 生效;仅作用本群。
+  wireSchedules();   // 新版服务的定时任务行(/api/schedules*):接线并按需取数,见 schedRowHtml 一段
+  // 旧版定时任务:新建(展开内联表单)/添加/开关/删除。写 groups[chatId].crons → daemon 热重载后 scheduler 生效;仅作用本群。
   $$('#groups [data-cronnew]').forEach(b=>b.onclick=()=>{const f=b.closest('.kv').querySelector('.cronform');if(!f)return;const show=f.style.display==='none';f.style.display=show?'block':'none';if(show)f.querySelector('.cronexpr').focus();});
-  // 一次性简写(与后端 expandAt 对齐):只填 10:20 / 07-16 10:20 / 完整日期 / 中文月日 → 走 at;否则当循环 cron。
-  const CRON_ONEOFF=[/^\d{1,2}:\d{2}$/,/^\d{1,2}-\d{1,2}[ T]\d{1,2}:\d{2}$/,/^\d{4}-\d{1,2}-\d{1,2}[ T]\d{1,2}:\d{2}$/,/^\d{1,2}月\d{1,2}日\s*\d{1,2}:\d{2}$/,/^\d{4}年\d{1,2}月\d{1,2}日\s*\d{1,2}:\d{2}$/];
+  // 一次性简写(与后端 expandAt 对齐):只填 10:20 / 07-16 10:20 / 完整日期 / 中文月日 → 走 at;否则当循环 cron。写法表 CRON_ONEOFF 在上面,新旧两套表单共用。
   $$('#groups [data-cronadd]').forEach(b=>b.onclick=async()=>{const f=b.closest('.cronform');const val=f.querySelector('.cronexpr').value.trim(),kind=f.querySelector('.cronkind').value,text=f.querySelector('.crontext').value.trim();if(!val){toast('填写时间(如「10:20」「07-16 10:20」「每天 09:00」)','err');return;}if(!text){toast(kind==='do'?'填写到点让 agent 做的事':kind==='run'?'填写要跑的命令':'填写要发送的消息','err');return;}const isDate=CRON_ONEOFF.some(re=>re.test(val));const body=isDate?{chatId:b.dataset.cronadd,at:val,kind,text}:{chatId:b.dataset.cronadd,expr:val,kind,text};try{S=await api('/api/groups/cron/add','POST',body);renderGroups();toast(isDate?'已创建一次性任务':'已创建定时任务','ok');}catch(e){toast(e.message,'err');}});
   $$('#groups [data-crontgl]').forEach(b=>b.onclick=async()=>{try{S=await api('/api/groups/cron/toggle','POST',{chatId:b.dataset.g,id:b.dataset.crontgl,enabled:b.dataset.en==='1'});renderGroups();}catch(e){toast(e.message,'err');}});
   $$('#groups [data-cronrm]').forEach(b=>b.onclick=async()=>{if(!await askConfirm('删除该定时任务?'))return;try{S=await api('/api/groups/cron/remove','POST',{chatId:b.dataset.g,id:b.dataset.cronrm});cronOpen.delete(b.dataset.cronrm);renderGroups();toast('已删除','ok');}catch(e){toast(e.message,'err');}});
@@ -3403,17 +3720,8 @@ ${langRow}    ${permPlug}
     b.style.display=open?'block':'none'; r.classList.toggle('open',open);
     if(open)cronOpen.add(r.dataset.cronx); else cronOpen.delete(r.dataset.cronx);
   });
-  // 复制全文。⚠ 控制台常经局域网 http 访问 = 非 secure context,navigator.clipboard 在那儿是
-  // undefined ⇒ 必须留 execCommand 兜底(与 toast 那颗复制按钮同一套写法)。
-  $$('#groups .ccopy').forEach(b=>b.onclick=(e)=>{
-    e.stopPropagation();
-    const txt=b.dataset.full||''; if(!txt)return;
-    const done=()=>{b.textContent='已复制';setTimeout(()=>b.textContent='复制全文',1200);};
-    // 兜底走临时 textarea 而不是选中正文区:正文是按行拆开渲染的,选 DOM 复制出来会走样
-    const pick=()=>{const ta=document.createElement('textarea');ta.value=txt;ta.setAttribute('style','position:fixed;top:0;left:0;opacity:0');document.body.appendChild(ta);ta.select();try{document.execCommand('copy');}catch(_){}ta.remove();done();};
-    if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(txt).then(done).catch(pick);
-    else pick();
-  });
+  // 复制全文(实现在 copyCronText,新旧两套行共用)。
+  $$('#groups .ccopy').forEach(b=>b.onclick=(e)=>{e.stopPropagation();copyCronText(b);});
   // 执行模式段控(两后端统一,替代原 codex-only toggle + Claude select):受限 ⇄ 完全访问,
   // 映射 dontAsk('' 清覆盖)/ bypassPermissions。点当前态不动作;完全访问需二次确认(文案后端无关)。
   $$('#groups .gseg').forEach(b=>b.onclick=async()=>{
@@ -5398,8 +5706,9 @@ const I18N_EN=[
   ["已在封存，服务正在重启", "Already sealing; the service is restarting"],
   ["只有后台托管运行时才能在这里封存；请停止服务后按使用指南在终端处理", "Sealing here needs the background service; stop the service and follow the usage guide in a terminal"],
   ["可绑定新群，修改后端、型号、思考深度、项目目录、权限、数据输出和忙时跟进；该群须没有进行中的任务和未结记录。换后端或项目会开始新的一段对话，换型号或调深度接着当前对话。停止任务和开新会话在「概览」，开新会话须等该群空闲。群里发 /model 也能改。", "Bind new groups and change the backend, model, thinking depth, project folder, permissions, data display and busy-turn followups of a group with no running task or unsettled record. Changing the backend or project starts a new conversation; changing the model or depth continues it. Stop tasks and start new sessions in Overview; a new session needs the group to be idle. Members can also change these with /model in the group."],
-  ["当前支持飞书文字消息、忙时跟进、任务回复和停止。定时任务、生图、群消息管理、画布与预览暂未接入。", "Feishu text messages, busy-turn followups, task replies and stopping are supported. Schedules, image generation, group message management, canvas and previews are unavailable."],
-  ["当前不执行定时任务；已有定义仅供查看。", "Schedules are not executed. Existing definitions are shown for reference only."],
+  ["当前支持飞书文字消息、忙时跟进、任务回复和停止；服务开放定时任务后，在本卡「定时任务」一行创建和管理。生图、群消息管理、画布与预览暂未接入。", "Feishu text messages, busy-turn followups, task replies and stopping are supported; once the service offers scheduled tasks, create and manage them in the \"Scheduled tasks\" row of this card. Image generation, group message management, canvas and previews are unavailable."],
+  ["到点让模型处理任务、直接运行命令或发消息。在这里创建、修改、暂停和删除；这一版还不能在群里让模型创建定时任务。", "When due, hand a task to the model, run a command directly, or send a message. Create, edit, pause and delete them here; in this version the model cannot create scheduled tasks from the chat yet."],
+  ["这些是旧版定时任务定义，当前服务不执行，仅供查看。", "These are scheduled task definitions from the earlier version. This service does not run them; they are shown for reference only."],
   ["画布创建、同步与反馈暂未接入；已有链接仅供查看。", "Canvas creation, sync and feedback are unavailable. Existing links are view-only."],
   ["只有本群任务结束并完成结账后才能暂停；暂停后不接收本群新消息，配置与会话保留。", "Pause is available only after this group's tasks and receipts are settled. Paused groups receive no new messages; configuration and sessions are retained."],
   ["已暂停：不接收本群新消息，配置与会话保留。", "Paused: no new group messages are accepted; configuration and sessions are retained."],
@@ -5515,6 +5824,8 @@ const I18N_EN=[
   ["插件、数据输出与项目工具","Plugins, data output and project tools"],
   ["插件与数据输出","Plugins and data output"],
   ["忙时跟进","Busy follow-up"],
+  ["后续消息加入当前处理","Add follow-up messages to the current task"],
+  ["开启后，处理任务期间：群成员的后续消息、控制台勾了「回复」的插话，都会加入当前任务 —— 相关要求及时吸收，独立请求按先后回应。定时任务和不回复的插话仍排在后面。","When on, follow-up messages from group members and console messages with Reply checked join the task in progress: related requests are taken in right away, separate ones are answered in order. Schedules and console messages without Reply still wait their turn."],
   ["目录缺失","Folder missing"],
   ["项目目录不存在:群里的任务会失败,去「配置群项目」改目录","The project folder does not exist: tasks in this group will fail. Change it in Configure groups."],
   ["编辑白名单","Edit allowlist"],
@@ -6033,9 +6344,118 @@ const I18N_EN=[
   ["填写要发送的消息","Enter the message to send"],
   ["填写要跑的命令","Enter the command to run"],
   ["已创建一次性任务","One-off task created"],
+  // 定时任务接口(/api/schedules*)会返回的全部拒绝句:服务端 src/scheduleservice.js 的 SAY 表与时间解析器的报错。
+  // 有测试逐句核对(tests/unit/console-schedules.test.js 取服务端的 refusalSamples()),服务端加一句这里就得跟一句。
+  ["当前运行方式未接入定时任务","Scheduled tasks are not available in this run mode"],
+  ["定时任务当前不可用：任务数据无法读取或写入，已停止触发（详见服务日志）","Scheduled tasks are unavailable: the task data cannot be read or written, so nothing fires (see the service log)"],
+  ["定时任务当前不可用：决策核心没有给出答复，已停止触发（详见服务日志）","Scheduled tasks are unavailable: the decision core did not answer, so nothing fires (see the service log)"],
+  ["企业微信会话暂不支持定时任务：企业微信的主动推送需要会话里先有人 @ 过机器人，也不返回可核对的消息编号","Scheduled tasks are not supported in WeCom conversations yet: WeCom only lets the bot post after someone has @-mentioned it there, and returns no message ID to check against"],
+  ["这个会话所在的平台暂不支持定时任务","Scheduled tasks are not supported on this conversation's platform yet"],
+  ["没有这个群项目","No such conversation"],
+  ["没有这个定时任务","No such scheduled task"],
+  ["任务名称必填","A task name is required"],
+  ["任务名称不能换行","A task name must be a single line"],
+  ["任务类型须为 model（交给模型处理）、script（运行命令）或 say（只发一句）","The task type must be model (handed to the model), script (runs a command) or say (posts one message)"],
+  ["任务内容必填","The task text is required"],
+  ["命令必填","A command is required"],
+  ["消息文本必填","The message text is required"],
+  ["定时任务不执行斜杠命令，请直接写要做的事","A scheduled task does not run slash commands; write what should be done instead"],
+  ["时区无法识别（示例：Asia/Shanghai、America/New_York）","Unknown time zone (examples: Asia/Shanghai, America/New_York)"],
+  ["循环时间（expr）与一次性时间（at）只能填一个","Give either a recurring time (expr) or a one-off time (at), not both"],
+  ["请填写循环时间（expr）或一次性时间（at）","Give a recurring time (expr) or a one-off time (at)"],
+  ["一次性时间无效","The one-off time is not valid"],
+  ["cron 表达式无效","The cron expression is not valid"],
+  ["cron 表达式为空","The cron expression is empty"],
+  ["这个时间在该时区不存在（日期无效或正逢夏令时拨快），请换一个时间","That time does not exist in this time zone (an invalid date, or clocks go forward then); pick another time"],
+  ["一次性时间已经过去","The one-off time has already passed"],
+  ["这个时间表达式不会到点（例如 2 月 31 日），请检查","This expression never comes due (for example February 31); please check it"],
+  ["enabled 须为布尔值","enabled must be true or false"],
+  ["这个一次性任务的时间已经过去，请先修改时间","This one-off task's time has passed; change the time first"],
+  ["定时任务总数已达上限","The total number of scheduled tasks has reached its limit"],
+  ["定时任务没有保存：任务数据当前无法写入（详见服务日志）","The scheduled task was not saved: the task data cannot be written right now (see the service log)"],
+  ["一次性时间格式应为 YYYY-MM-DD HH:mm(如 2026-07-16 13:10)","A one-off time is written YYYY-MM-DD HH:mm (for example 2026-07-16 13:10)"],
   ["已创建定时任务","Scheduled task created"],
   ["删除该定时任务?","Delete this scheduled task?"],
   ["已删除","Deleted"],
+  // 群卡 · 定时任务(新版服务,/api/schedules*):名称、正文、表达式、时区、时间都标了 data-i18n-skip,不在这里
+  ["插件、数据输出与定时任务","Plugins, data output and scheduled tasks"],
+  ["暂无任务","No tasks yet"],
+  ["到点让模型处理任务、直接运行命令或发消息","when due: hand a task to the model, run a command directly, or send a message"],
+  ["这台服务暂不支持定时任务。","This service does not support scheduled tasks yet."],
+  ["暂时读不到定时任务","Can't load scheduled tasks right now"],
+  ["返回的内容认不出来","the response could not be read"],
+  ["原因不明","unknown reason"],
+  ["重试","Retry"],
+  ["刷新没成功，显示的是上一次读到的内容","The refresh failed; this is what was loaded last time"],
+  ["已启用，点击暂停","Enabled, click to pause"],
+  ["已暂停，点击恢复","Paused, click to resume"],
+  ["脚本 · 不经模型","Script · no model"],
+  ["消息","Message"],
+  ["模型任务","Model task"],
+  ["脚本任务","Script task"],
+  ["模型任务（交给模型处理）","Model task (handled by the model)"],
+  ["脚本任务（直接运行命令，不经模型）","Script task (runs a command directly, no model)"],
+  ["消息（原样发到群里）","Message (sent to the group as written)"],
+  ["到点把任务内容交给本群的模型处理","Hands the task to this group's model when due"],
+  ["到点直接运行这条命令，不经过模型","Runs this command directly when due, without the model"],
+  ["到点把这段文字原样发到群里","Sends this text to the group as written when due"],
+  ["只运行一次","Runs only once"],
+  ["编辑","Edit"],
+  ["下次","Next"],
+  ["上次","Last"],
+  ["结果不明","Result unknown"],
+  ["已跳过","Skipped"],
+  ["漏触发（服务未运行或迟到）","Missed (the service was not running or was late)"],
+  ["群已暂停","Group paused"],
+  ["群挂起中","Group on hold"],
+  ["排队已满","Queue full"],
+  ["上一次还在运行","The previous run was still going"],
+  ["消息没发出去","The message could not be sent"],
+  ["发送结果不明","Send result unknown"],
+  ["发出后没能进入处理","Sent, but it could not be taken up"],
+  ["平台没有返回可用的消息标识","The platform returned no usable message id"],
+  ["没有可用的平台连接","No platform connection available"],
+  ["结果未确认","Result not confirmed"],
+  ["进入处理时出错","Failed while being taken up"],
+  ["服务中断，结果不明","Service interrupted; result unknown"],
+  ["命令退出码非 0","The command exited with a non-zero code"],
+  ["命令被信号终止","The command was ended by a signal"],
+  ["运行超时","Timed out"],
+  ["命令没能启动","The command could not start"],
+  ["服务未就绪","Service not ready"],
+  ["正在停止","Stopping"],
+  ["时区","Time zone"],
+  ["（默认）"," (default)"],
+  ["超时","Timeout"],
+  ["分钟","min"],
+  ["创建于","Created"],
+  ["更新于","Updated"],
+  ["上次运行","Last run"],
+  ["计划时间","Scheduled for"],
+  ["记录于","Recorded"],
+  ["新建定时任务","New scheduled task"],
+  ["编辑定时任务","Edit scheduled task"],
+  ["如：每日构建报告","e.g. Daily build report"],
+  ["类型","Type"],
+  ["运行时间","Schedule"],
+  ["时区（可留空）","Time zone (optional)"],
+  ["超时（分钟）","Timeout (minutes)"],
+  ["任务内容","Task"],
+  ["命令","Command"],
+  ["消息内容","Message text"],
+  ["到点让模型做的事","What the model should do when due"],
+  ["到点直接运行的命令","The command to run when due"],
+  ["到点发到群里的文字","The text to send to the group when due"],
+  ["模型任务：到点把任务内容交给本群的模型处理。","Model task: when due, the task is handed to this group's model."],
+  ["脚本任务：到点直接运行这条命令，不经过模型 —— 模型不会看到这条命令，也不会替你判断结果。超时留空用默认值。","Script task: when due, this command runs directly, without the model — the model never sees the command and does not judge the result for you. Leave the timeout empty for the default."],
+  ["消息：到点把这段文字原样发到群里，不经过模型。","Message: when due, this text is sent to the group as written, without the model."],
+  ["一次性写完整时间，如 2026-07-16 13:10；循环写「每天 09:00」「工作日 8:30」或 cron 五段。时间按所填时区，留空用默认时区。","One-off: the full time, e.g. 2026-07-16 13:10. Recurring: 每天 09:00 (daily), 工作日 8:30 (weekdays) or a five-field cron expression. Times use the time zone you enter; empty means the default zone."],
+  ["选择任务类型","Choose a task type"],
+  ["填写名称","Enter a name"],
+  ["填写任务内容","Enter the task"],
+  ["时区写法认不出来，例如 Asia/Shanghai；留空用默认时区","Unrecognized time zone. Use a name like Asia/Shanghai, or leave it empty for the default zone"],
+  ["超时填正整数（分钟），或留空用默认值","Timeout must be a whole number of minutes, or empty for the default"],
+  ["没保存成功","Could not save"],
   ["仓库","Repository"],
   ["仓库 缺失","Repository missing"],
   ["仓库 不一致","Repository mismatch"],
@@ -6771,7 +7191,7 @@ const I18N_EN_RX=[
   // 健康 · 平台凭据:上次预检失败的原因是服务端给的,能翻的照翻
   // 原因是预检那一行的「检查项:说明」(src/core/verify.js recordPrecheck),两半各自查词典
   [/^上次预检失败:([\s\S]+) — 去「设置」页改凭据后再预检$/,(a,why)=>"Last pre-check failed: "+why.replace(/^([^:]+):([\s\S]*)$/,(x,l,d)=>trText(l)+": "+trText(d))+" — fix the credentials on the Settings tab and check again"],
-  // 群卡 · 定时任务的周期说明(服务端 src/core/cron.js describeCron / describeAt 的全部句式)
+  // 群卡 · 定时任务的周期说明(服务端 src/scheduleexpr.js describeCron / describeAt 的全部句式)
   [/^每 (\d+) 分钟$/,"Every $1 minutes"],
   [/^每天 (\d{1,2}:\d{2})$/,"Daily $1"],
   [/^工作日 (\d{1,2}:\d{2})$/,"Weekdays $1"],
@@ -6781,6 +7201,26 @@ const I18N_EN_RX=[
   [/^每年 (\d+) 月 (\d+) 日 (\d{1,2}:\d{2})$/,(a,m,d,t)=>"Yearly on "+["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][m-1]+" "+d+", "+t],
   [/^(\d{1,2})月(\d{1,2})日 (\d{1,2}:\d{2})$/,(a,m,d,t)=>["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][m-1]+" "+d+", "+t],
   [/^(\d{4})年(\d{1,2})月(\d{1,2})日 (\d{1,2}:\d{2})$/,(a,y,m,d,t)=>["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][m-1]+" "+d+", "+y+", "+t],
+  // 群卡 · 定时任务(新版服务)里带数字 / 名称的几句
+  [/^1 个任务$/,"1 task"],
+  [/^(\d+) 个任务$/,"$1 tasks"],
+  [/^已到上限 (\d+) 个$/,"Limit of $1 reached"],
+  [/^本群定时任务已到上限 (\d+) 个，先删掉不用的再添加$/,"This group already has the maximum of $1 scheduled tasks; delete one you no longer need first"],
+  [/^(名称|任务内容|命令|消息内容)最多 (\d+) 个字符，现在 (\d+) 个$/,(a,what,max,now)=>({名称:"Name",任务内容:"Task",命令:"Command",消息内容:"Message text"}[what])+": at most "+max+" characters, currently "+now],
+  [/^删除定时任务「([\s\S]+)」\?$/,"Delete scheduled task \"$1\"?"],
+  // 定时任务接口(/api/schedules*)拒绝句里带数字 / 用户输入的那几句(整句的在上面 I18N_EN 里;两处合起来是服务端 refusalSamples() 的全部)
+  [/^任务名称过长（(\d+) 字，上限 (\d+)）$/,"The task name is too long ($1 characters, limit $2)"],
+  [/^内容过长（(\d+) 字，上限 (\d+)）$/,"The text is too long ($1 characters, limit $2)"],
+  [/^分钟字段「([\s\S]+)」的步长超出范围：分钟只有 0–59，这样写每小时只在起始那一分钟触发一次；步长请用 1–59$/,"The step in the minute field \"$1\" is out of range: minutes run 0–59, so this fires only once an hour, at the starting minute; use a step of 1–59"],
+  [/^小时字段「([\s\S]+)」的步长超出范围：小时只有 0–23，这样写每天只在起始那个小时触发；步长请用 1–23$/,"The step in the hour field \"$1\" is out of range: hours run 0–23, so this fires only in the starting hour each day; use a step of 1–23"],
+  [/^超时须为 1–(\d+) 的整数（分钟）$/,"The timeout must be a whole number from 1 to $1 (minutes)"],
+  [/^每个会话最多 (\d+) 个定时任务，请先删除不用的$/,"A conversation can have at most $1 scheduled tasks; delete one you no longer need first"],
+  [/^cron 需要 5 段\(分 时 日 月 周\),或 @别名\/中文简写\(如「每天 09:00」\),得到:([\s\S]*)$/,"A cron expression has 5 fields (minute hour day month weekday), or is an @alias or a shorthand such as \"每天 09:00\"; got: $1"],
+  [/^cron 字段越界\/非法:([\s\S]*)$/,"Cron field out of range or not valid: $1"],
+  [/^cron 字段无法解析:([\s\S]*)$/,"Cron field cannot be read: $1"],
+  [/^时间无法识别:([\s\S]*)\(可填 10:20 \/ 07-16 10:20 \/ 2026-07-16 10:20\)$/,"Time not recognized: $1 (use 10:20, 07-16 10:20 or 2026-07-16 10:20)"],
+  [/^时间越界:([\s\S]*)$/,"Time out of range: $1"],
+  [/^一次性时间越界:([\s\S]*)$/,"One-off time out of range: $1"],
   // 企业微信卡 · 摘要行与身份连接条里的动态片段
   [/^门控 (.+)$/,"Gate: $1"],
   [/^最近回包 (\d+) 秒前$/,"Last ack $1 s ago"],
@@ -7137,6 +7577,7 @@ function setLang(l){
   for(const a of document.querySelectorAll('#feishuCard a[data-guide]'))a.href=guideBase()+a.dataset.guide;
   document.title=l==='zh'?I18N_TITLE_ZH:trText(I18N_TITLE_ZH);
   applyI18n(document.body);updateLangBtn();
+  if(S&&$('#groups .schedbox'))paintAllSched();   // 定时任务的时间说法按语言二选一(中文说法 / 原始表达式),不经词典 ⇒ 换语言重画那几格
   if($('#verhistBox'))loadChangelog();   // 版本历史正文来自数据文件、不经词典 ⇒ 换语言得重画那张卡
 }
 $('#langBtn').onclick=()=>setLang(langOf()==='zh'?'en':'zh');

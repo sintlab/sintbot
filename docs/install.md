@@ -1,4 +1,4 @@
-# Install SintBot 1.4.28
+# Install SintBot 1.4.29
 
 English · [简体中文](./zh-CN/install.md)
 
@@ -6,9 +6,9 @@ You need a Mac, Node.js 22 or newer, and projects stored on that Mac. Install an
 
 ## Desktop app
 
-On an Apple silicon Mac, [download SintBot for macOS](https://github.com/sintlab/sintbot-desktop/releases/latest), drag it to Applications and open it. Node.js is included. Choose a project and executor, then start locally, scan with Feishu, or scan with WeCom to create a bot. Closing the window or quitting the app keeps the service running; Stop holds across logins until you choose Start. Remove Background Service preserves configuration and history.
+On an Apple silicon Mac, [download SintBot for macOS](https://github.com/sintlab/sintbot-desktop/releases/latest), drag it to Applications and open it. Node.js is included. Choose a project and executor, then connect Slack, scan with Feishu, scan with WeCom to create a bot, or start locally. Closing the window or quitting the app keeps the service running; Stop holds across logins until you choose Start. Remove Background Service preserves configuration and history.
 
-For Slack, follow the [Slack connection and usage guide](./platforms/slack.md); the desktop app adds Slack once it bundles 1.4.24. For WeCom, follow the separate [connection and usage guide](./platforms/wecom.md).
+For Slack, follow the [Slack connection and usage guide](./platforms/slack.md). For WeCom, follow the separate [connection and usage guide](./platforms/wecom.md).
 
 ## 1. Install with one command
 
@@ -16,7 +16,7 @@ For Slack, follow the [Slack connection and usage guide](./platforms/slack.md); 
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-The installer checks the environment, installs `sintbot@1.4.28` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.28`. No sudo is needed.
+The installer checks the environment, installs `sintbot@1.4.29` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.29`. No sudo is needed.
 
 To preview, append `-s -- --dry-run`. To choose another location, set `SINTBOT_INSTALL_DIR` and adjust the executable paths below.
 
@@ -212,6 +212,22 @@ Settings → Software updates checks for new releases. In the foreground setup a
 If an installation fails, retry uses a fresh directory and preserves the failed attempt for diagnosis. It switches only after verification.
 
 You can also add a group without the console: add it to the configuration, stop the service and run `start` again; the new group is registered automatically. Bound groups cannot be removed or renamed by editing the configuration.
+
+### Scheduled tasks
+
+A conversation can have scheduled tasks; they are managed from the console. A task has a name, a time and one of three kinds:
+
+- **Model.** At the time, one line marked `[Scheduled]` (`【定时】` in a Chinese conversation) with the task's name and the beginning of its text is posted in the conversation. The text is then handled like a message someone sent there: it waits its turn when the conversation is busy, and the answer appears under that line. This turn takes no follow-ups and runs at standard speed.
+- **Message.** The text is posted, nothing else.
+- **Script.** A command runs in the conversation's project folder, outside the conversation and with the service's own permissions, not the conversation's access mode. Nothing is said when it succeeds; one line is posted when it fails or runs past its time limit (15 minutes unless the task sets another).
+
+The time is a five-field cron expression, an alias such as `@daily`, a shorthand such as `每天 09:00`, or one date and time for a task that runs once (`YYYY-MM-DD HH:mm`). It is read in the product time zone (`timezone` in the configuration, Asia/Shanghai by default) unless the task has its own.
+
+- **At most once.** Each due time is written to a run record before anything is posted or started, and it never fires twice. A post or a run whose result is unknown, for example because the service stopped at that moment, is shown as unknown and is not repeated.
+- **Missed runs are not made up for.** If the service was not running at the time, or reaches it more than two minutes late, that run is shown as missed. A run is also skipped, and shown as such, while its conversation is paused or the service is upgrading; a Model task is skipped too while the conversation is held for a person or already has two messages waiting.
+- **Clock changes.** When clocks go back, a time that occurs twice fires once. When they go forward, a time that does not exist that day does not fire.
+- **Where it is kept.** Tasks and the run record are in `schedules/` in the data directory, not in the configuration file. If these files cannot be read, scheduled tasks stay off and everything else keeps working; the service log says why.
+- **Limits.** 20 tasks per conversation; a name up to 60 characters; text up to 4,000 characters. WeCom conversations do not have scheduled tasks yet.
 
 ## Stop and restart
 

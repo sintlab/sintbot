@@ -157,7 +157,7 @@ body{
 }
 #playground{max-width:880px}
 #playground[data-lc]{max-width:none}
-/* 页头右端的插槽(#pSlot):页级主操作(配置群项目 / 添加模型,每页至多一个实心按钮)与概览的「运行 / 排队」读数。
+/* 页头右端的插槽(#pSlot):页级主操作(添加群项目 / 添加模型,描边轻按钮,见下方 .pact)与概览的「运行 / 排队」读数。
    各页的渲染函数照旧生成自己的 .pact,渲染完由 mountPageActions 挪进插槽;插槽里每样东西带 data-for=页 id,
    只显示当前页的那一份(与页标题同一个 :has 判据,切页的几处脚本不用多管一处)。 */
 .pslot{flex:none;display:flex;align-items:center;gap:8px;margin-left:auto;min-width:0}
@@ -165,14 +165,27 @@ body{
 .main:has(#overview.on) .pslot>[data-for="overview"],.main:has(#groups.on) .pslot>[data-for="groups"],
 .main:has(#providers.on) .pslot>[data-for="providers"],.main:has(#settings.on) .pslot>[data-for="settings"],
 .main:has(#playground.on) .pslot>[data-for="playground"]{display:flex}
-.pact{display:flex;align-items:center;gap:8px}
-.pact .btn{height:var(--h-md);padding:0 14px;font-size:13px}
+.pact{display:flex;align-items:center;gap:6px}
+.pact .btn{height:30px;padding:0 12px;font-size:12.5px}
+/* 页级主操作是描边轻按钮:透明底 + 细描边,铜色「＋」,悬停时描边与淡底转铜色。
+   不用实心块:深色下的纸白块、浅色下的石墨块都比页标题还抢眼(用户 11-20)。 */
+.pact .btn.primary{padding:0 12px 0 10px;border-radius:8px;background:transparent;border-color:var(--line-hi);color:var(--ink);font-weight:500;letter-spacing:.01em}
+.pact .btn.primary .ic{width:14px;height:14px;color:var(--ember)}
+.pact .btn.primary:hover{background:rgba(var(--ember-rgb),.07);border-color:rgba(var(--ember-rgb),.5);color:var(--ink)}
+/* 空状态的「添加」虚线卡:列表还空着时代替一行灰字,作为这一页的主入口;有内容后不出现,入口仍是页头按钮。 */
+.add-tile{grid-column:1/-1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:168px;padding:24px;
+  border:1px dashed var(--line-hi);border-radius:var(--r);background:transparent;color:var(--muted);font:400 12px/1.5 var(--sans);text-align:center;cursor:pointer;transition:var(--tr-ui)}
+.add-tile .pl{width:32px;height:32px;margin-bottom:4px;border-radius:50%;display:grid;place-items:center;background:rgba(var(--ember-rgb),.12);color:var(--ember);transition:var(--tr-ui)}
+.add-tile .pl .ic{width:16px;height:16px}
+.add-tile b{font-size:13px;font-weight:500;color:var(--ink)}
+.add-tile:hover{border-color:rgba(var(--ember-rgb),.5);background:rgba(var(--ember-rgb),.04)}
+.add-tile:hover .pl{background:rgba(var(--ember-rgb),.2)}
 
 /* 品牌字标:系统黑体,不再带走线装饰(<i class="trace"> 留在标记里只是占位,不显示) */
 .mark{flex:none;display:flex;align-items:center;gap:8px;height:28px;padding:0 8px;margin-bottom:12px;font-size:15px;font-weight:600;letter-spacing:-.01em}
 .mark .word{white-space:nowrap}
 .mark .word .trace{display:none}
-.mark .ver{font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:0;line-height:18px;height:18px;padding:0 6px;border-radius:999px;
+.mark .ver{appearance:none;border:0;margin:0;cursor:pointer;font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:0;line-height:18px;height:18px;padding:0 6px;border-radius:999px;
   color:var(--dim);background:var(--hover);white-space:nowrap;text-decoration:none;transition:var(--tr-ui)}
 .mark .ver:hover{color:var(--ink);background:var(--sel)}
 .mark .ver:empty{display:none}
@@ -507,7 +520,7 @@ button.btn,a.btn{appearance:none;display:inline-flex;align-items:center;justify-
   font:500 12px/1 var(--sans);text-decoration:none;white-space:nowrap;flex-shrink:0;cursor:pointer;transition:var(--tr-ui)}
 button.btn:hover,a.btn:hover{background:var(--hover);border-color:var(--line-hi)}
 :root[data-theme="light"] button.btn:not(.primary):not(.ghost):hover,:root[data-theme="light"] a.btn:not(.primary):hover{background:var(--bg)}
-/* 实心主按钮每页至多一个(页头的页级操作),另加弹窗页脚的确认。卡片里的「保存」类是铜色软底:
+/* 实心主按钮只用在弹窗页脚的确认(页头的页级操作改为描边轻按钮,见 .pact)。卡片里的「保存」类是铜色软底:
    读得出是这张卡的主动作,又不会让一页里站着五六个实心块。 */
 button.btn.primary,a.btn.primary{background:var(--primary-bg);border-color:transparent;color:var(--primary-ink);font-weight:600}
 button.btn.primary:hover,a.btn.primary:hover{background:var(--primary-hover);border-color:transparent;color:var(--primary-ink)}
@@ -942,9 +955,15 @@ button.btn.nsmini{height:20px;padding:0 8px;font-size:11px;vertical-align:1px}
 .hcard.pfold .pfold-body{padding:12px 16px 14px;border-top:1px solid var(--line)}
 .hcard.pfold.folded .pfold-body{display:none}
 .hcard.pfold .pfold-body>.kv:first-child{border-top:0}
-/* 设置页「界面」卡的语言选择(1.4.30):照官网页脚的 language-picker 做 —— 图标 · 当前语言名 · 箭头,点开两项各用本语言书写、当前项打 ✓,
+/* 「通用设置」卡:折叠头带齿轮图标;正文按段落排,细线隔开,段标题沿用 .fx-sub */
+#generalCard .hfold .lbl .ic{flex:none;width:16px;height:16px;margin-right:8px;color:var(--faint)}
+#generalCard .pfold-body{padding-top:4px;padding-bottom:4px}
+#generalCard .gsec{padding:16px 0;border-top:1px solid var(--line)}
+#generalCard .gsec:first-child{border-top:0;padding-top:10px}
+#generalCard .gsec>.fx-sub:first-child{margin:0 0 12px}
+/* 设置页「通用设置」卡里的界面语言(1.4.30 从侧栏移进设置页,11-20 并入「通用设置」):照官网页脚的 language-picker 做 —— 图标 · 当前语言名 · 箭头,点开两项各用本语言书写、当前项打 ✓,
    点击区 44px;颜色换成控制台的变量。卡在页顶,选项往下展开(官网在页脚,往上展开),箭头跟着朝下 */
-#uiCard .lang-row{padding:0}
+#generalCard .lang-row{padding:0}
 .lang-pick{position:relative;flex:none;margin-right:-10px;font-size:13px;color:var(--dim)}
 .lang-pick>summary{display:flex;align-items:center;gap:9px;min-height:44px;padding:0 10px;list-style:none;cursor:pointer;border-radius:var(--r-ctl);transition:var(--tr-ui)}
 .lang-pick>summary::-webkit-details-marker{display:none}
@@ -1146,7 +1165,7 @@ d.dataset.themePref=p;d.dataset.theme=t;if(l!=='en'&&l!=='zh')l=/^zh/i.test((nav
   <aside class="side">
     <!-- 品牌字标不进翻译层(data-i18n-skip):「Sint」「Bot」是两个文本节点,英文界面下翻译层会把恰好等于某条译文的
          英文反查回中文(i18nZhOrig),「机器人 → Bot」一加,切回中文时左上角就成了「Sint机器人」(10-24 发版前撞到)。 -->
-    <div class="mark"><a class="word" href="https://sintbot.com" target="_blank" rel="noopener" title="SintBot 官网" style="color:inherit;text-decoration:none"><span data-i18n-skip>Sint<i class="trace" aria-hidden="true"></i>Bot</span></a><a class="ver" href="https://sintbot.com/changelog/" target="_blank" rel="noopener" title="查看版本历史">__SBOT_VERSION__</a><button class="ver-update" id="topUpdateBadge" type="button" hidden title="发现新版本，打开软件更新" aria-label="发现新版本，打开软件更新"><span class="update-dot" aria-hidden="true"></span></button></div>
+    <div class="mark"><a class="word" href="https://sintbot.com" target="_blank" rel="noopener" title="SintBot 官网" style="color:inherit;text-decoration:none"><span data-i18n-skip>Sint<i class="trace" aria-hidden="true"></i>Bot</span></a><button type="button" class="ver" id="verBadge" title="打开软件更新">__SBOT_VERSION__</button><button class="ver-update" id="topUpdateBadge" type="button" hidden title="发现新版本，打开软件更新" aria-label="发现新版本，打开软件更新"><span class="update-dot" aria-hidden="true"></span></button></div>
     <nav>
       <button data-tab="overview" class="active"><svg class="ic" aria-hidden="true"><use href="#lu-dashboard"/></svg><span>概览</span></button>
       <button data-tab="groups"><svg class="ic" aria-hidden="true"><use href="#lu-chats"/></svg><span>群 · 项目</span></button>
@@ -1994,12 +2013,12 @@ function renderProviders(){
   const provLead=runtimeAllows('POST','/api/providers/add')?RUNTIME_UI_TEXT.providers:RUNTIME_UI_TEXT.providersView;
   const provLeadOpen=!!($('#providers .lead-more')||{}).open;
   const toggle=extra?`<button class="btn ghost" id="showAll">${showAll?'只看已配置':`显示全部 (${extra})`}</button>`:'';
-  $('#providers').innerHTML=`<div class="pact">${toggle}<button class="btn primary" id="addModel">${IC.plus} 添加模型</button></div>
+  $('#providers').innerHTML=`<div class="pact">${toggle}<button class="btn primary" id="addModel">${IC.plus}添加模型</button></div>
     ${S.runtimeCapabilities?(provLead===RUNTIME_UI_TEXT.providers
       ?`<details class="lead-more"${provLeadOpen?' open':''}><summary><span>在这里管理模型的端点、密钥与登录状态；型号与思考深度按群在「群·项目」里选。</span><span class="lnk2">了解更多</span></summary><div class="hint">${esc(provLead)}</div></details>`
       :`<div class="hint lead">${esc(provLead)}</div>`)
       :`<div class="hint lead">管理模型 · 拖 ${IC.grip} 排序 · ${IC.settings} 配端点/key/压缩 · 型号与思考深度按群在「群·项目」选</div>`}
-    <div class="grid cols2 stagger" id="pgrid">${cards}</div>
+    <div class="grid cols2 stagger" id="pgrid">${cards||`<button type="button" class="add-tile" id="addModelTile"><span class="pl">${IC.plus}</span><b>添加模型</b><span>Claude 或 Codex 订阅，或填一个 API Key</span></button>`}</div>
     <h2 class="sec">插件库 · MCP</h2>
     <div class="hint lead">本机装好的 MCP · 按运行时分两套 · 命令行安装、即时刷新</div>
     <div id="plugLib"><span class="spin"></span></div>
@@ -2036,6 +2055,7 @@ function renderProviders(){
   $('#styleNew').onclick=()=>openStyleModal(null);
   if($('#showAll'))$('#showAll').onclick=()=>{showAll=!showAll;renderProviders();};
   $('#addModel').onclick=()=>openProviderModal(null);
+  const addModelTile=$('#addModelTile');if(addModelTile)addModelTile.onclick=()=>openProviderModal(null);   // 空状态的虚线卡
   if(runtimeAllows('POST','/api/providers/order'))makeSortable($('#pgrid'),{item:'.pcard:not(.is-preset)',key:c=>c.dataset.prov,save:o=>api('/api/providers/order','POST',{order:o})});
   $$('#pgrid .pcard').forEach(card=>{
     const name=card.dataset.prov, slot=$('.reply-slot',card), preset=card.classList.contains('is-preset');
@@ -3696,7 +3716,7 @@ ${schedOn?schedRowHtml(g.chatId):rtOff('/api/groups/cron/add')?'':`        <div 
       <div class="inline" style="gap:6px;flex-shrink:0">
         ${g.paused?'<span class="tag pz" title="'+esc(S.runtimeCapabilities?RUNTIME_UI_TEXT.paused:'暂停中:消息静默丢弃 · 定时任务与画布播报停发 · 配置全保留')+'">'+IC.pause+' 已暂停</span>':''}
         ${platTag}
-        ${rt?(g.exists?'':'<span class="tag bad" title="项目目录不存在:群里的任务会失败,去「配置群项目」改目录">目录缺失</span>')
+        ${rt?(g.exists?'':'<span class="tag bad" title="项目目录不存在:群里的任务会失败,点「添加群项目」选中这个群即可改目录">目录缺失</span>')
           :`<span class="tag${g.exists?'':' bad'}">${g.exists?'workdir '+IC.check:'workdir 缺失'}</span>`}
         ${repoTag}
         <button class="btn ghost" data-gpause="${esc(g.chatId)}" data-p="${g.paused?'1':'0'}" title="${S.runtimeCapabilities?esc(g.paused?RUNTIME_UI_TEXT.resume:RUNTIME_UI_TEXT.pause):g.paused?'恢复本群:bot 重新响应消息、定时任务与画布播报恢复':'暂停本群:期间消息静默丢弃、排队清空、定时任务与画布播报停发;进行中的任务跑完;完全可逆,配置全保留'}">${g.paused?IC.play+' '+(S.runtimeCapabilities?RUNTIME_UI_TEXT.resumeLabel:'恢复'):IC.pause+' 暂停'}</button>
@@ -3741,19 +3761,20 @@ ${langRow}    ${permPlug}
       </div>
     ${rt?`<div class="gids"><span>${esc(g.chatId)}</span><span>${esc(g.workdir)}</span></div>`:''}
     ${rtOff('/api/groups','DELETE')?'':`<div class="acts">
-      <button class="btn ghost" data-rm=""${esc(g.chatId)}" title="${isWe?'仅解除本控制台里的绑定配置,群本身保留(企业微信群要解散只能在企业微信里操作)':'仅解除本控制台里的绑定配置,飞书群本身保留(解散群在「配置群项目」面板)'}">解除绑定</button>
+      <button class="btn ghost" data-rm=""${esc(g.chatId)}" title="${isWe?'仅解除本控制台里的绑定配置,群本身保留(企业微信群要解散只能在企业微信里操作)':'仅解除本控制台里的绑定配置,飞书群本身保留(解散群在「添加群项目」面板)'}">解除绑定</button>
     </div>`}
     </details>
     </div>
   </div>`;
-  }).join('')||'<div class="empty">还没有创建任何群项目</div>';
+  }).join('')||`<button type="button" class="add-tile" id="bindTile"><span class="pl">${IC.plus}</span><b>添加群项目</b><span>选一个群或频道，绑定到本机的项目目录</span></button>`;
   $('#groups').innerHTML=`<div class="pact">
-      <button class="btn primary" id="bindBtn">${IC.settings}配置群项目</button></div>
+      <button class="btn primary" id="bindBtn">${IC.plus}添加群项目</button></div>
     ${S.runtimeCapabilities?`<details class="lead-more"${leadOpen?' open':''}><summary><span>每个群绑定一个项目目录，在这里选模型、执行模式和忙时跟进。</span><span class="lnk2">了解更多</span></summary><div class="hint">${esc(RUNTIME_UI_TEXT.groups)}</div></details>`
       :`<div class="hint lead">本页只配置(模型 / 权限 / 插件);运行控制「停止 · 新会话」在 <b>「概览」</b> · 拖 ${IC.grip} 排序 · 切模型会重置该群会话。</div>`}
     <div class="grid cols2 stagger" id="ggrid">${cards}</div>`;
   if(typeof mountPageActions==='function')mountPageActions('groups');   // 单测只取这一段函数跑,那里没有这个助手
   $('#bindBtn').onclick=openBind;
+  const bindTile=$('#bindTile');if(bindTile)bindTile.onclick=openBind;   // 空状态的虚线卡,与页头按钮同一个入口
   // 群卡展开 / 收起:只切类与记录,不重画(卡里可能正填着东西)
   $$('#groups [data-gfold]').forEach(b=>b.onclick=()=>{const card=b.closest('.card');if(!card)return;
     const open=card.classList.contains('gfolded');card.classList.toggle('gfolded',!open);b.setAttribute('aria-expanded',String(open));
@@ -3761,7 +3782,7 @@ ${langRow}    ${permPlug}
     const sched=open&&card.querySelector('.schedbox');if(sched)schedShown(sched,true);});   // 卡片重新打开:定时任务再取一次
   makeSortable($('#ggrid'),{item:'.card[data-gid]',key:c=>c.dataset.gid,
     save:o=>api('/api/groups/order','POST',{order:o}).then(r=>{S=r;renderOverview();return r;})});  // 概览群行同步新顺序
-  $$('#groups [data-rm]').forEach(b=>b.onclick=async()=>{const gg=S.groups.find(x=>x.chatId===b.dataset.rm);if(!await askConfirm('解除本群与项目的绑定?\n(仅移除绑定配置,群本身保留'+(gg&&gg.platform==='wecom'?')':';要解散群请去「配置群项目」面板)')))return;try{S=await api('/api/groups?chatId='+encodeURIComponent(b.dataset.rm),'DELETE');toast('已解除绑定','ok');renderAll();}catch(e){toast(e.message,'err');}});
+  $$('#groups [data-rm]').forEach(b=>b.onclick=async()=>{const gg=S.groups.find(x=>x.chatId===b.dataset.rm);if(!await askConfirm('解除本群与项目的绑定?\n(仅移除绑定配置,群本身保留'+(gg&&gg.platform==='wecom'?')':';要解散群请去「添加群项目」面板)')))return;try{S=await api('/api/groups?chatId='+encodeURIComponent(b.dataset.rm),'DELETE');toast('已解除绑定','ok');renderAll();}catch(e){toast(e.message,'err');}});
   // 暂停/恢复:完全可逆(配置全保留)故无冷静期无令牌;暂停方向仍 confirm 一下(会清空排队消息)。
   // 预览常驻开关(operator 的正规入口;群内会收到一行告知)
   $$('#groups .gpv').forEach(c=>c.onchange=async()=>{
@@ -4015,7 +4036,7 @@ async function openBind(){
     ?`<div class="chatpick-head"><span class="ttl">选择企业微信群</span><button class="btn" id="mRefresh">${IC.refresh} 刷新列表</button></div>
       <div class="hint" style="margin:-6px 0 10px">在企业微信里<b>建群 → 从群菜单把机器人加进群 → @ 它一次</b>,刷新后就会出现在这里${hint?' · '+esc(hint):''}</div>`
     :`<div class="chatpick-head"><span class="ttl">选择飞书群</span><button class="btn" id="mNewChat">${IC.plus} 创建新群</button></div>`;
-  $('#modal').innerHTML=`<h3>配置群项目</h3>
+  $('#modal').innerHTML=`<h3 id="mTitle">添加群项目</h3>
     ${both?`<div class="inline" style="margin:-4px 0 14px;gap:10px"><span class="faint" style="font-size:12px">平台</span><div class="segtoggle" id="mPlat">${onPlats.map(k=>`<button type="button" class="${plat===k?'on':''}" data-plat="${k}">${PL[k]}${k==='slack'?' 频道':'群'}</button>`).join('')}</div></div>`:''}
     <div id="chatHeadWrap">${renderHead()}</div>
     <div id="chatListWrap">${renderList()}</div>
@@ -4053,9 +4074,11 @@ async function openBind(){
     $('#mRepick').onclick=(e)=>{e.preventDefault();repick();};
     if(g){setWd(g.workdir||'');if(g.provider)$('#mProv').value=g.provider;$('#mSave').textContent='保存修改';}
     else{setWd('');$('#mSave').textContent='创建';}
+    // 选中已绑定的群 = 修改这个群的目录与模型:标题跟着说「修改」,换回别的群再变回「添加」
+    $('#mTitle').textContent=g?'修改群项目':'添加群项目';
     $('#manualRow').hidden=true;step2.hidden=false;updateSave();$('#mBrowse').focus();
   };
-  const repick=()=>{picked='';pickedName='';$('#mChat').value='';$$('#modal .ci').forEach(x=>x.classList.remove('sel'));step2.hidden=true;setWd('');$('#mSave').textContent='创建';updateSave();};
+  const repick=()=>{picked='';pickedName='';$('#mChat').value='';$$('#modal .ci').forEach(x=>x.classList.remove('sel'));step2.hidden=true;setWd('');$('#mSave').textContent='创建';$('#mTitle').textContent='添加群项目';updateSave();};
   $('#mWd').addEventListener('input',()=>setWd($('#mWd').value));
   $('#mWdManual').onclick=(e)=>{e.preventDefault();const r=$('#mWdManualRow');r.hidden=!r.hidden;if(!r.hidden)$('#mWd').focus();};
   // 根目录在控制台只读(不给「更改」入口):它是围栏的策略,改只走安装向导或机器上的配置文件
@@ -4597,10 +4620,10 @@ function renderSettings(){
     </div>
     <div class="hint" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">这里只读,控制台不提供修改。要改,在服务器上编辑配置文件里的 <code>projectsRoots</code>(一个路径或数组,认 ~);改后即时生效,不用重启。</div>`;
   const urlRow=(label,u)=>`<div class="kv"><span class="kk">${label}</span><span class="vv mono"><a href="${esc(u)}" target="_blank" style="color:var(--ember-soft)">${esc(u)}</a></span></div>`;
-  // 「服务器」卡 = 访问地址 + 项目根目录(用户 2026-09-08:两张短卡并成一张,不留空当;本机 127.0.0.1 那行去掉 ——
-  // 正在看控制台的人用不着它,而它又是三行里最像「可以点」却最没用的一行)
-  const netCard=`<div class="card"><div class="lbl">服务器</div>
-    <div class="fx-sub" style="margin:0 0 12px">访问地址</div>
+  // 访问地址 + 项目根目录(用户 2026-09-08 并成一段;本机 127.0.0.1 那行去掉 —— 正在看控制台的人用不着它)。
+  // 11-20 起与界面语言、机器人与网络、运行限制同在「通用设置」卡里(见 generalCard)。
+  const netSec=`<div class="gsec">
+    <div class="fx-sub">访问地址</div>
     ${net.publicUrl?urlRow('公网',net.publicUrl):''}
     ${net.lan?(net.lanUrls&&net.lanUrls.length?net.lanUrls.map(u=>urlRow('局域网',u)).join(''):'<div class="hint" style="padding:2px 0">已对外,未检测到局域网 IPv4</div>'):''}
     <div class="hint" style="margin-top:9px">${net.lan
@@ -4629,7 +4652,7 @@ function renderSettings(){
   // 机器人名字与网络代理(1.0.12 起安装向导不再问这两样,在这里配):名字是自我介绍 / 升级播报里的自称;
   // 代理给连 Claude / ChatGPT 用,国内模型端点自动直连(服务端按已配的模型生成直连名单)
   const envPx=S.envProxy||'';
-  const botCard=`<div class="card" id="botNetCard"><div class="lbl">机器人与网络</div>
+  const botSec=`<div class="gsec" id="botNetCard"><div class="fx-sub">机器人与网络</div>
     <div class="botnet-fields">
       <div class="field"><label class="f">机器人名字</label><input id="bBrand" placeholder="SintBot" value="${esc(S.brand||'')}"/>
         <div class="hint" style="margin-top:5px">自我介绍、升级播报里的自称 · 留空 = SintBot</div></div>
@@ -4669,17 +4692,7 @@ function renderSettings(){
     <div class="hint" style="margin-top:10px">${updHint}</div>
     <div class="update-notes"><a href="${esc(changelogUrl())}" data-changelog="" target="_blank" rel="noopener">更新记录 →</a></div>
   </div>`;
-  // 界面(1.4.30):界面语言从侧栏移到这里;主题按钮仍在侧栏
-  const uiCard=`<div class="card" id="uiCard" style="grid-column:1/-1"><div class="lbl">界面</div>
-    <div class="kv lang-row"><span class="kk">语言</span>${langPickHtml()}</div></div>`;
-  $('#settings').innerHTML=`<div class="stoc" id="setToc" role="navigation" aria-label="本页内容"></div><div class="grid cols2 stagger">
-    ${uiCard}
-    ${fxFeishuCard(fe)}
-    ${S.runtimeCapabilities?fxWecomAttachCard():''}
-    ${S.runtimeCapabilities?fxSlackAttachCard():''}
-    ${fxFeishuAccessCard(fe)}
-    ${netCard}
-    <div class="card"><div class="lbl">运行限制</div>
+  const limitSec=`<div class="gsec"><div class="fx-sub">运行限制</div>
       <div class="inline" style="align-items:flex-start">
         ${concCapField(a.maxConcurrent,!!S.runtimeCapabilities)}
         <div class="field" style="flex:1;margin-bottom:0"><label class="f">单轮超时(分)</label><input id="aWall" type="number" min="0" value="${a.maxTurnTimeMins}"/>
@@ -4690,8 +4703,26 @@ function renderSettings(){
         <div class="hint" style="margin-top:5px">群内理解/表述时间的时区 · 留空 = 北京时间 · 与服务器时区无关</div></div>
       <button class="btn primary" id="aSave" style="margin-top:14px">保存</button>
       <div class="hint" style="margin-top:10px">执行权限已改<b>按群设</b> —— 见「群·项目」每张卡(缺省 <b>dontAsk 只读 · fail-closed</b>)。</div>
-    </div>
-    ${botCard}
+    </div>`;
+  // 「通用设置」(用户 11-20):界面语言、机器人与网络、运行限制、访问地址与项目根目录并成一张卡,默认收起;
+  // 折叠头与三张平台卡同一种(点开记进 fxFoldUser,本页有效),收起时一行读数。各段的输入、保存按钮与 id 照旧。
+  // 读数用中文写、经词典翻英文;语言名不经词典,换语言时由 updateLangBtn 就地改。主题按钮仍在侧栏。
+  const genOpen=!!fxFoldUser['pf-general'];
+  const langSec=`<div class="gsec"><div class="kv lang-row"><span class="kk">界面语言</span>${langPickHtml()}</div></div>`;
+  const genFacts=[`<span class="hfact" data-genlang data-i18n-skip>${LANG_NAMES[langOf()]}</span>`,
+    `<span class="hfact" data-i18n-skip>${esc(S.brand||'SintBot')}</span>`,
+    Number(a.maxConcurrent)>0?`<span class="hfact">并发 ${esc(a.maxConcurrent)}</span>`:'',
+    px&&px.http?'<span class="hfact">已设代理</span>':'',
+    `<span class="hfact">${net.lan?'局域网可访问':'仅本机访问'}</span>`].join('');
+  const generalCard=`<div class="card hcard pfold${genOpen?'':' folded'}" id="generalCard" data-pf="general" style="grid-column:1/-1">
+    <button type="button" class="hfold" aria-expanded="${genOpen}" aria-controls="generalCardBody"><span class="lbl">${IC.settings}通用设置</span><span class="hsum">${genFacts}</span><span class="hcaret">${IC.chevronDown}</span></button>
+    <div class="pfold-body" id="generalCardBody">${langSec}${botSec}${limitSec}${netSec}</div></div>`;
+  $('#settings').innerHTML=`<div class="stoc" id="setToc" role="navigation" aria-label="本页内容"></div><div class="grid cols2 stagger">
+    ${fxFeishuCard(fe)}
+    ${S.runtimeCapabilities?fxWecomAttachCard():''}
+    ${S.runtimeCapabilities?fxSlackAttachCard():''}
+    ${fxFeishuAccessCard(fe)}
+    ${generalCard}
     ${!S.runtimeCapabilities?fxSlackCard(S.slack||null)+fxWecomCard(S.wecom||null):''}
     ${aboutCard}
     ${updateCard}
@@ -4873,7 +4904,7 @@ function pfCard(p,id,name,body){
 }
 function pfSync(){
   if(!S)return;
-  $$('#settings .pfold').forEach(c=>{const f=pfFacts(c.dataset.pf),sig=f.dot+'|'+f.tip+'|'+f.sum;if(c.dataset.sig===sig)return;c.dataset.sig=sig;
+  $$('#settings .pfold[data-pf]:not([data-pf="general"])').forEach(c=>{const f=pfFacts(c.dataset.pf),sig=f.dot+'|'+f.tip+'|'+f.sum;if(c.dataset.sig===sig)return;c.dataset.sig=sig;
     const d=c.querySelector('[data-pfdot]'),s=c.querySelector('[data-pfsum]');
     if(d){d.className='dot '+f.dot;d.title=f.tip;d.setAttribute('aria-label',f.tip);}if(s)s.textContent=f.sum;});
 }
@@ -4921,7 +4952,7 @@ function fxWecomAttachCard(){
     <div class="kv"><span class="kk">Bot ID</span><span class="vv">${esc(we.botId||(we.botIdRef?'env:'+we.botIdRef:'未配置'))}</span></div>
     <div class="kv"><span class="kk">机器人凭据</span><span class="vv">已设置，不显示密钥</span></div>
     <div class="kv"><span class="kk">连接</span><span class="vv" id="wConnLine">${esc(wecomConnText(c))}</span></div>
-    <p class="hint">再绑一个项目：在企业微信建群，把机器人加进群并 @它一次，再到「群 · 项目 → 配置群项目」选这个群。每个机器人只由一台 SintBot 连接；凭据只保存在这台 Mac。</p>
+    <p class="hint">再绑一个项目：在企业微信建群，把机器人加进群并 @它一次，再到「群 · 项目 → 添加群项目」选这个群。每个机器人只由一台 SintBot 连接；凭据只保存在这台 Mac。</p>
     <div class="feishu-actions"><button class="btn" id="waRetryConnection">刷新连接状态</button><a class="btn" href="https://work.weixin.qq.com/wework_admin/frame" target="_blank" rel="noopener">打开企业微信管理后台 ${IC.ext}</a>${guide('查看完整安装指南',true)}</div>
    </details>`);
  }
@@ -5019,7 +5050,7 @@ function fxSlackAttachCard(){
     <div class="kv"><span class="kk">App ID</span><span class="vv">${esc(sl.appId||'未记录')}</span></div>
     <div class="kv"><span class="kk">应用凭据</span><span class="vv">已设置，不显示令牌</span></div>
     <div class="kv"><span class="kk">连接</span><span class="vv" id="sConnLine">${esc(slackConnText(c))}</span></div>
-    <p class="hint">再绑一个项目：在 Slack 的目标频道里发 /invite @机器人名 把它请进频道，再到「群 · 项目 → 配置群项目」选这个频道。每个 Slack 应用只由一台 SintBot 连接；令牌只保存在这台 Mac。</p>
+    <p class="hint">再绑一个项目：在 Slack 的目标频道里发 /invite @机器人名 把它请进频道，再到「群 · 项目 → 添加群项目」选这个频道。每个 Slack 应用只由一台 SintBot 连接；令牌只保存在这台 Mac。</p>
     <div class="feishu-actions"><button class="btn" id="saRetryConnection">刷新连接状态</button><a class="btn" href="${esc(settings)}" target="_blank" rel="noopener">打开 Slack 应用设置 ${IC.ext}</a>${guide('查看完整安装指南',true)}</div>
    </details>`);
  }
@@ -5111,7 +5142,7 @@ function fxWecomCard(we){
         <div class="fx-step"><span class="n">1</span><span class="t">电脑端客户端「<b>工作台 → 智能机器人 → 创建机器人 → 手动创建 → API 模式</b>」(手机端不能建;管理后台「安全与管理 → 管理工具 → 智能机器人」是同一个入口)。填名称 / 可见范围;<b>使用方式选「多人使用」</b>。<b>不需要企业认证</b>,免费注册的企业就能建。</span></div>
         <div class="fx-step"><span class="n">2</span><span class="t">API 配置页选「<b>使用长连接</b>」(免公网 / 域名 / 可信 IP),记下 <b>Bot ID</b> 与 <b>Secret</b> 填到下面。保存时会弹一次使用规则确认。${IC.warn} <b>一个机器人只许一条长连接</b> —— 新连上的会把旧的踢下线,所以每台服务器各建各的机器人,别共用。</span></div>
         <div class="fx-step"><span class="n">3</span><span class="t">服务器上装官方命令行工具并用<b>同一对 Bot ID / Secret</b>授权一次 —— 群里显示成员姓名、助手发图发文件、这里列出可绑定的群都靠它;没装只降级不报错。</span></div>
-        <div class="fx-step"><span class="n">4</span><span class="t">在企业微信里<b>建群 → 从群菜单把机器人加进群 → @ 它一次</b>,再回「群·项目 → 配置群项目」选那个群。机器人没有建群 / 改名 / 解散的接口,这几步只能在企业微信里做;群里<b>只有 @ 机器人的消息</b>它才收得到。</span></div>
+        <div class="fx-step"><span class="n">4</span><span class="t">在企业微信里<b>建群 → 从群菜单把机器人加进群 → @ 它一次</b>,再回「群·项目 → 添加群项目」选那个群。机器人没有建群 / 改名 / 解散的接口,这几步只能在企业微信里做;群里<b>只有 @ 机器人的消息</b>它才收得到。</span></div>
         <div class="fx-step"><span class="n">5</span><span class="t">${IC.warn} <b>换了 Bot ID / Secret 之后必须重启守护进程</b> —— 长连接在启动时就绑死了凭据,这里保存只是热重载配置、不会重建连接。</span></div>
       </div>
     </details>
@@ -5482,13 +5513,19 @@ function upgRender(){
   const rl=$('#upgReload');if(rl)rl.onclick=()=>location.reload();
 }
 /* UPGRADE_PROGRESS_END */
-(()=>{const badge=$('#topUpdateBadge');if(!badge)return;badge.onclick=()=>{
-  if(upgManaged()&&upgIsActive(upgJob())){upgOpen(true);return;}
+// 设置页「软件更新」卡:切到设置、滚到卡、描一下边。品牌旁的版本号(用户 11-20)与「发现新版本」小点共用;
+// 小点在升级进行中改为打开进度。
+function openUpdateCard(){
   const nav=$('nav [data-tab="settings"]');if(nav)nav.click();
   const card=$('#updateCard');if(!card)return;
-  requestAnimationFrame(()=>{card.scrollIntoView({behavior:'smooth',block:'start'});
+  requestAnimationFrame(()=>{card.scrollIntoView({behavior:REDUCED_MOTION?'auto':'smooth',block:'start'});
     card.style.boxShadow='0 0 0 2px rgba(var(--ember-rgb),.45)';setTimeout(()=>card.style.boxShadow='',1400);});
+}
+(()=>{const badge=$('#topUpdateBadge');if(!badge)return;badge.onclick=()=>{
+  if(upgManaged()&&upgIsActive(upgJob())){upgOpen(true);return;}
+  openUpdateCard();
 };})();
+(()=>{const ver=$('#verBadge');if(ver)ver.onclick=openUpdateCard;})();
 // 侧栏底部的当前应用。数据同「设置」那张身份条(同一份落盘缓存),没取过就整块不显示 —— 侧栏不适合
 // 放「未获取」这类待办文案。头像 JS 注入并留 🤖 兜底(远端图,控制台可能开在断外网的机器上)。
 let topFxAvSrc='';
@@ -5631,7 +5668,7 @@ const I18N_EN=[
   ["高级：应用信息与连接", "Advanced: app details and connection"],
   ["未记录", "Not recorded"],
   ["已设置，不显示令牌", "Set; tokens are not shown"],
-  ["再绑一个项目：在 Slack 的目标频道里发 /invite @机器人名 把它请进频道，再到「群 · 项目 → 配置群项目」选这个频道。每个 Slack 应用只由一台 SintBot 连接；令牌只保存在这台 Mac。", "To bind another project, send /invite @your-bot-name in the Slack channel you want, then pick that channel in Groups · Projects → Set up a group project. Each Slack app connects to one SintBot only; the tokens stay on this Mac."],
+  ["再绑一个项目：在 Slack 的目标频道里发 /invite @机器人名 把它请进频道，再到「群 · 项目 → 添加群项目」选这个频道。每个 Slack 应用只由一台 SintBot 连接；令牌只保存在这台 Mac。", "To bind another project, send /invite @your-bot-name in the Slack channel you want, then pick that channel in Groups · Projects → Add a group project. Each Slack app connects to one SintBot only; the tokens stay on this Mac."],
   ["打开 Slack 应用设置", "Open Slack app settings"],
   ["服务还没有连接 Slack", "The service has not connected to Slack yet"],
   ["令牌已失效，需要重新接入", "The tokens are no longer valid; connect again"],
@@ -5699,7 +5736,7 @@ const I18N_EN=[
   ["单聊直接回复，群里回复 @ 机器人的消息", "Replies in direct chats, and to @mentions in groups"],
   ["高级：机器人信息与连接", "Advanced: bot details and connection"],
   ["机器人凭据", "Bot credentials"],
-  ["再绑一个项目：在企业微信建群，把机器人加进群并 @它一次，再到「群 · 项目 → 配置群项目」选这个群。每个机器人只由一台 SintBot 连接；凭据只保存在这台 Mac。", "To bind another project, create a WeCom group, add the bot and @mention it once, then pick that group in Groups · Projects → Set up a group project. Each bot connects to one SintBot; its credentials stay on this Mac."],
+  ["再绑一个项目：在企业微信建群，把机器人加进群并 @它一次，再到「群 · 项目 → 添加群项目」选这个群。每个机器人只由一台 SintBot 连接；凭据只保存在这台 Mac。", "To bind another project, create a WeCom group, add the bot and @mention it once, then pick that group in Groups · Projects → Add a group project. Each bot connects to one SintBot; its credentials stay on this Mac."],
   ["打开企业微信管理后台", "Open WeCom admin console"],
   ["高级：手动填写 Bot ID 和 Secret", "Advanced: enter Bot ID and Secret"],
   ["已有机器人时使用。在企业微信工作台创建智能机器人，选择 API 模式和长连接。", "For an existing bot. In WeCom Workbench, create a smart bot in API mode and select long connection."],
@@ -5996,7 +6033,7 @@ const I18N_EN=[
   ["后续消息加入当前处理","Add follow-up messages to the current task"],
   ["开启后，处理任务期间：群成员的后续消息、控制台勾了「回复」的插话，都会加入当前任务 —— 相关要求及时吸收，独立请求按先后回应。定时任务和不回复的插话仍排在后面。","When on, follow-up messages from group members and console messages with Reply checked join the task in progress: related requests are taken in right away, separate ones are answered in order. Schedules and console messages without Reply still wait their turn."],
   ["目录缺失","Folder missing"],
-  ["项目目录不存在:群里的任务会失败,去「配置群项目」改目录","The project folder does not exist: tasks in this group will fail. Change it in Configure groups."],
+  ["项目目录不存在:群里的任务会失败,点「添加群项目」选中这个群即可改目录","The project folder does not exist: tasks in this group will fail. To change it, open Add a group project and pick this group."],
   ["编辑白名单","Edit allowlist"],
   ["allow 留空 = 只读","allow empty = read-only"],
   ["换后端会开新对话；换型号或调深度接着当前对话 · 群空闲时才能改","Changing the backend starts a new conversation; changing the model or depth continues it · only while the group is idle"],
@@ -6683,15 +6720,18 @@ const I18N_EN=[
   ["当前:遮盖","Current: masked"],
   ["模型","Model"],
   ["执行模式","Execution mode"],
-  ["仅解除本控制台里的绑定配置,飞书群本身保留(解散群在「配置群项目」面板)","Only removes the binding in this console; the Feishu group itself stays (disband groups in the \"Configure group project\" panel)"],
+  ["仅解除本控制台里的绑定配置,飞书群本身保留(解散群在「添加群项目」面板)","Only removes the binding in this console; the Feishu group itself stays (disband groups in the \"Add a group project\" panel)"],
   ["解除绑定","Unbind"],
   ["还没有创建任何群项目","No group projects yet"],
-  ["配置群项目","Configure group project"],
+  ["添加群项目","Add a group project"],
+  ["修改群项目","Edit a group project"],
+  ["选一个群或频道，绑定到本机的项目目录","Pick a group or channel and bind it to a project folder on this Mac"],
+  ["Claude 或 Codex 订阅，或填一个 API Key","A Claude or Codex subscription, or an API key"],
   ["本页只配置(模型 / 权限 / 插件);运行控制「停止 · 新会话」在","This page is for configuration only (model / permissions / plugins); run controls \"Stop · New session\" are on "],
   ["「概览」","\"Overview\""],
   ["· 拖"," · drag "],
   ["排序 · 切模型会重置该群会话。"," to reorder · switching model resets the group session."],
-  ["解除本群与项目的绑定?\n(仅移除绑定配置,飞书群本身保留;要解散群请去「配置群项目」面板)","Unbind this group from its project?\n(Only the binding is removed; the Feishu group itself stays. To disband the group, use the \"Configure group project\" panel)"],
+  ["解除本群与项目的绑定?\n(仅移除绑定配置,飞书群本身保留;要解散群请去「添加群项目」面板)","Unbind this group from its project?\n(Only the binding is removed; the Feishu group itself stays. To disband the group, use the \"Add a group project\" panel)"],
   ["已解除绑定","Unbound"],
   ["设为常驻?该群的原型预览将不再自动停止,那个目录会一直挂在局域网上,直到有人手动停。","Keep alive? This group's prototype preview will no longer stop automatically, and that folder stays exposed on the LAN until someone stops it by hand."],
   ["已设为常驻 · 群内已通知","Set to keep alive · group notified"],
@@ -7157,6 +7197,7 @@ const I18N_EN=[
   ["当前","Current"],
   ["暂无记录","No records yet"],
   ["查看版本历史","View version history"],
+  ["打开软件更新","Open Software updates"],
   ["用飞书登录","Sign in with Feishu"],
   ["只有管理员名单里的人能进","Only people on the admin list can get in"],
   ["或用密码","or use a password"],
@@ -7211,7 +7252,7 @@ const I18N_EN=[
   ["授权一次 —— 群里显示成员姓名、助手发图发文件、这里列出可绑定的群都靠它;没装只降级不报错。", " once — member names in groups, sending images and files, and listing the groups you can bind here all depend on it. Without it those features are simply off, with no errors."],
   ["在企业微信里", "In WeCom, "],
   ["建群 → 从群菜单把机器人加进群 → @ 它一次", "create a group → add the bot from the group menu → @ it once"],
-  [",再回「群·项目 → 配置群项目」选那个群。机器人没有建群 / 改名 / 解散的接口,这几步只能在企业微信里做;群里", ", then come back to \"Groups · Projects → Set up a group project\" and pick that group. The bot has no API to create, rename or disband groups, so these steps happen in WeCom. In a group it receives "],
+  [",再回「群·项目 → 添加群项目」选那个群。机器人没有建群 / 改名 / 解散的接口,这几步只能在企业微信里做;群里", ", then come back to \"Groups · Projects → Add a group project\" and pick that group. The bot has no API to create, rename or disband groups, so these steps happen in WeCom. In a group it receives "],
   ["只有 @ 机器人的消息", "only messages that @ the bot"],
   ["它才收得到。", "."],
   ["换了 Bot ID / Secret 之后必须重启守护进程", "After changing the Bot ID / Secret, restart the daemon"],
@@ -7301,6 +7342,11 @@ const I18N_EN=[
   ["本页内容", "On this page"],
   // 1.4.30 settings
   ["界面", "Interface"],
+  ["通用设置","General"],
+  ["界面语言","Interface language"],
+  ["已设代理","Proxy set"],
+  ["仅本机访问","This Mac only"],
+  ["局域网可访问","Open to the LAN"],
   ["语言", "Language"],
   ["选择语言", "Choose language"],
   ["更新记录 →", "Release notes →"],
@@ -7340,7 +7386,7 @@ const I18N_EN=[
   ["一次性写完整时间，如 2026-07-16 13:10；循环写「每天 09:00」「工作日 8:30」或 cron 五段。时间按所填时区，留空用默认时区。", "One-off: the full time, e.g. 2026-07-16 13:10. Recurring: a five-field cron expression such as 0 9 * * * (daily at 09:00) or 30 8 * * 1-5 (weekdays at 08:30), or an alias such as @daily. Times use the time zone you enter; empty means the default zone."],
   // 群卡 · 暂停的确认框(新版服务)
   ["暂停本群?只有任务结束且记录全部结账后才能暂停；暂停期间不处理新消息，配置和会话保留。", "Pause this group? It can pause only once its task has finished and every record is settled. While paused, new messages are not processed; configuration and session are kept."],
-  // 配置群项目 · 选 Slack 频道 / 企业微信群的指引(企业微信那句后面接服务端的提示)
+  // 添加群项目 · 选 Slack 频道 / 企业微信群的指引(企业微信那句后面接服务端的提示)
   ["在频道里发", "In the channel, send"],
   ["把它拉进来,刷新后就会出现在这里", "to add the bot; it shows up here after a refresh"],
   [",刷新后就会出现在这里", ", and it shows up here after a refresh"],
@@ -7362,6 +7408,7 @@ const I18N_EN=[
   // end 1.4.30 en-sweep
 ];
 const I18N_EN_RX=[
+  [/^并发 (\d+)$/,"Concurrency $1"],   // 设置页「通用设置」收起时的读数
   // 模型卡面板：重取可选型号的结果、本机 Codex 程序的版本与升级
   [/^可选型号已更新：(.+)。现在共 (\d+) 个，群卡下拉里可以直接选。$/,(m,parts,n)=>"Model list updated: "+parts.split('；').map(x=>x.replace(/^新增 /,'added ').replace(/^不再提供 /,'no longer offered ').replace(/、/g,', ')).join('; ')+". "+n+" in total now; pick them in the group card dropdown."],
   [/^可选型号已是最新（共 (\d+) 个）。$/,"The model list is up to date ($1 in total)."],
@@ -7821,7 +7868,7 @@ try{new MutationObserver((muts)=>{
 (function(){const c=window.confirm,p=window.prompt;
   window.confirm=(m)=>c.call(window,trText(m));
   window.prompt=(m,d)=>p.call(window,trText(m),d);})();
-/* 界面语言的选择(设置页「界面」卡,1.4.30 从侧栏移来):结构与交互照官网页脚的 language-picker ——
+/* 界面语言的选择(设置页「通用设置」卡,1.4.30 从侧栏移来):结构与交互照官网页脚的 language-picker ——
    <details> 的卡头是图标 · 当前语言名 · 箭头,点开两项「English」「简体中文」各用本语言书写、当前项打 ✓。
    语言名不进翻译层(data-i18n-skip)。点一项立即切换并收起;点别处或按 Esc 收起(Esc 把焦点还给卡头)。 */
 const LANG_NAMES={en:'English',zh:'简体中文'},LANG_TAGS={en:'en',zh:'zh-CN'};
@@ -7830,6 +7877,7 @@ function langPickHtml(){const cur=langOf();
     <div class="lang-opts" role="group" aria-label="语言">${['en','zh'].map(l=>`<button type="button" data-setlang="${l}" lang="${LANG_TAGS[l]}"${l===cur?' aria-current="true"':''} data-i18n-skip>${LANG_NAMES[l]}</button>`).join('')}</div></details>`;}
 function updateLangBtn(){const p=$('#langPick');if(!p)return;const cur=langOf(),n=p.querySelector('.lang-cur');
   if(n){n.textContent=LANG_NAMES[cur];n.lang=LANG_TAGS[cur];}
+  const g=$('[data-genlang]');if(g)g.textContent=LANG_NAMES[cur];
   p.querySelectorAll('[data-setlang]').forEach(b=>{if(b.dataset.setlang===cur)b.setAttribute('aria-current','true');else b.removeAttribute('aria-current');});}
 document.addEventListener('click',e=>{const p=$('#langPick');if(!p||!p.open)return;
   const o=e.target.closest&&e.target.closest('#langPick [data-setlang]');
@@ -7851,11 +7899,10 @@ updateLangBtn();applyI18n(document.body);   // 首屏静态 HTML 先翻一遍,�
 /* ══════════ 界面语言 · 完 ════════════════════════════════════════════════════ */
 
 /* 版本历史在官网(1.4.30 起控制台不再带正文):中文界面链 /zh/changelog/,英文界面链 /changelog/,每版一节、锚点 #v<版本>。
-   品牌旁的版本徽章打开当前版本那一节,有新版时的说明链到新版那一节,软件更新卡底部「更新记录 →」链到页首。
+   品牌旁的版本号打开设置页「软件更新」卡(见 openUpdateCard);有新版时的说明链到新版那一节,软件更新卡底部「更新记录 →」链到页首。
    都是 target=_blank 的普通链接:浏览器开新标签页,桌面 App 的壳把这类链接交给系统浏览器。换语言时重设地址。 */
 function changelogUrl(v){return (langOf()==='zh'?'https://sintbot.com/zh/changelog/':'https://sintbot.com/changelog/')+(v?'#v'+encodeURIComponent(v):'');}
 function syncChangelogLinks(){
-  const b=document.querySelector('.mark .ver');if(b)b.href=changelogUrl(String(b.textContent||'').trim().replace(/^v/,''));
   for(const a of document.querySelectorAll('a[data-changelog]'))a.href=changelogUrl(a.dataset.changelog);
 }
 syncChangelogLinks();

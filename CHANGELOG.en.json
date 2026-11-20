@@ -1,5 +1,28 @@
 [
   {
+    "version": "1.4.31",
+    "date": "2026-11-20",
+    "name": "A calmer console",
+    "items": [
+      {
+        "t": "Add a group project and Add model: quieter buttons",
+        "d": "The buttons at the top right of Groups · Projects and Models now use a thin outline with a plus sign and are named Add a group project and Add model. When you pick a group that is already bound in the dialog, the title changes to Edit a group project."
+      },
+      {
+        "t": "An add tile when a list is empty",
+        "d": "With no group projects or models yet, the list shows a dashed add tile that opens the matching dialog."
+      },
+      {
+        "t": "The version number opens Software updates",
+        "d": "Click the version number at the top left to go straight to the Settings → Software updates card."
+      },
+      {
+        "t": "One General card in Settings",
+        "d": "Interface language, bot and network, run limits and access addresses are now one General card, collapsed by default; when collapsed it shows the language, the concurrency cap, whether a proxy is set and who can reach the console. The separate Interface card is gone."
+      }
+    ]
+  },
+  {
     "version": "1.4.30",
     "date": "2026-11-20",
     "name": "Fewer held groups, models chosen per group, a tidier console",

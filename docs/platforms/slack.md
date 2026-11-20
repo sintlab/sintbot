@@ -49,7 +49,7 @@ A first task to try: "Read the first line of the project README and reply with o
 
 ## Add another channel
 
-Each conversation is bound to one project folder. To bind another channel, invite the bot with `/invite @your-bot-name`, then in the console open **Groups · Projects → Set up a group project**, choose Slack and pick the channel. Only channels the bot has joined are listed; if you type in the ID of a channel the bot is not in yet, the console tells you to invite it first.
+Each conversation is bound to one project folder. To bind another channel, invite the bot with `/invite @your-bot-name`, then in the console open **Groups · Projects → Add a group project**, choose Slack and pick the channel. Only channels the bot has joined are listed; if you type in the ID of a channel the bot is not in yet, the console tells you to invite it first.
 
 ## Everyday use
 

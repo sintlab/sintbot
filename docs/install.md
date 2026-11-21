@@ -58,7 +58,9 @@ If you have no company or team account, or just want to try it first, the setup 
 
 A conversation here runs through the same flow as a Feishu group: messages are registered, a task whose outcome is unknown is held for confirmation instead of being run again, and the commands listed by `/help` work. Unlike a group, the answer appears once the turn ends (the page shows a timer and Stop while it works), images and files are not supported yet, and there are no group message tools.
 
-To add Slack or WeCom later, use Settings in the console (see [Connect Slack](#connect-slack) and [Connect WeCom](#connect-wecom)). To connect Feishu later, stop SintBot, run the command below, confirm the scan in Feishu on your phone, then start as usual. Your conversations, transcripts and settings are kept, the command first backs up the configuration under `config-backups/` in the data directory, and the new group's message log is registered on the next start.
+To add Slack or WeCom later, use Settings in the console (see [Connect Slack](#connect-slack) and [Connect WeCom](#connect-wecom)). To connect Feishu later, open Settings → Feishu in the console, check the project folder (your conversation's folder is filled in), select "Scan to connect Feishu" and confirm in Feishu on your phone. SintBot keeps running: it creates the app and a project group, first backs up the configuration under `config-backups/` in the data directory, and connects. Your conversations, transcripts and settings are kept, and the new group uses the model your conversation already uses.
+
+With the service stopped, the terminal does the same:
 
 ```bash
 "$HOME/.local/share/sintbot/bin/sintbot" connect --attach

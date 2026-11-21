@@ -4799,7 +4799,7 @@ function renderSettings(){
     catch(e){toast(e.message,'err');}};
   // 只开着控制台的守护进程(还没接平台):第一次接上平台时说一句接下来会发生什么(服务托管的会自己重启连上)
   {const pl=S.platforms||{};if(S.setupMode&&(pl.feishu||pl.slack||pl.wecom)&&!window._sbRestartToast){window._sbRestartToast=1;toast(S.setupMode.supervised?'已接上聊天平台 —— 后台服务几秒后自动重启并连上':'已接上聊天平台 —— 在终端里重启 sintbot start --ui 连上','ok');}}
-  bindWecomCard(); bindWecomAttachCard(); bindSlackAttachCard();
+  bindWecomCard(); bindWecomAttachCard(); bindSlackAttachCard(); bindFeishuAttachCard();
   bindFxFolds();
   const lo=$('#logoutBtn');if(lo)lo.onclick=async()=>{try{await api('/api/logout','POST',{});}catch{}dropToken();TOKEN='';location.reload();};
   const la=$('#logoutAllBtn');if(la)la.onclick=async()=>{try{const r=await api('/api/logout/all','POST',{});toast('已退出 '+(r.n||0)+' 个登录','ok');}catch(e){toast(e.message,'err');return;}dropToken();TOKEN='';setTimeout(()=>location.reload(),600);};
@@ -5239,20 +5239,54 @@ function bindWecomCard(){
 // Public console actions are limited to group management and access administration.
 // Guide links follow the console language (the site keeps English at / and Chinese at /zh/).
 const guideBase=()=>document.documentElement.lang==='zh'?'https://sintbot.com/zh/guide/':'https://sintbot.com/guide/';
+/* 设置 → 飞书(还没接入时):扫码接入飞书。接入任务在服务端跑(扫码建应用、检查、建项目群、备份并保存配置、打开连接),
+   服务不用停;页面只轮询 /api/feishu/attach。本机对话、记录和现有设置都保留,新群沿用本机对话的模型。 */
+const FA={job:null,polling:false,loaded:false};
+function fxFeishuAttachBody(){
+  const g=(S.groups||[]).find(x=>x.platform==='local'&&x.workdir)||(S.groups||[]).find(x=>x.workdir);
+  const root=(S.projectsRoots&&S.projectsRoots[0])||'';
+  return `<p class="hint">用手机飞书扫码确认，自动创建机器人和项目群。服务不用停，现有对话、记录和设置都保留，新群沿用现在的模型。</p>
+  <div class="field" style="margin-top:12px"><label for="faWorkdir">项目目录</label><div class="feishu-actions" style="margin:0"><input id="faWorkdir" value="${esc(g&&g.workdir||'')}" placeholder="${esc(root?root.replace(/\/+$/,'')+'/my-project':'选择已有项目的完整目录')}" spellcheck="false" autocomplete="off"><button class="btn" id="faBrowse" type="button">${IC.folder} 选择…</button></div></div>
+  <div class="feishu-actions"><button class="btn primary" id="faScan">扫码接入飞书</button><button class="btn wa-off" id="faCancel">取消接入</button><a class="btn" data-guide="install/#feishu-later" href="${guideBase()}install/#feishu-later" target="_blank" rel="noopener">查看接入指南 ${IC.ext}</a></div>
+  <div class="wa-qr wa-off" id="faQr" aria-label="飞书二维码"></div>
+  <p class="hint" id="faStatus" role="status" aria-live="polite" style="margin-top:8px">扫码后在手机飞书里点确认，SintBot 会建好应用和项目群，大约一分钟。</p>`;
+}
+function faPaint(){
+  if(!$('#faScan'))return;const j=FA.job,running=!!(j&&j.phase==='running');
+  const qr=$('#faQr');qr.innerHTML=running&&j.qr?j.qr:'';qr.classList.toggle('wa-off',!(running&&j.qr));
+  if(j&&j.notice)$('#faStatus').textContent=j.notice;
+  $('#faCancel').classList.toggle('wa-off',!running);$('#faScan').disabled=running;
+  for(const id of ['faWorkdir','faBrowse'])if($('#'+id))$('#'+id).disabled=running;
+  pfSync();
+}
+async function faPoll(){
+  if(FA.polling)return;FA.polling=true;
+  try{for(let i=0;i<1200&&FA.job&&FA.job.phase==='running';i++){await new Promise(r=>setTimeout(r,2000));try{FA.job=await api('/api/feishu/attach')}catch(e){break}faPaint();}
+    if(FA.job&&FA.job.phase==='done'){const done=FA.job;S=await api('/api/state');renderAll();toast('飞书已接入','ok');FA.job=done;}}
+  catch(e){toast(e.message,'err')}finally{FA.polling=false;faPaint();}
+}
+function bindFeishuAttachCard(){
+  if(!$('#faScan'))return;
+  $('#faBrowse').onclick=()=>openFsPicker(p=>{if(p)$('#faWorkdir').value=p;});
+  $('#faCancel').onclick=async()=>{try{await api('/api/feishu/attach/cancel','POST',{});}catch(e){toast(e.message,'err')}};
+  $('#faScan').onclick=async()=>{const workdir=$('#faWorkdir').value.trim().replace(/\/+$/,'')||'';
+    if(!workdir.startsWith('/')){$('#faStatus').textContent='请选择已有项目目录';$('#faWorkdir').focus();return;}
+    try{FA.job=await api('/api/feishu/attach','POST',{workdir});faPaint();void faPoll();}catch(e){$('#faStatus').textContent=e.message;}};
+  if(!FA.loaded){FA.loaded=true;api('/api/feishu/attach').then(j=>{if(j&&j.phase==='running'){FA.job=j;faPaint();void faPoll();}}).catch(()=>{});}
+  faPaint();
+}
 function fxFeishuCard(fe){
   const configured=!!(fe&&(fe.appId||fe.appIdRef)&&fe.appSecretStatus&&fe.appSecretStatus!=='none');
   const app=(fe&&fe.identity)||{};
   const appUrl=fe&&/^cli_[A-Za-z0-9]+$/.test(fe.appId||'')?'https://open.feishu.cn/app/'+encodeURIComponent(fe.appId):'https://open.feishu.cn/app';
   const groupCount=(S.groups||[]).filter(g=>!g.platform||g.platform==='feishu').length;
   return pfCard('feishu','feishuCard','飞书',`
-    ${configured?'':(S.runtimeCapabilities&&S.runtimeCapabilities.localChat&&(S.groups||[]).some(g=>g.platform==='local')
-      ?'<p class="hint">现在只在这台电脑上对话。要在飞书里也能找它：先停止 SintBot，在终端运行 <code data-i18n-skip style="margin:0 4px">sintbot connect --attach</code>，用手机飞书扫码确认，再启动。本机对话、记录和现有设置都会保留。</p>'
-      :'<p class="hint">用手机飞书确认一次，自动创建机器人和项目群。</p>')}
+    ${configured?'':fxFeishuAttachBody()}
     ${configured?`<div class="kv"><span class="kk">应用名称</span><span class="vv">${esc(app.name||'项目群已配置')}</span></div>
       <div class="kv"><span class="kk">已绑定项目群</span><span class="vv">${groupCount}</span></div>
       <div class="kv"><span class="kk">消息响应</span><span class="vv">${fe.onlyWhenMentioned?'仅回复 @ 机器人的消息':'接收群内普通消息'}</span></div>
       <div class="feishu-actions"><button class="btn primary" data-gotab="groups">管理项目群</button><a class="btn" data-guide="usage/" href="${guideBase()}usage/" target="_blank" rel="noopener">查看使用指南</a></div>`
-      :`<div class="feishu-actions"><a class="btn primary" data-guide="install/#feishu" href="${guideBase()}install/#feishu" target="_blank" rel="noopener">查看扫码接入指南</a></div>`}
+      :''}
     ${configured?`<details class="feishu-details"><summary>高级：应用信息与手动接入</summary>
       <div class="kv"><span class="kk">App ID</span><span class="vv">${esc(fe&&(fe.appId||(fe.appIdRef?'env:'+fe.appIdRef:''))||'未配置')}</span></div>
       <div class="kv"><span class="kk">应用凭据</span><span class="vv">已设置，不显示密钥</span></div>
@@ -5830,8 +5864,18 @@ const I18N_EN=[
   ["去「对话」", "Open Chat"],
   ["接入飞书（可选）", "Connect Feishu (optional)"],
   ["接入后在手机上也能派活，还能把它拉进项目群。方法见「设置」里的飞书卡", "Once connected you can send tasks from your phone and add it to project groups. See the Feishu card in Settings."],
-  ["现在只在这台电脑上对话。要在飞书里也能找它：先停止 SintBot，在终端运行", "Conversations currently stay on this Mac. To reach it from Feishu too: stop SintBot, run"],
-  ["，用手机飞书扫码确认，再启动。本机对话、记录和现有设置都会保留。", "in a terminal, confirm the scan in Feishu on your phone, then start SintBot again. Your conversations, transcripts and settings are kept."],
+  ["用手机飞书扫码确认，自动创建机器人和项目群。服务不用停，现有对话、记录和设置都保留，新群沿用现在的模型。", "Scan with Feishu on your phone to create the bot and a project group. SintBot keeps running; your conversations, transcripts and settings stay, and the new group uses the current model."],
+  ["扫码接入飞书", "Scan to connect Feishu"],
+  ["查看接入指南", "Read the setup guide"],
+  ["扫码后在手机飞书里点确认，SintBot 会建好应用和项目群，大约一分钟。", "After scanning, confirm in Feishu on your phone. SintBot creates the app and the project group in about a minute."],
+  ["正在申请飞书二维码…", "Requesting a Feishu QR code…"],
+  ["飞书已接入", "Feishu connected"],
+  ["飞书二维码", "Feishu QR code"],
+  ["当前服务不能添加飞书连接", "This service cannot add a Feishu connection"],
+  ["飞书接入正在进行", "Feishu setup is already running"],
+  ["飞书接入失败", "Feishu setup failed"],
+  ["飞书接入没有完成", "Feishu setup did not finish"],
+  ["这台 SintBot 已经接入了飞书", "This SintBot is already connected to Feishu"],
   ["对话", "Chat"],
   ["本机对话", "Conversations"],
   ["对话 — 在这台电脑上直接和它说话", "Chat — talk to it directly on this Mac"],

@@ -1,5 +1,20 @@
 [
   {
+    "version": "1.4.34",
+    "date": "2026-11-21",
+    "name": "Add Feishu from the console",
+    "items": [
+      {
+        "t": "Connect Feishu from the console after starting with local chat",
+        "d": "Settings → Feishu has “Scan to connect Feishu”: the QR code appears on the page, and once you confirm in Feishu on your phone the app and a project group are created and connected. SintBot keeps running and no terminal is needed. Conversations, transcripts and settings stay, the configuration is backed up first, and the new group uses the model your conversation already uses."
+      },
+      {
+        "t": "Setup guide",
+        "d": "The guide link on the Feishu card now opens the “Already using SintBot? Add Feishu later” section, and the setup steps no longer mention choosing an executor."
+      }
+    ]
+  },
+  {
     "version": "1.4.33",
     "date": "2026-11-21",
     "name": "Setup without choosing an executor",

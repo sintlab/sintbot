@@ -201,6 +201,27 @@ function assertAttachable(existing, configPath) {
   }
 }
 
+// The console's attach (src/feishuattach.js): Feishu joins a running
+// installation that has no Feishu app yet, whatever else it already connects
+// (local conversations, WeCom, Slack). The service's own writer commits it.
+function assertLiveAttachable(existing, configPath) {
+  if (!existing) throw new Error(`${configPath} does not exist`)
+  if (existing.unreadable) throw new Error(`${configPath} is not readable JSON; fix it before attaching Feishu`)
+  if (existing.feishu?.appId || existing.feishu?.appSecret) throw new Error('这台 SintBot 已经接入了飞书')
+  if (Object.entries(existing.groups || {}).some(([chatId, group]) => group?.platform === 'feishu' || (!group?.platform && /^oc_/.test(chatId) && !isLocalChatId(chatId)))) throw new Error('配置里已有飞书群，不能再次接入')
+}
+
+// The model of the new group: the one the installation's first conversation
+// already uses (backend, model and depth), so the Feishu group answers the same.
+function inheritedBrain(existing) {
+  const groups = Object.values(existing?.groups || {})
+  const from = groups.find(group => group?.platform === 'local' && group.provider) || groups.find(group => group?.provider)
+  if (!from) return {}
+  const out = Object.fromEntries(['provider', 'model', 'effort'].filter(key => typeof from[key] === 'string' && from[key]).map(key => [key, from[key]]))
+  if (from.providerPrefs && typeof from.providerPrefs === 'object') out.providerPrefs = JSON.parse(JSON.stringify(from.providerPrefs))
+  return out
+}
+
 // The service must be stopped: it keeps the configuration it started with, and
 // the new group's journal is registered by the next start. A lock left by a
 // process that no longer exists does not block.
@@ -354,8 +375,11 @@ async function connectFlow(argv, d, abort) {
     : d.env.SBOT_CONFIG ? path.resolve(d.env.SBOT_CONFIG) : path.join(d.home, '.sbot', 'config.json')
   if (!path.isAbsolute(configPath)) throw new Error('The configuration path must be absolute')
   const attach = values.attach === true
+  // Run by the console inside the service: d.live commits through its writer.
+  const live = attach && d.live ? d.live : null
   const assertTarget = () => {
-    if (attach) {
+    if (live) assertLiveAttachable(readExistingConfig(fs, configPath), configPath)
+    else if (attach) {
       assertAttachable(readExistingConfig(fs, configPath), configPath)
       assertServiceStopped(fs, stateDir, d.isAlive)
     } else {
@@ -389,9 +413,11 @@ async function connectFlow(argv, d, abort) {
   if (early.verdict === 'stop') { say(early.notice); return 1 }
 
   // Runners present on this Mac; the group's provider must be one of them.
-  const runners = probeRunners(d.spawnSync, d.env)
+  const runners = live ? { codex: true, claude: true } : probeRunners(d.spawnSync, d.env)
   const available = RUNNERS.filter(runner => runners[runner])
-  const deferred = await chooseGroupModel({ requested: values.provider, defer: values['defer-model'] === true, runners, d, say })
+  // Live: the group takes the model already in use (inheritedBrain), no catalog.
+  const deferred = live ? { provider: '', catalog: null }
+    : await chooseGroupModel({ requested: values.provider, defer: values['defer-model'] === true, runners, d, say })
   if (interrupted()) return EXIT_INTERRUPTED
   let provider = deferred ? deferred.provider : values.provider
   if (provider && !runners[provider]) throw new Error(`${provider} did not answer --version; install and sign in to it first`)
@@ -421,7 +447,7 @@ async function connectFlow(argv, d, abort) {
     const modelDefaults = applyInitialGroupDefaults(dryRun.config, givenChatId || 'oc_onboarding_pending', selectedCatalog)
     d.onModelDefaults?.(modelDefaults)
     say(`新群默认：${modelDefaults.name} · ${modelDefaults.effort}。接入后可在控制台修改。`)
-  } else say(MODEL_LATER)
+  } else if (!live) say(MODEL_LATER)
   if (interrupted()) return EXIT_INTERRUPTED
 
   // Step 1: the scan. The link is printed, and a local page renders the QR
@@ -445,6 +471,7 @@ async function connectFlow(argv, d, abort) {
       ...(reuseAppId === undefined ? { createOnly: true } : { appId: reuseAppId }),
       appPreset: manifest.appPreset, addons: sdkAddons(manifest.addons), source: manifest.source, signal: abort.signal,
       onQRCodeReady: ({ url, expireIn }) => {
+        if (live) { live.onQr?.(url, Number(expireIn) || 0); say(`请用手机飞书扫码，二维码 ${Math.floor(Number(expireIn) || 0)} 秒内有效。`); return }
         stdout.write(`${url}\n`)
         say(`二维码 ${Math.floor(Number(expireIn) || 0)} 秒内有效。`)
         try {
@@ -586,13 +613,14 @@ async function connectFlow(argv, d, abort) {
       // Attach: the installation's own file plus the Feishu block and the new
       // group. The merged configuration is checked against the existing
       // journals before anything is written, and the old file is kept.
-      let next = built.config
-      if (attach) {
-        const current = readExistingConfig(fs, configPath)
-        next = { ...current, feishu: built.config.feishu,
+      const merge = current => live
+        ? { ...current, feishu: built.config.feishu,
+          groups: { ...current.groups, [chatId]: { ...built.config.groups[chatId], ...inheritedBrain(current) } } }
+        : { ...current, feishu: built.config.feishu,
           providers: { ...built.config.providers, ...(current.providers || {}) },
           groups: { ...current.groups, [chatId]: built.config.groups[chatId] } }
-      }
+      let next = built.config
+      if (attach) next = merge(readExistingConfig(fs, configPath))
       if (!observed.exists) {
         fs.mkdirSync(path.dirname(workdir), { recursive: true, mode: 0o755 })
         fs.mkdirSync(workdir, { mode: 0o755 })
@@ -613,8 +641,11 @@ async function connectFlow(argv, d, abort) {
         fs.copyFileSync(configPath, backup)
         fs.chmodSync(backup, 0o600)
       }
-      if (fs.existsSync(configPath)) fs.chmodSync(configPath, 0o600)
-      atomicWriteJSON(configPath, next, { mode: 0o600 })
+      if (live) live.commit(merge)
+      else {
+        if (fs.existsSync(configPath)) fs.chmodSync(configPath, 0o600)
+        atomicWriteJSON(configPath, next, { mode: 0o600 })
+      }
       configCommitted = true
     })
     plan = decide('config', { observed: { configPath } })
@@ -632,6 +663,7 @@ async function connectFlow(argv, d, abort) {
     plan = core.connectPlan('init', { basic })
   } catch (error) { plan = decide('init', { code: LOCAL_FAILURE, msg: error?.message || String(error) }) }
   if (plan.verdict === 'stop') return 1
+  if (live) { live.onBound?.({ appId, chatId, name: chatName }); return 0 }
   const installed = path.join(d.home, '.local', 'share', 'sintbot', 'bin', 'sintbot')
   const bin = fs.existsSync(installed) ? '"$HOME/.local/share/sintbot/bin/sintbot"' : 'sintbot'
   stdout.write(`${plan.notice}\n${bin} start --config ${shellQuote(configPath)} --data-dir ${shellQuote(stateDir)} --ui\n`)

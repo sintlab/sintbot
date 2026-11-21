@@ -10,6 +10,7 @@ const { C2DurableJournal } = require('./core/c2durablejournal')
 const { assertNoLegacyGroupState } = require('./c2migration')
 const { applyBrainChange } = require('./groupbrain')
 const { proxyFromEnv } = require('./core/proxy')
+const { platformsConfigured } = require('./config')
 
 const GLOBAL_TASK_KEYS = ['agent', 'timezone', 'brand']
 // A group's model and depth (providerPrefs, legacy model) are not here: the
@@ -133,13 +134,17 @@ function createC2ConfigControl({ installation, getBindings, getHeld = () => new 
       delete copy.admins; delete copy.adminOpenId; delete copy.adminName
       return copy
     }
-    if (!isDeepStrictEqual(connectionOnly(cfg.feishu), connectionOnly(next.cfg.feishu))) {
-      throw new Error('Connection settings require a service restart')
-    }
-    // A WeCom or Slack connection may be added online, and only as the exact
-    // configuration its attach flow has just proven; any other change to
-    // either block needs a restart.
+    // Feishu, WeCom or Slack may be added online, and only as the exact
+    // configuration its attach flow has just proven (an installation without
+    // that platform yet); any other change to its block needs a restart.
     const connectionAdded = []
+    if (!isDeepStrictEqual(connectionOnly(cfg.feishu), connectionOnly(next.cfg.feishu))) {
+      if (platformsConfigured(cfg).feishu || typeof validateConnectionAddition !== 'function' ||
+          typeof activateConnection !== 'function' || validateConnectionAddition(cfg, next.cfg, 'feishu') !== true) {
+        throw new Error('Connection settings require a service restart')
+      }
+      connectionAdded.push('feishu')
+    }
     for (const name of ['wecom', 'slack']) {
       if (isDeepStrictEqual(cfg[name], next.cfg[name])) continue
       if (typeof validateConnectionAddition !== 'function' || typeof activateConnection !== 'function' ||

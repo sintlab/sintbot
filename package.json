@@ -1,6 +1,6 @@
 {
   "name": "sintbot",
-  "version": "1.4.33",
+  "version": "1.4.34",
   "private": false,
   "description": "A free, open-source personal AI agent on your Mac: local conversations, Slack, Feishu groups and WeCom chats with Codex or Claude Code.",
   "bin": {
@@ -133,6 +133,7 @@
     "src/core/verify.js",
     "src/design.js",
     "src/fatal.js",
+    "src/feishuattach.js",
     "src/feishucli.js",
     "src/gitrepo.js",
     "src/groupbrain.js",

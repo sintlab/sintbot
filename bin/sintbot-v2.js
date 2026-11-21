@@ -444,6 +444,16 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
             await platform.add('wecom', adapter)
             senders.wecom = createWecomRecoverySender({ cfg, platform, notes: recoveryNotes })
           },
+          addFeishu: async config => {
+            if (platform.get('feishu')) throw new Error('飞书连接已存在')
+            const feishuApi = feishuClient(config.feishu.appId, config.feishu.appSecret)
+            const adapter = createFeishuPlatform({ appId: config.feishu.appId,
+              appSecret: config.feishu.appSecret, botOpenId: config.feishu.botOpenId,
+              onlyWhenMentioned: config.feishu.onlyWhenMentioned === true,
+              ws: config.feishu.ws || {}, card: config.feishu.card || {}, client: feishuApi })
+            await platform.add('feishu', adapter)
+            senders.feishu = createFeishuRecoverySender({ cfg, platform, client: feishuApi, notes: recoveryNotes })
+          },
           addSlack: async config => {
             if (platform.get('slack')) throw new Error('Slack 连接已存在')
             await platform.add('slack', slackAdapter(config))
@@ -452,7 +462,7 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
           stopPlatform: async () => {
             platform.seal()
             const stopped = await Promise.all([
-              adapters.feishu ? adapters.feishu.stop({ strict: true }) : true,
+              platform.get('feishu') ? platform.get('feishu').stop({ strict: true }) : true,
               adapters.wecom ? adapters.wecom.stop({ strict: true }) : true,
               platform.get('slack') ? platform.get('slack').stop({ strict: true }) : true, local.stop()])
             return stopped.every(value => value === true)
@@ -583,7 +593,12 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
       writeConfig: mutate => configControl.writeConfig(mutate),
       activateConnection: config => liveTransport.addSlack(config),
       awaitConnected: () => liveTransport?.platform.get('slack')?.ready(20000) || Promise.resolve(false) })
-    const attachOf = name => name === 'slack' ? slackAttach : wecomAttach
+    const feishuAttach = require('../src/feishuattach').createFeishuAttach({
+      configPath: cfg._path, stateDir, canAttach: () => service.serving && !service.inMaintenance,
+      writeConfig: mutate => configControl.writeConfig(mutate),
+      activateConnection: config => liveTransport.addFeishu(config),
+      awaitConnected: () => liveTransport?.platform.get('feishu')?.ready?.(20000) ?? Promise.resolve(!!liveTransport?.platform.get('feishu')) })
+    const attachOf = name => name === 'slack' ? slackAttach : name === 'feishu' ? feishuAttach : wecomAttach
     configControl = require('../src/c2configcontrol').createC2ConfigControl({
       installation, getBindings: () => service.bindings, getHeld: () => service.held,
       assertWriterLock, store,
@@ -674,7 +689,7 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
       } })
     if (uiEnabled && !preflightOnly) {
       ui = require('../src/c2console').createC2Console({
-        configPath: cfg._path, stateDir, host: uiHost, activity, store, wecomAttach, slackAttach,
+        configPath: cfg._path, stateDir, host: uiHost, activity, store, wecomAttach, slackAttach, feishuAttach,
         getConfig: () => cfg, getBindings: () => service.bindings,
         getHeld: () => service.held, getCapacity: () => capacity.snapshot(),
         acquireCapacity: options => capacity.acquire(options),

@@ -233,7 +233,7 @@ function bindNoticeText(workdir, platform = 'feishu', cmd = '/help', chatId = ''
   return `✅ ${here}已绑定项目「${path.basename(String(workdir || '')) || '(未命名)'}」\n${platform === 'wecom' ? '@我 派单(只有 @ 我的消息我才收得到)' : slackDm ? '直接发消息派单' : platform === 'slack' ? '在频道里 @我 派单(不 @ 我的消息不处理)' : '直接发消息或 @我 派单'};${cmd} 查看命令`
 }
 
-function createUiServer({ configPath, getLiveState = null, getConnHealth = null, onConfigChange = null, onHostChange = null, control = null, updater = null, host = '127.0.0.1', log = () => {}, issuesPath = null, sessionsPath = null, auditPath = null, ledgerPath = null, inboxDismissPath = null, fetchImpl = null, cdpImpl = null, onTakeoverClaim = null, onTakeoverExpire = null, onTakeoverEnd = null, takeoverNow = null, wecomExec = null, verifyFile = null, setupMode = null, cronRecoveryEnabled = false, runtimePolicy = null, cronTools = null, wecomAttach = null, getWecomChats = null, slackAttach = null, getSlackChats = null, publicReachOptions = null, codexCli = null, claudeCli = null, schedules = null } = {}) {
+function createUiServer({ configPath, getLiveState = null, getConnHealth = null, onConfigChange = null, onHostChange = null, control = null, updater = null, host = '127.0.0.1', log = () => {}, issuesPath = null, sessionsPath = null, auditPath = null, ledgerPath = null, inboxDismissPath = null, fetchImpl = null, cdpImpl = null, onTakeoverClaim = null, onTakeoverExpire = null, onTakeoverEnd = null, takeoverNow = null, wecomExec = null, verifyFile = null, setupMode = null, cronRecoveryEnabled = false, runtimePolicy = null, cronTools = null, wecomAttach = null, feishuAttach = null, getWecomChats = null, slackAttach = null, getSlackChats = null, publicReachOptions = null, codexCli = null, claudeCli = null, schedules = null } = {}) {
   // Legacy scheduling rules are injected by its compatibility wrapper only.
   // The durable console cannot acquire those rules through this base module.
   const unsupportedCron = () => { throw new Error('当前控制台未接入定时任务') }
@@ -939,6 +939,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
   })
   let wecomJob = { phase: 'idle', notice: '' }, wecomAbort = null
   let slackJob = { phase: 'idle', notice: '' }, slackAbort = null
+  let feishuJob = { phase: 'idle', notice: '' }, feishuAbort = null
   const server = http.createServer(async (req, res) => {
     // 请求目标先过一道,不合格一律 400:① 带反斜杠 / 控制字符 / 空格 —— URL 解析器把 `\` 当 `/`、吞掉制表与换行,
     //   `/api\login` 就落到 /api/login,而反代的精确匹配(location = /api/login)认不出这种写法,两边认法不一致 = 侧门;
@@ -996,6 +997,30 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
             wecomJob = { phase: 'done', notice: '企业微信已添加，请在企业微信里发送任务。', chatId: result.chatId }
           }, error => { wecomJob = { phase: 'failed', notice: error?.message || '企业微信接入失败' } })
         return sendJSON(res, 200, wecomJob)
+      }
+      // ── Feishu added to a running installation (src/feishuattach.js) ─────────
+      if (p === '/api/feishu/attach' && req.method === 'GET') return sendJSON(res, 200, feishuJob)
+      if (p === '/api/feishu/attach/retry' && req.method === 'POST') {
+        if (!feishuAttach) return sendJSON(res, 409, { error: '飞书接入不可用' })
+        return sendJSON(res, 200, await feishuAttach.retry())
+      }
+      if (p === '/api/feishu/attach/cancel' && req.method === 'POST') {
+        feishuAbort?.abort(); return sendJSON(res, 200, { ok: true })
+      }
+      if (p === '/api/feishu/attach' && req.method === 'POST') {
+        if (!feishuAttach) return sendJSON(res, 409, { error: '当前服务不能添加飞书连接' })
+        if (feishuJob.phase === 'running') return sendJSON(res, 409, { error: '飞书接入正在进行' })
+        const input = await body(req)
+        feishuAbort = new AbortController()
+        // The job carries notices and the QR code (an inline SVG) only; the app
+        // credentials never leave the attach call.
+        const job = feishuJob = { phase: 'running', notice: '正在申请飞书二维码…', step: 'scan', qr: null }
+        void feishuAttach.run({ workdir: input?.workdir }, { signal: feishuAbort.signal,
+          onNotice: notice => { job.notice = notice },
+          onQr: url => { try { job.qr = require('../setupserver').svgOf(url) || null } catch { job.qr = null } job.url = url; job.step = 'scan' } }).then(result => {
+            feishuJob = { phase: 'done', notice: `飞书已接入，项目群「${result.name || ''}」已建好，打开手机飞书就能看到。`, chatId: result.chatId }
+          }, error => { feishuJob = { phase: 'failed', notice: error?.message || '飞书接入失败' } })
+        return sendJSON(res, 200, feishuJob)
       }
       // ── Slack on the release service ───────────────────────────────────────
       // Slack has no scan-to-create flow: the person creates their own app from

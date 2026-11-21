@@ -11,7 +11,7 @@ const { createC2ChatFacts } = require('./c2chatfacts')
 
 // A host facade over existing v2 authorities, not a second execution engine.
 // The allowlist applies after the existing console's authentication boundary.
-const READ_PATHS = ['/api/wecom/chats', '/api/wecom/attach', '/api/slack/channels', '/api/slack/attach', '/api/slack/manifest', '/api/slack/proxy', '/api/state', '/api/events', '/api/inbox', '/api/activity', '/api/activity/detail',
+const READ_PATHS = ['/api/wecom/chats', '/api/wecom/attach', '/api/feishu/attach', '/api/slack/channels', '/api/slack/attach', '/api/slack/manifest', '/api/slack/proxy', '/api/state', '/api/events', '/api/inbox', '/api/activity', '/api/activity/detail',
   '/api/codex/models', '/api/usage',
   '/api/plugins', '/api/design/styles', '/api/design/icons', '/api/fs/listdir',
   '/api/feishu/admin-candidates', '/api/feishu/org-users', '/api/feishu/resolve-contact',
@@ -34,6 +34,7 @@ const READ_PATHS = ['/api/wecom/chats', '/api/wecom/attach', '/api/slack/channel
   '/api/schedules',
   START_PATH, CALLBACK_PATH]
 const WRITE_PATHS = ['/api/wecom/attach', '/api/wecom/attach/cancel', '/api/wecom/attach/retry',
+  '/api/feishu/attach', '/api/feishu/attach/cancel', '/api/feishu/attach/retry',
   '/api/slack/attach', '/api/slack/attach/cancel', '/api/slack/attach/retry', '/api/slack/verify', '/api/login', '/api/logout', '/api/logout/all',
   '/api/ui/network', '/api/ui/public-url', '/api/ui/update-settings', '/api/feishu/admins',
   '/api/groups', '/api/groups/provider', '/api/groups/brain', '/api/fs/mkdir',
@@ -407,7 +408,7 @@ function createC2Console(options = {}) {
   // The process-wide model list (also used by /model), when the service has one.
   facade.modelCatalog = typeof options.modelCatalog === 'function' ? options.modelCatalog : null
   const ui = createUiServer({
-    getWecomChats: options.getWecomChats, wecomAttach: options.wecomAttach,
+    getWecomChats: options.getWecomChats, wecomAttach: options.wecomAttach, feishuAttach: options.feishuAttach || null,
     getSlackChats: options.getSlackChats, slackAttach: options.slackAttach, configPath, host, log, getConnHealth, updater: options.updater || null,
     // The service's scheduled tasks (null where this run has none: every
     // /api/schedules request is then refused).

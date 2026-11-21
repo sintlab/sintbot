@@ -11,7 +11,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { StringDecoder } = require('node:string_decoder')
-const { loadConfig, migrateModelSettings, applyProxyEnv, deriveNoProxy, DEFAULTS, resolveSecret } = require('../config')
+const { applyNewGroupDefaults, loadConfig, migrateModelSettings, applyProxyEnv, deriveNoProxy, DEFAULTS, resolveSecret } = require('../config')
 const verify = require('../core/verify') // 凭据最近一次验证的记录:模型测试 / 平台预检写,概览读
 const projectsroot = require('../projectsroot') // 项目根目录围栏:目录浏览 / 保存绑定 / 风格提炼三处同一份判据
 const { atomicWriteJSON } = require('../core/store')
@@ -774,7 +774,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         permissionMode: cfg.agent.permissionMode,
         maxConcurrent: cfg.agent.maxConcurrent,
         maxTurnTimeMins: cfg.agent.maxTurnTimeMins,
-        ackDelayMs: cfg.agent.ackDelayMs, // 回执等待毫秒(默认 25s 经 config 层合并;界面按秒显示)
+        ackDelayMs: cfg.agent.ackDelayMs, // 回执等待毫秒(默认 3s 经 config 层合并;界面按秒显示)
       },
       // Masked: a saved proxy may carry a user name and password (Slack onboarding saves the terminal's).
       // Saving the field back unchanged keeps them (see /api/proxy).
@@ -2252,6 +2252,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
         next.platform = PLATFORMS.includes(platform) ? platform : chatPlatformOf(raw, chatId)
         // No `lang` key is written here: a new Slack conversation speaks English, any other Chinese
         // (src/chatlang.js), whatever the language of the page; an entry bound before keeps what it has.
+        if (isNewBinding) applyNewGroupDefaults(next) // 新群默认完全访问 + 数据明文(已绑定的群不动)
         raw.groups[chatId] = next
         if (runtimePolicy) {
           // A new binding or another backend starts with the recommended model

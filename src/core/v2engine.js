@@ -2565,7 +2565,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
       // No visible output after ackDelayMs: open the card that would be opened
       // anyway and fill it with "received"; the answer replaces it in place and
       // a turn that ends silent recalls it at the terminal.
-      const ackMs = this.cfg.agent?.ackDelayMs == null ? 25_000 : Number(this.cfg.agent.ackDelayMs)
+      const ackMs = this.cfg.agent?.ackDelayMs == null ? 3_000 : Number(this.cfg.agent.ackDelayMs)
       // No card before the runner is accepted. A runner accepted after the
       // delay (Codex holds its events until its turn start returns) gets the
       // card as soon as it is accepted.

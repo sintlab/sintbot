@@ -23,11 +23,11 @@ const DEFAULTS = {
   // Tool permissions are PER-PROJECT: each group carries its own allowedTools /
   // disallowedTools (see below). No global allow/deny — a group with none configured
   // runs fully locked down (dontAsk ⇒ read-only safe set only), which is fail-closed.
-  // maxTurnTimeMins defaults to 30: an uncapped runaway turn would
+  // maxTurnTimeMins defaults to 60: an uncapped runaway turn would
   // hold a concurrency slot and the group lock forever. 0 = explicitly off.
   // ackDelayMs:收到真人消息后迟迟没动静,先回一声「已收到」的等待毫秒数(0 = 不发;
-  // engine 侧另有 == null ? 25s 兜底,直构 Engine 不经本层合并也不失默认)。
-  agent: { bin: 'claude', permissionMode: 'dontAsk', maxTurnTimeMins: 30, maxConcurrent: 2, ackDelayMs: 25_000 },
+  // engine 侧另有 == null ? 3s 兜底,直构 Engine 不经本层合并也不失默认)。
+  agent: { bin: 'claude', permissionMode: 'dontAsk', maxTurnTimeMins: 60, maxConcurrent: 2, ackDelayMs: 3_000 },
   // 时间口径(IANA 时区名):群内一切时间表述/消息时间戳/spawn 出去的 TZ 都按它,
   // 默认北京时间 —— 主机系统时区不参与(海外主机部署照样说北京时间)。
   timezone: DEFAULT_TZ,
@@ -311,4 +311,13 @@ function chatPlatform(cfg, chatId) {
   return live.length === 1 ? live[0] : null
 }
 
-module.exports = { loadConfig, normalizeConfig, migrateModelSettings, findConfigPath, defaultConfigPath, DEFAULTS, applyProxyEnv, deriveNoProxy, resolveSecret, platformsConfigured, inferChatPlatform, normalizeGroupPlatforms, chatPlatform, PLATFORMS }
+// 新建群绑定的默认值(2026-11-21 用户定):完全访问 + 数据明文。只在绑定新群时填缺省字段,
+// 不改「字段缺省 ⇒ 受限 / 遮盖」的运行语义,已绑定的群保持原样;控制台仍可逐群改回受限 / 遮盖。
+const NEW_GROUP_DEFAULTS = Object.freeze({ permissionMode: 'bypassPermissions', redactPii: false })
+function applyNewGroupDefaults(group) {
+  if (!group || typeof group !== 'object') return group
+  for (const [k, v] of Object.entries(NEW_GROUP_DEFAULTS)) if (group[k] === undefined) group[k] = v
+  return group
+}
+
+module.exports = { NEW_GROUP_DEFAULTS, applyNewGroupDefaults, loadConfig, normalizeConfig, migrateModelSettings, findConfigPath, defaultConfigPath, DEFAULTS, applyProxyEnv, deriveNoProxy, resolveSecret, platformsConfigured, inferChatPlatform, normalizeGroupPlatforms, chatPlatform, PLATFORMS }

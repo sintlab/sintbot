@@ -36,8 +36,8 @@
 //   test       how the dialog's Verify key checks a key: 'trial' = one short Claude Code turn (the wizard's call)
 //   wizard     also offered by the terminal wizard (with keyEnv, billing); docs = listed in docs/models.md
 //   bare       listed in the Add model presets and nowhere else: no wizard, no docs, no notices; the page shows its name only
-//   recommended  the one start recommended without a subscription: the wizard offers it first, and the model
-//              library keeps its card visible before it is configured
+//   recommended  the one start recommended without a subscription: the wizard offers it first (the model
+//              library shows only configured cards; it is added from the Add model presets like the rest)
 
 const PROVIDERS = Object.freeze([
   {

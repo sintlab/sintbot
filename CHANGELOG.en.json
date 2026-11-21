@@ -1,5 +1,32 @@
 [
   {
+    "version": "1.4.32",
+    "date": "2026-11-21",
+    "name": "Open defaults for new groups, a shorter wait",
+    "items": [
+      {
+        "t": "New groups start with full access and plain data output",
+        "d": "A group added in the console or connected through the setup page now starts in Full access, with phone numbers and emails shown as is. Groups already bound keep their settings; to restrict one, switch it back to read-only or allowlist and data output back to masked on its Groups · Projects card."
+      },
+      {
+        "t": "Acknowledgement after 3 seconds",
+        "d": "When nothing has appeared 3 seconds after a message, a “Got it, working on it…” card is posted (was 25 seconds). Change it in General settings; 0 turns it off."
+      },
+      {
+        "t": "Turn limit 60 minutes by default",
+        "d": "The default limit for one turn is now 60 minutes instead of 30. A value already set in the configuration is kept."
+      },
+      {
+        "t": "No preset DeepSeek card in the model library",
+        "d": "The Models page shows only configured model cards. DeepSeek is still among the Add model presets."
+      },
+      {
+        "t": "No model field when adding Claude sign-in",
+        "d": "With the Claude sign-in preset, the model field is hidden along with the endpoint and key; the model is chosen per group under Groups · Projects."
+      }
+    ]
+  },
+  {
     "version": "1.4.31",
     "date": "2026-11-20",
     "name": "A calmer console",

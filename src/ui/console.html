@@ -1986,10 +1986,8 @@ function providerGroupCount(name){return (S.groups||[]).filter(g=>!g.paused&&(g.
 function renderProviders(){
   // A visible preset does not write configuration until the user saves it.
   const modelCards=[...S.providers];
-  // 清单里推荐的那家(没有订阅时的起步)还没配时也摆一张预设卡,点 ⚙ 直接按它的预设添加。
-  const rec=PROVIDER_REGISTRY.find(r=>r.recommended);
-  if(rec&&!modelCards.some(p=>p.name===rec.id))modelCards.push({...PRESETS[rec.preset],preset:true,keyStatus:'none',configured:false});
-  const cards=modelCards.filter(p=>showAll||(!p.hidden&&(p.configured||(rec&&p.name===rec.id)))).map(p=>{
+  // 模型库只列配置里已有的卡;推荐的那家不再预置占位卡(2026-11-21),从「添加模型」的预设里加。
+  const cards=modelCards.filter(p=>showAll||(!p.hidden&&p.configured)).map(p=>{
     const cs=p.runner==='codex'?codexStatus[p.name]:null;
     const chip=p.runner==='codex'?(cs&&cs.loggedIn&&cs.verified?`<span class="chip set" title="${esc(cs.text||'已验证')}">订阅登录 ${IC.check}</span>`:cs&&cs.dead?`<span class="chip none" title="${esc(cs.text||'')}">登录态已失效</span>`:'<span class="chip" title="点下方「验证登录」确认 codex 订阅登录态 + 拉取额度">订阅登录·未验证</span>'):p.loggedIn?claudeChip():`<span class="chip ${p.keyStatus}">${p.keyStatus==='set'?'key 已设':p.keyStatus==='env'?'env:'+esc(p.keyRef):'无 key'}</span>`;
     return `<div class="card pcard${p.preset?' is-preset':''}${p.hidden?' is-hidden':(!p.configured?' is-unconfig':'')}" data-prov="${esc(p.name)}">
@@ -2009,7 +2007,7 @@ function renderProviders(){
       <div class="reply-slot"></div>
     </div>`;
   }).join('');
-  const extra=S.providers.filter(p=>p.hidden||(!p.configured&&!(rec&&p.name===rec.id))).length;
+  const extra=S.providers.filter(p=>p.hidden||!p.configured).length;
   const provLead=runtimeAllows('POST','/api/providers/add')?RUNTIME_UI_TEXT.providers:RUNTIME_UI_TEXT.providersView;
   const provLeadOpen=!!($('#providers .lead-more')||{}).open;
   const toggle=extra?`<button class="btn ghost" id="showAll">${showAll?'只看已配置':`显示全部 (${extra})`}</button>`:'';
@@ -2058,10 +2056,10 @@ function renderProviders(){
   const addModelTile=$('#addModelTile');if(addModelTile)addModelTile.onclick=()=>openProviderModal(null);   // 空状态的虚线卡
   if(runtimeAllows('POST','/api/providers/order'))makeSortable($('#pgrid'),{item:'.pcard:not(.is-preset)',key:c=>c.dataset.prov,save:o=>api('/api/providers/order','POST',{order:o})});
   $$('#pgrid .pcard').forEach(card=>{
-    const name=card.dataset.prov, slot=$('.reply-slot',card), preset=card.classList.contains('is-preset');
+    const name=card.dataset.prov, slot=$('.reply-slot',card);
     card.addEventListener('click',async e=>{
       const b=e.target.closest('button[data-act]'); if(!b)return;
-      if(b.dataset.act==='edit'){openProviderModal(preset?null:name,preset?{preset:rec.preset}:{});return;}
+      if(b.dataset.act==='edit'){openProviderModal(name,{});return;}
       if(b.dataset.act==='usage'){
         const cx=b.dataset.cx==='1', row=b.closest('.kv'), vv=row&&$('.vv',row);
         b.disabled=true;const old=b.innerHTML;b.innerHTML='<span class="spin"></span>';
@@ -2259,7 +2257,7 @@ function openProviderModal(name,opts){
     ${codexNote}
     ${showModelSec?`<h4 class="sec">${perGroup?'名称与型号':'型号与推理'}</h4>`:''}
     ${edit?'':'<div class="field"><label class="f" for="amName">名称</label><input id="amName" placeholder="如 glm / my-model"/></div>'}
-    ${perGroup?`<div class="hint" style="margin-bottom:12px">型号与思考深度按群在「群·项目」里选${(isCodex||isClaudeLogin||isKeyRoute)?'':'；这个端点的型号在下面填，各群共用'}。</div>`:''}
+    ${perGroup?`<div class="hint" style="margin-bottom:12px">型号与思考深度按群在「群·项目」里选${(isCodex||isClaudeLogin||isKeyRoute)?'':'<span id="amModelHint">；这个端点的型号在下面填，各群共用</span>'}。</div>`:''}
     ${isKeyRoute?'':isCodex&&perGroup?'':isCodex?`<div class="field"><label class="f">模型 model</label>
       <select id="amModelSel"><option value="${edit?esc(p.model):''}" selected>${edit&&p.model?esc(p.model):'(未设 — 用 codex 默认)'}</option></select>
       <input id="amModel" value="${edit?esc(p.model):''}" placeholder="如 gpt-5.6-sol" style="display:none;margin-top:8px"/>
@@ -2322,7 +2320,9 @@ function openProviderModal(name,opts){
     // 订阅登录预设:端点/key 清空并隐藏 —— 留着只会让人以为"还得填点什么"。
     // 型号也清空:新建时先跟随 Claude Code 默认,要钉死进卡片 ⚙ 里选(那儿才有真清单)。
     if(pr.login){if($b)$b.value='';if($m)$m.value='';const kf=$('#amKey');if(kf)kf.value='';}
-    for(const [el,hide] of [[$('#amBase'),!!pr.login],[$('#amKey'),!!pr.login]]){const f=el&&el.closest('.field');if(f)f.style.display=hide?'none':'';}
+    // 型号输入框也一起藏:订阅登录新建时跟随 Claude Code 默认,型号按群在「群·项目」里选(或进卡片 ⚙ 钉死)。
+    for(const [el,hide] of [[$('#amBase'),!!pr.login],[$('#amKey'),!!pr.login],[$m,!!pr.login]]){const f=el&&el.closest('.field');if(f)f.style.display=hide?'none':'';}
+    const mh=$('#amModelHint');if(mh)mh.style.display=pr.login?'none':'';
     const vb=$('#amVision');if(vb){vb.checked=pr.vision===false;const w=vb.closest('.inline');if(w)w.style.display=pr.login?'none':'';const h=w&&w.nextElementSibling;if(h&&h.classList.contains('hint'))h.style.display=pr.login?'none':'';}
     if($('#amEff'))$('#amEff').value=pr.env?.CLAUDE_CODE_EFFORT_LEVEL||'';
     $('#amPreset').dataset.env=JSON.stringify(pr.env||{});};$('#amPreset').onchange=apply;apply();}
@@ -4697,7 +4697,7 @@ function renderSettings(){
         ${concCapField(a.maxConcurrent,!!S.runtimeCapabilities)}
         <div class="field" style="flex:1;margin-bottom:0"><label class="f">单轮超时(分)</label><input id="aWall" type="number" min="0" value="${a.maxTurnTimeMins}"/>
           <div class="hint" style="margin-top:5px">单轮超此即中止 · 0 = 关</div></div>
-        <div class="field" style="flex:1;margin-bottom:0"><label class="f">回执等待(秒)</label><input id="aAck" type="number" min="0" value="${(a.ackDelayMs??25000)/1000}"/>
+        <div class="field" style="flex:1;margin-bottom:0"><label class="f">回执等待(秒)</label><input id="aAck" type="number" min="0" value="${(a.ackDelayMs??3000)/1000}"/>
           <div class="hint" style="margin-top:5px">超此秒数仍无输出才回「已收到」 · 0 = 不发</div></div></div>
       <div class="field" style="margin:12px 0 0;max-width:320px"><label class="f">群时间</label><input id="aTz" placeholder="Asia/Shanghai" value="${esc(S.timezone||'')}"/>
         <div class="hint" style="margin-top:5px">群内理解/表述时间的时区 · 留空 = 北京时间 · 与服务器时区无关</div></div>

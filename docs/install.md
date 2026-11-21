@@ -1,4 +1,4 @@
-# Install SintBot 1.4.31
+# Install SintBot 1.4.32
 
 English · [简体中文](./zh-CN/install.md)
 
@@ -16,7 +16,7 @@ For Slack, follow the [Slack connection and usage guide](./platforms/slack.md). 
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-The installer checks the environment, installs `sintbot@1.4.31` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.31`. No sudo is needed.
+The installer checks the environment, installs `sintbot@1.4.32` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.32`. No sudo is needed.
 
 To preview, append `-s -- --dry-run`. To choose another location, set `SINTBOT_INSTALL_DIR` and adjust the executable paths below.
 
@@ -172,7 +172,7 @@ In a group, send "Read the first line of the project README and reply with only 
 
 ## 5. Use it in a group
 
-In a Feishu group, any text message is a task. Replies arrive in a card that appears once the model starts answering, or after 25 seconds if it is still working without output. While the task runs, the card shows how long it has run, what it is doing and the steps already delivered; at the end those steps fold into a Process section.
+In a Feishu group, any text message is a task. Replies arrive in a card that appears once the model starts answering, or after 3 seconds if it is still working without output. While the task runs, the card shows how long it has run, what it is doing and the steps already delivered; at the end those steps fold into a Process section.
 
 | Command | Effect |
 | --- | --- |

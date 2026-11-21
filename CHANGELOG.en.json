@@ -1,5 +1,28 @@
 [
   {
+    "version": "1.4.33",
+    "date": "2026-11-21",
+    "name": "Setup without choosing an executor",
+    "items": [
+      {
+        "t": "No executor to choose on the setup page",
+        "d": "The setup page asks only for the project and the chat platform. Claude Code and Codex, when missing, install in the background side by side (into SintBot's own folder, no sudo, with a mirror when the official registry is unreachable); the page shows progress and a retry, and the scan does not wait."
+      },
+      {
+        "t": "Connect first, add a model later",
+        "d": "An executor already signed in on this Mac is used. Otherwise the group is created waiting for a model: a message there gets one line asking an admin to add a model on the console's Models page, and the first model added becomes the default."
+      },
+      {
+        "t": "Sign in to Claude or ChatGPT from the console",
+        "d": "The Claude and Codex cards on the Models page have a sign-in button that opens the browser; no terminal needed, and the card turns signed-in when you finish."
+      },
+      {
+        "t": "Setup page look",
+        "d": "Appearance and language use designed menus and the chat platform is a segmented control; no orange focus ring after a mouse click; the Slack “Agent” checkbox shows again."
+      }
+    ]
+  },
+  {
     "version": "1.4.32",
     "date": "2026-11-21",
     "name": "Open defaults for new groups, a shorter wait",

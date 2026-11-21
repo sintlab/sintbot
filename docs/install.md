@@ -1,12 +1,12 @@
-# Install SintBot 1.4.32
+# Install SintBot 1.4.33
 
 English · [简体中文](./zh-CN/install.md)
 
-You need a Mac, Node.js 22 or newer, and projects stored on that Mac. Install and sign in to at least one runner: Codex or Claude Code. This release connects 1–32 project conversations across Slack, Feishu China groups and WeCom chats or groups, binds each conversation to one local project, and runs in the foreground.
+You need a Mac, Node.js 22 or newer, and projects stored on that Mac. The setup page installs Codex and Claude Code when they are missing; sign in to one of them, or add an API key, on the console's Models page. This release connects 1–32 project conversations across Slack, Feishu China groups and WeCom chats or groups, binds each conversation to one local project, and runs in the foreground.
 
 ## Desktop app
 
-On an Apple silicon Mac, [download SintBot for macOS](https://github.com/sintlab/sintbot-desktop/releases/latest), drag it to Applications and open it. Node.js is included. Choose a project and executor, then connect Slack, scan with Feishu, scan with WeCom to create a bot, or start locally. Closing the window or quitting the app keeps the service running; Stop holds across logins until you choose Start. Remove Background Service preserves configuration and history.
+On an Apple silicon Mac, [download SintBot for macOS](https://github.com/sintlab/sintbot-desktop/releases/latest), drag it to Applications and open it. Node.js is included. Choose a project, then connect Slack, scan with Feishu, scan with WeCom to create a bot, or start locally. Closing the window or quitting the app keeps the service running; Stop holds across logins until you choose Start. Remove Background Service preserves configuration and history.
 
 For Slack, follow the [Slack connection and usage guide](./platforms/slack.md). For WeCom, follow the separate [connection and usage guide](./platforms/wecom.md).
 
@@ -16,7 +16,7 @@ For Slack, follow the [Slack connection and usage guide](./platforms/slack.md). 
 curl -fsSL https://sintbot.com/install.sh | bash
 ```
 
-The installer checks the environment, installs `sintbot@1.4.32` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.32`. No sudo is needed.
+The installer checks the environment, installs `sintbot@1.4.33` into `~/.local/share/sintbot`, and verifies the entry, built-in core and Feishu module. Continue when you see `Installed and verified SintBot 1.4.33`. No sudo is needed.
 
 To preview, append `-s -- --dry-run`. To choose another location, set `SINTBOT_INSTALL_DIR` and adjust the executable paths below.
 
@@ -26,7 +26,7 @@ To preview, append `-s -- --dry-run`. To choose another location, set `SINTBOT_I
 "$HOME/.local/share/sintbot/bin/sintbot" start --ui
 ```
 
-Without a configuration file this command does not fail; it opens the local setup page (`http://127.0.0.1:4600`, reachable only from this Mac). Choose a project and an executor, then pick your chat platform. In English the page lists Slack first.
+Without a configuration file this command does not fail; it opens the local setup page (`http://127.0.0.1:4600`, reachable only from this Mac). Choose a project, then pick your chat platform. Codex and Claude Code are installed in the background when missing (about 750 MB together, into SintBot's own folder, no sudo); the scan does not wait for them. In English the page lists Slack first.
 
 ### Slack
 
@@ -48,13 +48,13 @@ Prerequisite: the Feishu app on your phone is signed in with an enterprise or te
 
 On the setup page, choose **Feishu** under **Chat platform**. Enter a project name (default `sintbot`, created under `~/Projects` with a `README.md`) or pick an existing folder, choose the runner if both are installed, tick the basic option if you are not an organization administrator, then click Start. Scan the QR code on the page with Feishu and confirm on the phone. It then, in order: obtains the app credentials → runs the self-check → opens the contact range and visibility and publishes a version → creates a group and adds you → creates the project folder → writes `~/.sbot/config.json` → initializes the message journals, showing each result on the page. Once the scan is confirmed, the app exists in your organization; any later failed check stops before the folder and the configuration exist and the page offers Retry (it reuses the app already created, never a second one); if the group could not be created, the page asks you to create one by hand, add the bot, paste the group ID and continue.
 
-Before showing the QR code, setup reads the selected executor's live model catalog and displays its recommended model and thinking depth. These choices are saved explicitly for the new group. If the live list is unavailable, setup stops before creating an app; check the executor login and connection, then retry. After connecting, change the choices in the console or with `/model`. Existing group choices are preserved.
+When an executor on this Mac is already signed in, setup reads its live model catalog and saves the recommended model and thinking depth for the new group. Otherwise the group is created waiting for a model: a message there gets one line pointing to the console's Models page, where you sign in to a Claude or ChatGPT account in the browser (the Claude and Codex cards have a sign-in button) or add an API key. The first model added becomes the default. Change the choices later in the console or with `/model`; existing group choices are preserved.
 
 When setup completes the service starts right away and the page switches to the console a few seconds later. Keep the terminal open. In the new group, send "Read the first line of the project README and reply with only that line", then compare it with the `README.md` in the project folder.
 
 ### Start on this Mac without a chat platform
 
-If you have no company or team account, or just want to try it first, the setup page ends with "Use on this Mac first". It does not scan or create any app: it writes the configuration from the project and executor chosen on the page, the service starts, and the console opens on its Chat page. Say what you need there; Claude Code or Codex on this Mac works in the project folder and the answer comes back to the page. The transcript is stored under `local-chats/` in the data directory, on this Mac only.
+If you have no company or team account, or just want to try it first, the setup page ends with "Use on this Mac first". It does not scan or create any app: it writes the configuration for the project chosen on the page, the service starts, and the console opens on its Chat page. Say what you need there; Claude Code or Codex on this Mac works in the project folder and the answer comes back to the page. The transcript is stored under `local-chats/` in the data directory, on this Mac only.
 
 A conversation here runs through the same flow as a Feishu group: messages are registered, a task whose outcome is unknown is held for confirmation instead of being run again, and the commands listed by `/help` work. Unlike a group, the answer appears once the turn ends (the page shows a timer and Stop while it works), images and files are not supported yet, and there are no group message tools.
 

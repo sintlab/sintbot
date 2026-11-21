@@ -513,6 +513,17 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
   let claudeStatusCache = null // { at, login } — Claude 订阅登录态(`claude auth status --json`),同上回填
   const cxCli = codexCli || createCodexCli() // injected only by tests and previews (never install for real there)
   const clCli = claudeCli || createClaudeCli() // likewise
+  // Account sign-in from the model library (src/runnerlogin.js): the
+  // executor's own login command, run on this Mac; a finished sign-in drops
+  // the cached "not signed in" so the card turns green on its next check.
+  const runnerLogin = require('../runnerlogin').createRunnerLogin({
+    binOf: runner => runner === 'claude' ? (loadConfig(configPath).agent.bin || 'claude') : 'codex',
+    env: () => { const cfg = loadConfig(configPath); applyProxyEnv(cfg); return process.env },
+    onDone: runner => {
+      if (runner === 'claude') { claudeStatusCache = null; claudestatus.clearCache() } else { codexStatusCache = null; codexstatus.clearCache() }
+      probeCache = null
+      audit.append({ kind: 'runner-login', runner, ok: true, ts: Date.now() })
+    } })
   // The `bin` a Codex model card names for itself ('' = none: it runs the codex on PATH).
   const codexCardBin = (cfg, name) => {
     const pv = name && Object.prototype.hasOwnProperty.call(cfg.providers || {}, name) ? cfg.providers[name] : null
@@ -703,6 +714,12 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
     ]
     const health = { rows, fails: rows.filter((r) => r.status === 'fail').length, warns: rows.filter((r) => r.status === 'warn').length }
     lastHealth = health
+    // 接入时没选执行器(1.4.33):配置带 awaitingModel、还没有 defaultProvider、又有群没指定模型 ⇒ 这些群在等一个模型。
+    // 手写配置不写 defaultProvider 是另一回事(跟随内置默认),不算。
+    // usable 是本机已经能用的模型(已登录的订阅、验证通过或未验证的 Key),概览卡据此给「一键设为默认」。
+    const modelPending = raw.awaitingModel === true && !raw.defaultProvider && Object.entries(raw.groups || {}).some(([id, g]) => id !== 'oc_example_chat_id' && g && !g.provider)
+      ? { usable: live.filter((p) => !badProv.includes(p.name)).map((p) => ({ name: p.name, runner: p.runner === 'codex' ? 'codex' : 'claude', key: !!p.baseUrl })) }
+      : null
     const feishu = raw.feishu ? {
       appId: isEnvRef(raw.feishu.appId) ? '' : (raw.feishu.appId || ''),
       appIdRef: isEnvRef(raw.feishu.appId) ? raw.feishu.appId.slice(4) : '',
@@ -750,6 +767,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       health,
       providers,
       defaultProvider: raw.defaultProvider || cfg.defaultProvider,
+      modelPending,
       wecomAttachProviders: Object.keys(raw.providers || {}),
       modelNames: knownModelNames(), // official names registered from the live model lists
       groups,
@@ -1345,7 +1363,7 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       if (p === '/api/default-provider' && req.method === 'POST') {
         const { name } = await body(req); const raw = readRaw()
         if (!(raw.providers || {})[name]) return sendJSON(res, 404, { error: 'no such provider' })
-        raw.defaultProvider = name; writeRaw(raw); return sendJSON(res, 200, await buildState())
+        raw.defaultProvider = name; delete raw.awaitingModel; writeRaw(raw); return sendJSON(res, 200, await buildState())
       }
       // upsert a provider (add or edit — the ⚙ config panel + 添加模型 both use this)
       if (p === '/api/providers/add' && req.method === 'POST') {
@@ -1418,7 +1436,10 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
           }
         }
         raw.providers[name] = pr
-        const defaultChange = settleDefault(raw); writeRaw(raw)
+        // 接入时没选执行器(1.4.33):配置带 awaitingModel 时,添加的第一个模型就是所有群的默认,标记随之去掉。
+        const firstDefault = raw.awaitingModel === true && !raw.defaultProvider && !pr.hidden ? { from: null, to: name } : null
+        if (firstDefault) { raw.defaultProvider = name; delete raw.awaitingModel }
+        const defaultChange = firstDefault || settleDefault(raw); writeRaw(raw)
         // 变更联动(仅编辑已有 provider 时):受影响群 = 用着它(显式或经 defaultProvider)
         // 且无 per-group model 覆盖的群。model 变 = 换脑 → 按「切模型即重置」的既有拍板,
         // 重置这些群会话 + 群内一行通知;仅推理强度变 → 通知不重置。daemon 未运行(无
@@ -2908,6 +2929,20 @@ function createUiServer({ configPath, getLiveState = null, getConnHealth = null,
       // 加载的自动探不带 force —— daemon 重启后 operator 重登控制台、开几个标签页,每次都
       // 强制现打就是一轮突发,恰好捅上游额度端点的低限流阈值(429 持续数分钟,群里 /hud
       // 会跟着遭殃),所以自动探 60s 内直接吃上次的答案,过期了也只顺 TTL 取、不清缓存。
+      if (p === '/api/runner-login' && req.method === 'GET') return sendJSON(res, 200, runnerLogin.snapshot())
+      if (p === '/api/runner-login' && req.method === 'POST') {
+        const { runner } = await body(req).catch(() => ({}))
+        if (runner !== 'claude' && runner !== 'codex') return sendJSON(res, 400, { error: '未知执行器' })
+        return sendJSON(res, 200, runnerLogin.start(runner))
+      }
+      if (p === '/api/runner-login/code' && req.method === 'POST') {
+        const { runner, code } = await body(req).catch(() => ({}))
+        return sendJSON(res, runnerLogin.code(runner, code) ? 200 : 409, runnerLogin.snapshot()[runner] || {})
+      }
+      if (p === '/api/runner-login/cancel' && req.method === 'POST') {
+        const { runner } = await body(req).catch(() => ({}))
+        return sendJSON(res, 200, { ok: runnerLogin.cancel(runner) })
+      }
       if (p === '/api/claude/verify' && req.method === 'POST') {
         const { force } = await body(req)
         const cfg = loadConfig(configPath)

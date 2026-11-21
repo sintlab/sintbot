@@ -24,6 +24,9 @@ const CONNECT_OPTIONS = Object.freeze({
   config: { type: 'string' }, 'data-dir': { type: 'string' }, workdir: { type: 'string' },
   name: { type: 'string' }, provider: { type: 'string' }, 'app-id': { type: 'string' },
   chat: { type: 'string' }, basic: { type: 'boolean' }, 'no-open': { type: 'boolean' },
+  // No executor is chosen: a signed-in one is used when there is one, else the
+  // group is bound without a model and one is added later in the console.
+  'defer-model': { type: 'boolean' },
   // Add Feishu to an installation that so far only holds local conversations.
   attach: { type: 'boolean' },
 })
@@ -222,6 +225,46 @@ function probeRunners(spawnSync, env) {
   return runners
 }
 
+// Whether an installed executor is signed in. Local status only (no network,
+// no quota); a revoked token still reads as signed in and fails on first use.
+function probeSignedIn(runner, spawnSync, env) {
+  const args = runner === 'claude' ? ['auth', 'status', '--json'] : ['login', 'status']
+  const r = spawnSync(runner, args, { encoding: 'utf8', timeout: 10_000, maxBuffer: 64 * 1024, env })
+  if (r.error || r.status !== 0) return false
+  if (runner === 'claude') {
+    try { return JSON.parse(r.stdout || '{}').loggedIn === true } catch { return false }
+  }
+  return /logged in/i.test(`${r.stdout || ''}${r.stderr || ''}`) && !/not logged in/i.test(`${r.stdout || ''}${r.stderr || ''}`)
+}
+
+// The executor and live model defaults for a new group. An explicit provider
+// behaves as before: it must answer and its live catalog must load. With
+// `defer`, a signed-in executor whose catalog loads is used; anything less
+// binds the group without a model (provider ''), never a guessed default.
+async function chooseGroupModel({ requested, defer, runners, d, say, failure }) {
+  const available = RUNNERS.filter(runner => runners[runner])
+  const catalog = d.modelCatalog || connectModelCatalog()
+  const live = async (provider) => {
+    let cat
+    try { cat = await catalog(provider, { runner: provider }) } catch {}
+    return cat && cat.ok === true && cat.source === 'live' && Array.isArray(cat.models) && cat.models.length ? cat : null
+  }
+  if (requested === undefined && defer) {
+    const signedIn = d.probeSignedIn || probeSignedIn
+    for (const provider of available) {
+      if (!signedIn(provider, d.spawnSync, d.env)) continue
+      say('正在读取执行器推荐的型号和思考深度…')
+      const cat = await live(provider)
+      if (cat) return { provider, catalog: cat }
+    }
+    return { provider: '', catalog: null }
+  }
+  if (!available.length) throw new Error('Install and sign in to Codex or Claude Code first; neither answered --version')
+  return null
+}
+
+const MODEL_LATER = '还没有配置模型：进入控制台后在「模型 · 库」添加一个，群里就能开始干活。'
+
 // Width is judged on the literal path and on what it really points to, so a
 // link to the home directory or the root is refused as well.
 function dirObserved(fs, workdir, explicit, home) {
@@ -348,10 +391,11 @@ async function connectFlow(argv, d, abort) {
   // Runners present on this Mac; the group's provider must be one of them.
   const runners = probeRunners(d.spawnSync, d.env)
   const available = RUNNERS.filter(runner => runners[runner])
-  if (!available.length) throw new Error('Install and sign in to Codex or Claude Code first; neither answered --version')
-  let provider = values.provider
-  if (provider !== undefined && !runners[provider]) throw new Error(`${provider} did not answer --version; install and sign in to it first`)
-  if (provider === undefined) {
+  const deferred = await chooseGroupModel({ requested: values.provider, defer: values['defer-model'] === true, runners, d, say })
+  if (interrupted()) return EXIT_INTERRUPTED
+  let provider = deferred ? deferred.provider : values.provider
+  if (provider && !runners[provider]) throw new Error(`${provider} did not answer --version; install and sign in to it first`)
+  if (!deferred && provider === undefined) {
     provider = available.length === 1 || !d.isTTY ? available[0]
       : await (d.prompt || askLine)(`执行器（${available.join(' / ')}，默认 ${available[0]}）：`, available[0], d)
     if (!runners[provider]) throw new Error('--provider must be codex or claude')
@@ -359,21 +403,25 @@ async function connectFlow(argv, d, abort) {
   // Everything the configuration needs apart from the scan result is known;
   // let the core validate it now with placeholders for the scanned identities.
   const configInput = { appId: reuseAppId || 'cli_pending', appSecret: 'pending', botOpenId: 'ou_pending', adminOpenId: 'ou_pending',
-    chatId: givenChatId || null, workdir, home: d.home, provider, runners }
+    chatId: givenChatId || null, workdir, home: d.home, provider, runners, ...(provider ? {} : { deferModel: true }) }
   const dryRun = core.connectConfig({ ...configInput, chatId: givenChatId || 'oc_onboarding_pending' })
   if (!dryRun.ok) throw new Error(dryRun.error)
-  const catalog = d.modelCatalog || connectModelCatalog()
-  say('正在读取执行器推荐的型号和思考深度…')
-  let selectedCatalog
-  try { selectedCatalog = await catalog(provider, { runner: provider }) } catch {}
-  if (interrupted()) return EXIT_INTERRUPTED
-  if (!selectedCatalog || selectedCatalog.ok !== true || selectedCatalog.source !== 'live' ||
-      !Array.isArray(selectedCatalog.models) || !selectedCatalog.models.length) {
-    throw new Error(`Could not read live model defaults for ${provider}. Check the executor login and network, then retry. No new Feishu app was created.`)
+  let selectedCatalog = deferred?.catalog || null
+  if (!deferred) {
+    const catalog = d.modelCatalog || connectModelCatalog()
+    say('正在读取执行器推荐的型号和思考深度…')
+    try { selectedCatalog = await catalog(provider, { runner: provider }) } catch {}
+    if (interrupted()) return EXIT_INTERRUPTED
+    if (!selectedCatalog || selectedCatalog.ok !== true || selectedCatalog.source !== 'live' ||
+        !Array.isArray(selectedCatalog.models) || !selectedCatalog.models.length) {
+      throw new Error(`Could not read live model defaults for ${provider}. Check the executor login and network, then retry. No new Feishu app was created.`)
+    }
   }
-  const modelDefaults = applyInitialGroupDefaults(dryRun.config, givenChatId || 'oc_onboarding_pending', selectedCatalog)
-  d.onModelDefaults?.(modelDefaults)
-  say(`新群默认：${modelDefaults.name} · ${modelDefaults.effort}。接入后可在控制台修改。`)
+  if (selectedCatalog) {
+    const modelDefaults = applyInitialGroupDefaults(dryRun.config, givenChatId || 'oc_onboarding_pending', selectedCatalog)
+    d.onModelDefaults?.(modelDefaults)
+    say(`新群默认：${modelDefaults.name} · ${modelDefaults.effort}。接入后可在控制台修改。`)
+  } else say(MODEL_LATER)
   if (interrupted()) return EXIT_INTERRUPTED
 
   // Step 1: the scan. The link is printed, and a local page renders the QR
@@ -525,7 +573,7 @@ async function connectFlow(argv, d, abort) {
   // Step 6: the folder, config.json (0600 in a 0700 directory) and the README.
   built = core.connectConfig({ ...configInput, chatId })
   if (!built.ok) { decide('config', { code: LOCAL_FAILURE, msg: built.error, observed: { configPath } }); return 1 }
-  applyInitialGroupDefaults(built.config, chatId, selectedCatalog)
+  if (selectedCatalog) applyInitialGroupDefaults(built.config, chatId, selectedCatalog)
   let createdDir = false, createdReadme = false, configCommitted = false
   const readme = path.join(workdir, 'README.md')
   try {
@@ -653,20 +701,23 @@ async function runConversationSetup(input = {}, deps = {}, platform = 'local') {
 
     const runners = probeRunners(d.spawnSync, d.env)
     const available = RUNNERS.filter(runner => runners[runner])
-    if (!available.length) throw new Error('Install and sign in to Codex or Claude Code first; neither answered --version')
-    const provider = input.provider === undefined ? available[0] : input.provider
-    if (!runners[provider]) throw new Error(`${provider} did not answer --version; install and sign in to it first`)
+    const deferred = await chooseGroupModel({ requested: input.provider, defer: input.deferModel === true, runners, d, say })
+    if (interrupted()) return EXIT_INTERRUPTED
+    const provider = deferred ? deferred.provider : input.provider === undefined ? available[0] : input.provider
+    if (!deferred && !runners[provider]) throw new Error(`${provider} did not answer --version; install and sign in to it first`)
 
     // The live model defaults are read first: a failure here stops before a
     // bot is created or a conversation is bound.
-    const catalog = d.modelCatalog || connectModelCatalog()
-    say('正在读取执行器推荐的型号和思考深度…')
-    let selectedCatalog
-    try { selectedCatalog = await catalog(provider, { runner: provider }) } catch {}
-    if (interrupted()) return EXIT_INTERRUPTED
-    if (!selectedCatalog || selectedCatalog.ok !== true || selectedCatalog.source !== 'live' ||
-        !Array.isArray(selectedCatalog.models) || !selectedCatalog.models.length) {
-      throw new Error(`Could not read live model defaults for ${provider}. Check the executor login and network, then retry.`)
+    let selectedCatalog = deferred?.catalog || null
+    if (!deferred) {
+      const catalog = d.modelCatalog || connectModelCatalog()
+      say('正在读取执行器推荐的型号和思考深度…')
+      try { selectedCatalog = await catalog(provider, { runner: provider }) } catch {}
+      if (interrupted()) return EXIT_INTERRUPTED
+      if (!selectedCatalog || selectedCatalog.ok !== true || selectedCatalog.source !== 'live' ||
+          !Array.isArray(selectedCatalog.models) || !selectedCatalog.models.length) {
+        throw new Error(`Could not read live model defaults for ${provider}. Check the executor login and network, then retry.`)
+      }
     }
 
     // WeCom conversations are named after the project; local ones keep their title.
@@ -676,7 +727,7 @@ async function runConversationSetup(input = {}, deps = {}, platform = 'local') {
     // key is written here, and the core writes the project README in English
     // (Slack only). No other platform is touched.
     const buildFor = (chatId, credentials) => core.connectConfig({ platform, chatId, ...credentials, name: title,
-      workdir, home: d.home, provider, runners, ...(platform === 'slack' ? { lang: 'en' } : {}) })
+      workdir, home: d.home, provider, runners, ...(provider ? {} : { deferModel: true }), ...(platform === 'slack' ? { lang: 'en' } : {}) })
     let chatId, built
     if (platform === 'wecom') {
       // Credentials come from the form, or from a scan that creates the bot
@@ -756,9 +807,11 @@ async function runConversationSetup(input = {}, deps = {}, platform = 'local') {
     if (interrupted()) return EXIT_INTERRUPTED
     if (!built.ok) throw new Error(built.error)
     if ((platform === 'wecom' || platform === 'slack') && built.config.groups?.[chatId] && !built.config.groups[chatId].name) built.config.groups[chatId].name = title
-    const modelDefaults = applyInitialGroupDefaults(built.config, chatId, selectedCatalog)
-    d.onModelDefaults?.(modelDefaults)
-    say(`对话默认：${modelDefaults.name} · ${modelDefaults.effort}。之后可在控制台修改。`)
+    if (selectedCatalog) {
+      const modelDefaults = applyInitialGroupDefaults(built.config, chatId, selectedCatalog)
+      d.onModelDefaults?.(modelDefaults)
+      say(`对话默认：${modelDefaults.name} · ${modelDefaults.effort}。之后可在控制台修改。`)
+    } else say(MODEL_LATER)
 
     const observed = dirObserved(fs, workdir, explicit, d.home)
     if (decide('dir', { observed }).verdict === 'stop') return 1
@@ -839,4 +892,4 @@ async function scannerName(client, openId, sdkName, basic, d) {
   return name ? core.connectManifest(basic, name, d.version).appPreset.name : ''
 }
 
-module.exports = { runConnect, runLocalSetup, runWecomSetup, runSlackSetup, CONNECT_OPTIONS, sdkAddons, qrPage, failureInput, probeRunners, EXIT_INTERRUPTED, connectModelCatalog, applyInitialGroupDefaults }
+module.exports = { runConnect, runLocalSetup, runWecomSetup, runSlackSetup, CONNECT_OPTIONS, sdkAddons, qrPage, failureInput, probeRunners, probeSignedIn, chooseGroupModel, EXIT_INTERRUPTED, connectModelCatalog, applyInitialGroupDefaults }

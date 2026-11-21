@@ -1392,6 +1392,16 @@ function startCardHtml(){
   const anyModel=mrow?mrow.status!=='fail':(S.providers||[]).some(p=>p.configured&&!p.hidden);
   const step=(done,title,hint,tab,btn)=>`<div class="inline" style="gap:10px;margin:10px 0;align-items:flex-start"><span class="dot ${done?'ok':'warn'}" style="margin-top:6px;flex:none"></span><div style="flex:1;min-width:0"><div>${title}</div><div class="hint">${hint}</div></div>${!done&&tab?`<button class="btn" data-gotab="${tab}" style="flex:none">${btn}</button>`:''}</div>`;
   const sm=S.setupMode;
+  // 接入时不再选执行器(1.4.33):群已经接好、还没有默认模型时,只留这一张卡,不能收起。
+  // 本机已有能用的模型(已登录的订阅、填好的 Key)就给「一键设为默认」;一个都没有才自动切去「模型 · 库」。
+  if(S.modelPending&&anyGroup){
+    const us=S.modelPending.usable||[];
+    const label=u=>u.key?u.name:(u.runner==='codex'?'Codex（ChatGPT 账号）':'Claude Code（Claude 账号）');
+    const btns=us.map(u=>`<button class="btn" data-usemodel="${esc(u.name)}" style="flex:none">${esc(label(u))}</button>`).join('');
+    return `<div class="card" id="ovStart" ${us.length?'':'data-needmodel="1"'} style="margin-bottom:16px"><div class="lbl">先添加一个模型</div>
+    ${step(false,'群已经接好，还差一个模型',us.length?'这台电脑上已经有能用的模型，选一个作为默认就能开始；也可以去「模型 · 库」添加别的':'用 Claude 账号、ChatGPT 账号登录，或者填一个国产模型或兼容服务的 API Key，添加后群里就能开始干活','providers','去「模型 · 库」')}
+    ${btns?`<div class="inline" style="gap:8px;flex-wrap:wrap;margin:4px 0 2px 17px">${btns}</div>`:''}
+  </div>`;}
   // 持久处理流程 + 本机对话:不接聊天平台也是完整可用的安装。只在还没接平台时提示两件事,可以收起。
   if(S.runtimeCapabilities&&S.runtimeCapabilities.localChat){
     let hidden=false;try{hidden=localStorage.getItem('sbot-start-hide')==='1';}catch{}
@@ -1460,6 +1470,9 @@ function renderOverview(){
   ${issuesHtml()}
   ${previewsHtml()}
   ${leftoversHtml()}`;
+  // 刚接入、还没有能用的模型:每个浏览器会话自动切到「模型 · 库」一次,之后不再打扰。
+  try{if($('#ovStart[data-needmodel]')&&!sessionStorage.getItem('sbot-needmodel-jump')){sessionStorage.setItem('sbot-needmodel-jump','1');setTimeout(()=>{const b=$('nav button[data-tab=providers]');if(b)b.click();},0);}}catch{}
+  $$('#overview [data-usemodel]').forEach(b=>b.onclick=async()=>{b.disabled=true;try{S=await api('/api/default-provider','POST',{name:b.dataset.usemodel});toast('已设为默认模型，群里可以开始干活了','ok');renderAll();}catch(e){b.disabled=false;toast(e.message,'err');}});
   lastActSig='';
   {const hf=$('#ovHealthFold'); if(hf)hf.onclick=()=>{if(healthAbnormal(S.health))return;   // 有异常时不收
     healthUserOpen=!healthUserOpen; try{localStorage.setItem('sbot-health-open',healthUserOpen?'1':'0');}catch(e){} syncHealthFold();};}
@@ -1870,6 +1883,27 @@ function envWarnHtml(list){
 }
 // codex 卡逐 provider 取(服务端按 baseUrl/key 各算一份):r = /api/codex/verify 的响应或 S.codexStatus。
 const cxEnvWarn=(r,name)=>(((r&&r.envWarningsByProvider)||{})[name])||[];
+// Account sign-in from this page (/api/runner-login): runs the executor's own login on this Mac,
+// which opens the browser; the link is the fallback, and Claude may show a code to paste back here.
+function rlBoxHtml(runner){if(!runtimeAllows('POST','/api/runner-login'))return '';const label=runner==='claude'?'在浏览器登录 Claude 账号':'在浏览器登录 ChatGPT 账号';return `<span class="rl" data-rl="${runner}"><button class="btn primary" type="button" data-rl-start="${runner}" style="margin-top:8px">${label}</button><div class="rl-body hint" style="margin-top:6px"></div></span>`;}
+const rlTimers={};
+function rlPaint(runner,st){const box=document.querySelector(`.rl[data-rl="${runner}"] .rl-body`);if(!box)return;const busy=st.phase==='starting'||st.phase==='waiting';
+  const startBtn=document.querySelector(`[data-rl-start="${runner}"]`);if(startBtn)startBtn.disabled=busy;
+  if(st.phase==='idle'){box.innerHTML='';return}
+  if(busy){box.innerHTML=(st.url?'已在浏览器打开登录页，登录完成后这里会自动更新。<br><a href="'+esc(st.url)+'" target="_blank" rel="noopener">没有打开？点这里登录</a>':'<span class="spin"></span> 正在启动登录…')
+    +(runner==='claude'&&st.url?'<div class="row" style="margin-top:6px;gap:6px;display:flex"><input id="rlCode" placeholder="登录页显示代码时粘贴到这里" style="flex:1"/><button class="btn" type="button" data-rl-code="claude">提交代码</button></div>':'')
+    +'<div style="margin-top:6px"><button class="btn" type="button" data-rl-cancel="'+runner+'">取消</button></div>';return}
+  if(st.phase==='done'){box.innerHTML='<span style="color:var(--ok)">'+IC.check+' 登录完成</span>';return}
+  if(st.phase==='cancelled'){box.innerHTML='已取消';return}
+  box.innerHTML='<span style="color:var(--fail)">'+(st.error==='timeout'?'登录超时，请重试':'登录没有完成，请重试')+'</span>';}
+async function rlPoll(runner){clearTimeout(rlTimers[runner]);let st;try{st=(await api('/api/runner-login'))[runner]}catch(e){return}
+  rlPaint(runner,st);
+  if(st.phase==='starting'||st.phase==='waiting'){rlTimers[runner]=setTimeout(()=>rlPoll(runner),2000);return}
+  if(st.phase==='done'){toast(runner==='claude'?'Claude 账号已登录':'ChatGPT 账号已登录','ok');const v=$(runner==='claude'?'#clVerify':'#cxVerify');if(v)v.click();else renderProviders();}}
+document.addEventListener('click',async e=>{const t=e.target.closest('[data-rl-start],[data-rl-code],[data-rl-cancel]');if(!t)return;e.preventDefault();
+  try{if(t.dataset.rlStart){const r=t.dataset.rlStart;rlPaint(r,await api('/api/runner-login','POST',{runner:r}));rlPoll(r)}
+  else if(t.dataset.rlCode){const inp=$('#rlCode');const v=inp&&inp.value.trim();if(!v)return;await api('/api/runner-login/code','POST',{runner:'claude',code:v});inp.value='';toast('代码已提交','ok')}
+  else if(t.dataset.rlCancel){await api('/api/runner-login/cancel','POST',{runner:t.dataset.rlCancel});rlPoll(t.dataset.rlCancel)}}catch(err){toast(err.message,'err')}});
 // Claude 登录态区的内容(与卡片 chip 同一份 S.claudeStatus,措辞不各写一套)
 function clStatusHtml(){
   const s=S.claudeStatus;
@@ -2283,13 +2317,13 @@ function openProviderModal(name,opts){
     ${(isCodex||isClaudeLogin)?'':`<div class="field"><label class="f">API key</label><input id="amKey" placeholder="${keyPh}"/></div>`}
     ${isClaudeLogin?`<div class="field"><label class="f">Claude 订阅登录</label>
       <div id="clStatus" class="statbox">${clStatusHtml()}</div>
-      <button class="btn" id="clVerify" style="margin-top:8px">检测登录</button>
+      <button class="btn" id="clVerify" style="margin-top:8px">检测登录</button> ${rlBoxHtml('claude')}
       <div class="hint" id="clModelsNote" style="margin-top:6px;display:none"></div>
       <div class="hint" id="clCli" style="margin-top:6px;display:none"></div>
       <div class="hint" style="margin-top:6px">检查本机 Claude Code 登录状态，不发起模型对话。</div></div>`:''}
     ${isCodex?`<div class="field"><label class="f">Codex 订阅登录 / 额度</label>
       <div id="cxStatus" class="statbox">${cxStatusHtml(cxKey)}</div>
-      <button class="btn" id="cxVerify" style="margin-top:8px">验证登录 / 刷新额度</button>
+      <button class="btn" id="cxVerify" style="margin-top:8px">验证登录 / 刷新额度</button> ${rlBoxHtml('codex')}
       <div class="hint" id="cxModelsNote" style="margin-top:6px;display:none"></div>
       <div class="hint" id="cxCli" style="margin-top:6px;display:none"></div>
       <div class="hint" style="margin-top:6px">显示本机账号返回的额度与重置时间，不发起模型对话。</div></div>`:''}
@@ -5994,6 +6028,13 @@ const I18N_EN=[
   ["配好模型","Set up a model"],
   ["换模型、加模型在「模型 · 库」","Switch or add models under Models"],
   ["还没有能用的模型:在「模型 · 库」里添加、测试","No usable model yet: add and test one under Models"],
+  ["先添加一个模型","Add a model first"],
+  ["这台电脑上已经有能用的模型，选一个作为默认就能开始；也可以去「模型 · 库」添加别的","This Mac already has a usable model. Pick one as the default to start, or add another under Models."],
+  ["已设为默认模型，群里可以开始干活了","Set as the default model. The bot can start working in your chat."],
+  ["Codex（ChatGPT 账号）","Codex (ChatGPT account)"],
+  ["Claude Code（Claude 账号）","Claude Code (Claude account)"],
+  ["群已经接好，还差一个模型","Your chat is connected; it still needs a model"],
+  ["用 Claude 账号、ChatGPT 账号登录，或者填一个国产模型或兼容服务的 API Key，添加后群里就能开始干活","Sign in with a Claude or ChatGPT account, or enter an API key for a compatible service. Once a model is added, the bot starts working in your chat."],
   ["去「模型 · 库」","Open Models"],
   ["接聊天平台","Connect a chat platform"],
   ["飞书 / Slack / 企业微信,「设置」里每个平台都有分步指南","Slack, Feishu or WeCom: each has a step-by-step guide under Settings"],
@@ -6118,6 +6159,20 @@ const I18N_EN=[
   ["额度:","Quota: "],
   ["百分比 = 已用,括号 = 距重置 —— 与这台机器上交互式 Claude Code 共享的订阅窗口","Percent = used, parentheses = time to reset — the subscription window shared with interactive Claude Code on this machine"],
   ["自定义","Custom"],
+  ["在浏览器登录 Claude 账号","Sign in to Claude in the browser"],
+  ["在浏览器登录 ChatGPT 账号","Sign in to ChatGPT in the browser"],
+  ["已在浏览器打开登录页，登录完成后这里会自动更新。","The sign-in page opened in the browser; this updates when you finish."],
+  ["没有打开？点这里登录","Did not open? Sign in here"],
+  ["正在启动登录…","Starting sign-in…"],
+  ["登录页显示代码时粘贴到这里","Paste the code here if the sign-in page shows one"],
+  ["提交代码","Submit code"],
+  ["登录完成","Signed in"],
+  ["已取消","Cancelled"],
+  ["登录超时，请重试","Sign-in timed out; try again"],
+  ["登录没有完成，请重试","Sign-in did not finish; try again"],
+  ["Claude 账号已登录","Claude account signed in"],
+  ["ChatGPT 账号已登录","ChatGPT account signed in"],
+  ["代码已提交","Code submitted"],
   ["Claude 订阅登录 (claude)","Claude subscription sign-in (claude)"],
   ["智谱 GLM (glm)","Zhipu GLM (glm)"],
   ["未登录 — 机器上跑 codex login","Not signed in — run codex login on this machine"],

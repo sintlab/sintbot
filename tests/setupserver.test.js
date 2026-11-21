@@ -293,6 +293,9 @@ test('session exposes confirmed model defaults before a scan and retains them on
   assert.deepEqual(s.snapshot().modelDefaults, expected)
   const page = setupPage()
   assert.match(page, /id="modelDefaults"/)
-  assert.match(page, /live recommended model and thinking depth/)
+  // 1.4.33: no executor choice on the page; the model is added in the console.
+  assert.match(page, /No need to choose\. After setup, add a model on the console’s Models page/)
+  assert.doesNotMatch(page, /name="prov"|<select id="channel" class="btn"/)
+  assert.match(translateSetupNotice('还没有配置模型：进入控制台后在「模型 · 库」添加一个，群里就能开始干活。', 'en'), /No model is set up yet/)
   assert.match(translateSetupNotice('新群默认：Fixture Live · low。接入后可在控制台修改。', 'en'), /Fixture Live.*low/)
 })

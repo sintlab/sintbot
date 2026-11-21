@@ -13,6 +13,9 @@ function heldNotice(platform, chatId) {
   return here && here !== '本群' ? `${here}上一个任务结果不明，已暂停处理，等待人工确认；其他会话不受影响。` : HELD_NOTICE
 }
 const UPGRADING_NOTICE = 'SintBot 正在升级，这条消息没有处理，请一分钟后重发。'
+// A conversation bound before any model was set up (src/modelpending.js).
+const NO_MODEL_NOTICE = '还没有配置模型，这条消息没有处理。请管理员在 SintBot 控制台的「模型 · 库」添加一个模型（Claude 账号、ChatGPT 账号或 API Key），之后重发即可。'
+const NO_MODEL_NOTICE_EN = 'No model is set up yet, so this message was not handled. Ask an admin to add one on the Models page of the SintBot console (a Claude or ChatGPT account, or an API key), then resend it.'
 // The same notices for a conversation whose language is English
 // (`groups[chatId].lang`, src/chatlang.js). `here` is the adapter's English
 // name for the conversation ("this channel"); a group chat is "this group".
@@ -24,8 +27,8 @@ function heldNoticeEn(platform, chatId) {
   return `The outcome of the previous task in ${here || 'this group'} is unknown, so it is paused until someone confirms what happened; other conversations are not affected.`
 }
 const SERVICE_NOTICES = Object.freeze({
-  zh: Object.freeze({ recovering: RECOVERING_NOTICE, upgrading: UPGRADING_NOTICE, held: heldNotice }),
-  en: Object.freeze({ recovering: RECOVERING_NOTICE_EN, upgrading: UPGRADING_NOTICE_EN, held: heldNoticeEn }) })
+  zh: Object.freeze({ recovering: RECOVERING_NOTICE, upgrading: UPGRADING_NOTICE, held: heldNotice, noModel: NO_MODEL_NOTICE }),
+  en: Object.freeze({ recovering: RECOVERING_NOTICE_EN, upgrading: UPGRADING_NOTICE_EN, held: heldNoticeEn, noModel: NO_MODEL_NOTICE_EN }) })
 const serviceNotices = lang => (lang === 'en' ? SERVICE_NOTICES.en : SERVICE_NOTICES.zh)
 const reasonOf = error => String(error?.message || error || 'unknown').slice(0, 300)
 
@@ -60,7 +63,7 @@ function createC2MultiGroupService({ routes, assertWriterLock,
   createTransport, createBinding, onFatal = () => {}, closeCapacity = () => {},
   quarantine = null, stopTimeoutMs = 2_000, drainTimeoutMs = 12_000,
   createRecoveryAuthority = null, holds = new Map(), sharedFault = () => null,
-  ingressWaitMs = 60_000, onModelCard = null, now = Date.now, log = () => {} } = {}) {
+  ingressWaitMs = 60_000, onModelCard = null, modelPending = null, now = Date.now, log = () => {} } = {}) {
   if (!Array.isArray(routes) || !routes.length ||
       new Set(routes.map(route => route.chatId)).size !== routes.length ||
       routes.some(route => !route || typeof route.chatId !== 'string' ||
@@ -70,6 +73,7 @@ function createC2MultiGroupService({ routes, assertWriterLock,
       typeof onFatal !== 'function' || typeof closeCapacity !== 'function' ||
       typeof log !== 'function' || typeof sharedFault !== 'function' ||
       typeof now !== 'function' || !(holds instanceof Map) ||
+      modelPending !== null && typeof modelPending !== 'function' ||
       [...holds.keys()].some(chatId => !routes.some(route => route.chatId === chatId)) ||
       createRecoveryAuthority !== null && typeof createRecoveryAuthority !== 'function' ||
       !Number.isSafeInteger(stopTimeoutMs) || stopTimeoutMs < 1 ||
@@ -359,6 +363,11 @@ function createC2MultiGroupService({ routes, assertWriterLock,
       // The group's failed turn is being closed; nothing is admitted meanwhile.
       return answerC2InputRejection({ error: rejectC2Input('C2 group recovering',
         { reason: 'group-recovering', notice: noticesOf(msg.chatId).recovering }), msg, platform: sourceAdapter, log })
+    }
+    if (modelPending && started && !stopPromise && modelPending(msg)) {
+      // No receipt, no turn: the conversation only waits for a model.
+      return answerC2InputRejection({ error: rejectC2Input('C2 group has no model',
+        { reason: 'no-model', notice: noticesOf(msg.chatId).noModel }), msg, platform: sourceAdapter, log })
     }
     let binding
     try {

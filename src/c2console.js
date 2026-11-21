@@ -21,6 +21,8 @@ const READ_PATHS = ['/api/wecom/chats', '/api/wecom/attach', '/api/slack/channel
   '/api/codex/cli',
   // Version of the Claude Code program on this machine (Claude subscription card).
   '/api/claude/cli',
+  // Progress of an account sign-in started from the model library.
+  '/api/runner-login',
   // The live model list of a saved key-route card (src/providers.js); writes nothing.
   '/api/providers/models',
   // The console's own conversations (src/platform/local.js).
@@ -50,6 +52,8 @@ const WRITE_PATHS = ['/api/wecom/attach', '/api/wecom/attach/cancel', '/api/weco
   // changes what a group runs waits for that group and starts a new session.
   '/api/providers/add', '/api/provider-key', '/api/providers/hidden', '/api/providers/order',
   '/api/default-provider', '/api/claude/verify',
+  // Account sign-in from the model library (src/runnerlogin.js): runs the executor's login; writes no SintBot config.
+  '/api/runner-login', '/api/runner-login/code', '/api/runner-login/cancel',
   // Probe a backend's model list again now; writes no config and no journal.
   '/api/models/refresh',
   // The live model list of an endpoint and key typed into the model card dialog (not saved; writes nothing).
@@ -189,7 +193,7 @@ function createC2ConsoleFacade({ getBindings, getCapacity, getConfig, getHeld = 
   // (a receipt exists) or refused, never for the turn itself. Pause, hold,
   // recovery and upgrade are decided by the ingress and answered in the
   // conversation like in a group.
-  const REFUSALS = { 'group-held': 'held', 'group-recovering': 'recovering', upgrading: 'upgrading' }
+  const REFUSALS = { 'group-held': 'held', 'group-recovering': 'recovering', upgrading: 'upgrading', 'no-model': 'no-model' }
   async function localSend(chatId, text, { requestId } = {}) {
     const group = isLocalChatId(chatId) ? getConfig().groups?.[chatId] : null
     if (!group || group.platform !== 'local') return { ok: false, reason: 'unbound' }

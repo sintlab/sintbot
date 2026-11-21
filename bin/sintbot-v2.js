@@ -13,6 +13,8 @@ const { createFeishuPlatform, feishuClient } = require('../src/platform/feishu')
 const { createWecomPlatform } = require('../src/platform/wecom')
 const { createSlackPlatform, slackHomeLanguage } = require('../src/platform/slack')
 const { chatLang } = require('../src/chatlang')
+// Executors SintBot installed itself (src/runnerinstall.js) are found after the person's own.
+require('../src/runnerinstall').toolsBinOnPath()
 const { GROUP_COMMANDS } = require('../src/runtimefacts')
 const { createMultiPlatform } = require('../src/platform/multi')
 const { createLocalPlatform } = require('../src/platform/local')
@@ -78,9 +80,15 @@ async function runSetupMode({ configFile, dataDir, host, port, open }) {
   const { createSetupServer, probeRunners } = require('../src/setupserver')
   const os = require('node:os')
   if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw new Error('Console port is invalid')
+  const runners = probeRunners()
+  const log = message => process.stderr.write(`Setup · ${message}\n`)
+  // Executors this Mac lacks are installed in the background as soon as the
+  // page is up; the scan and the form never wait on them.
+  const installer = require('../src/runnerinstall').createRunnerInstaller({ isInstalled: name => runners[name] === true, log })
   const setup = createSetupServer({ configFile, dataDir, home: os.homedir(), version: require('../package.json').version,
-    runners: probeRunners(), host, port, log: message => process.stderr.write(`Setup · ${message}\n`) })
+    runners, host, port, log, installer })
   await setup.listen()
+  if (process.env.SINTBOT_SETUP_NO_INSTALL !== '1') installer.ensure()
   const url = `http://${host === '::1' ? '[::1]' : host}:${port}/`
   process.stderr.write(`SintBot is not set up yet. Open ${url} to connect Feishu, WeCom or Slack, or to start with a conversation on this Mac.\n`)
   if (open && process.platform === 'darwin') {
@@ -198,14 +206,17 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
   assertPrivateDirectory(stateDir)
   applyProxyEnv(cfg)
   const adding = new Set((installation.addedRoutes || []).map(route => route.chatId))
+  // A conversation still waiting for a model (src/modelpending.js) does not
+  // need its executable yet: on a new Mac it may still be installing.
+  const waitingForModel = require('../src/modelpending').createModelPending({ configFile: cfg._path }).deferred
   for (const route of routes) {
     if (adding.has(route.chatId)) {
-      if (!route.paused) assertRunnerExecutable(route.provider, cfg)
+      if (!route.paused && !waitingForModel(route.chatId)) assertRunnerExecutable(route.provider, cfg)
       continue
     }
     const stat = fs.lstatSync(route.file)
     if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('C2 group journal is not a real initialized file')
-    if (route.paused) continue
+    if (route.paused || waitingForModel(route.chatId)) continue
     assertRunnerExecutable(route.provider, cfg)
   }
   const capacity = new C2MultiGroupCapacity({ maxConcurrent: cfg.agent.maxConcurrent })
@@ -340,7 +351,21 @@ async function startMultiGroupService({ installation, preflightOnly, uiEnabled =
       process.stderr.write(`C2 multi-group · ${result.reason}; platform stopped=${result.platformStopped}; runner drained=${result.drained}\n`,
         () => process.exit(code))
     }
+    // Conversations bound before a model was set up answer one line instead of starting a turn.
+    const modelPending = require('../src/modelpending').createModelPending({ configFile: cfg._path,
+      log: message => process.stderr.write(`C2 multi-group · ${message}\n`) })
+    modelPending.warm()
+    // Executor installs the setup page started and a restart cut short are resumed in the background.
+    if (process.env.SINTBOT_SETUP_NO_INSTALL !== '1') {
+      try {
+        let runners = null
+        require('../src/runnerinstall').createRunnerInstaller({
+          isInstalled: name => (runners ||= require('../src/setupserver').probeRunners())[name] === true,
+          log: message => process.stderr.write(`C2 multi-group · ${message}\n`) }).resume()
+      } catch (error) { process.stderr.write(`C2 multi-group · executor install resume skipped: ${error?.message || error}\n`) }
+    }
     service = createC2MultiGroupService({ routes, assertWriterLock, quarantine: combinedQuarantine,
+      modelPending: msg => modelPending.pending(msg),
       holds, closeCapacity: () => capacity.close(),
       // Faults in a shared resource stop every group; others hold one group.
       sharedFault: () => capacity.snapshot().closed ? 'model concurrency closed' : null,

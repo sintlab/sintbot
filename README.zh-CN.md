@@ -1,15 +1,15 @@
 <p align="center">
-  <a href="https://sintbot.com/zh/"><picture><source srcset="https://raw.githubusercontent.com/sintlab/sintbot/main/docs/assets/hero-zh.svg" type="image/svg+xml"><img src="https://raw.githubusercontent.com/sintlab/sintbot/main/docs/assets/banner-zh.png" alt="SintBot —— 群项目 AI 守护进程,跑在你自己的机器上" width="880"></picture></a>
+  <a href="https://sintbot.com/zh/"><picture><source srcset="https://raw.githubusercontent.com/sintlab/sintbot/main/docs/assets/hero-zh.svg" type="image/svg+xml"><img src="https://raw.githubusercontent.com/sintlab/sintbot/main/docs/assets/banner-zh.png" alt="SintBot —— 把个人 Agents 接进项目群" width="880"></picture></a>
 </p>
 
 <p align="center"><b>一群一项目,一句话就开工;模型随时换,记忆不丢;全程在你自己的机器上。</b></p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/sintbot"><img src="https://img.shields.io/npm/v/sintbot?style=flat-square&color=d68f44" alt="npm 版本"></a>
+  <a href="https://www.npmjs.com/package/sintbot"><img src="https://img.shields.io/npm/v/sintbot?style=flat-square&color=1a1a1a" alt="npm 版本"></a>
   <a href="https://github.com/sintlab/sintbot/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/sintlab/sintbot/test.yml?branch=main&style=flat-square&label=tests" alt="测试"></a>
   <img src="https://img.shields.io/node/v/sintbot?style=flat-square" alt="Node 版本">
-  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Shield-blue?style=flat-square" alt="PolyForm Shield 许可"></a>
-  <img src="https://img.shields.io/badge/%E5%85%8D%E8%B4%B9-%E5%BC%80%E6%BA%90-2f8f5b?style=flat-square" alt="免费开源">
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Shield-555555?style=flat-square" alt="PolyForm Shield 许可"></a>
+  <img src="https://img.shields.io/badge/%E5%85%8D%E8%B4%B9-%E5%BC%80%E6%BA%90-555555?style=flat-square" alt="免费开源">
 </p>
 
 <p align="center">
@@ -38,7 +38,9 @@ SintBot 免费开源，按 [PolyForm Shield 1.0.0 许可](./LICENSE) 分发。
 
 ## 快速开始
 
-**1. 安装**，需要 macOS 和 Node.js 22 及以上：
+**1. 安装。** 在 Mac 上[下载桌面 App](https://github.com/sintlab/sintbot-desktop/releases/latest)（M 芯片或 Intel 芯片），拖进「应用程序」后打开。App 自带 Node.js，打开后接入页会自己出来。
+
+习惯用终端的话，需要 Node.js 22 及以上：
 
 ```bash
 curl -fsSL https://sintbot.com/install.sh | bash
@@ -46,7 +48,7 @@ curl -fsSL https://sintbot.com/install.sh | bash
 
 脚本会检查环境、安装 SintBot 并验证结果，不用 `sudo`。也可以先读 [install.sh](./install.sh)。安装本身不登录模型账号、不连接群，也不启动服务。
 
-**2. 接入群和项目。** 运行 `sintbot start --ui`，浏览器会打开本机接入页；填项目名、选聊天平台。飞书：用企业/团队身份扫码，它会创建应用、项目目录和群。企业微信：扫码创建机器人，再给它发一句话。Slack：用已经填好的链接创建应用，粘贴两枚令牌，再给机器人发一句话。接入完成后写好配置并直接启动。终端里也可以用 `sintbot connect`。参数、手动路径和启动步骤见[安装指南](https://sintbot.com/zh/guide/install/)。
+**2. 接入群和项目。** App 会打开本机接入页（用终端的话运行 `sintbot start --ui`）；填项目名、选聊天平台。飞书：用企业/团队身份扫码，它会创建应用、项目目录和群。企业微信：扫码创建机器人，再给它发一句话。Slack：用已经填好的链接创建应用，粘贴两枚令牌，再给机器人发一句话。接入完成后写好配置并直接启动。终端里也可以用 `sintbot connect`。参数、手动路径和启动步骤见[安装指南](https://sintbot.com/zh/guide/install/)。
 
 想让本机 AI 助手帮忙安装并完成首次使用？先看 [AI 安装与首次使用说明](./docs/zh-CN/AI-ASSISTED-INSTALL.md)。
 

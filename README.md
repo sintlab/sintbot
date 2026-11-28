@@ -1,15 +1,15 @@
 <p align="center">
-  <a href="https://sintbot.com"><picture><source srcset="https://raw.githubusercontent.com/sintlab/sintbot/main/docs/assets/hero.svg" type="image/svg+xml"><img src="https://raw.githubusercontent.com/sintlab/sintbot/main/docs/assets/banner.png" alt="SintBot — the group-project AI daemon, running on your own machine" width="880"></picture></a>
+  <a href="https://sintbot.com"><picture><source srcset="https://raw.githubusercontent.com/sintlab/sintbot/main/docs/assets/hero.svg" type="image/svg+xml"><img src="https://raw.githubusercontent.com/sintlab/sintbot/main/docs/assets/banner.png" alt="SintBot — your agents in the group chat" width="880"></picture></a>
 </p>
 
 <p align="center"><b>Say it in the group. Any model, one memory. On your own machine.</b></p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/sintbot"><img src="https://img.shields.io/npm/v/sintbot?style=flat-square&color=d68f44" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/sintbot"><img src="https://img.shields.io/npm/v/sintbot?style=flat-square&color=1a1a1a" alt="npm version"></a>
   <a href="https://github.com/sintlab/sintbot/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/sintlab/sintbot/test.yml?branch=main&style=flat-square&label=tests" alt="tests"></a>
   <img src="https://img.shields.io/node/v/sintbot?style=flat-square" alt="node version">
-  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Shield-blue?style=flat-square" alt="PolyForm Shield license"></a>
-  <img src="https://img.shields.io/badge/free-open%20source-2f8f5b?style=flat-square" alt="free and open source">
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Shield-555555?style=flat-square" alt="PolyForm Shield license"></a>
+  <img src="https://img.shields.io/badge/free-open%20source-555555?style=flat-square" alt="free and open source">
 </p>
 
 <p align="center">
@@ -38,7 +38,9 @@ SintBot is free and open source, distributed under the [PolyForm Shield License 
 
 ## Quick start
 
-**1. Install** on macOS with Node.js 22 or newer:
+**1. Install.** On a Mac, [download the desktop app](https://github.com/sintlab/sintbot-desktop/releases/latest) (Apple silicon or Intel), drag it to Applications and open it. Node.js is included, and the setup page opens by itself.
+
+Prefer the terminal? With Node.js 22 or newer:
 
 ```bash
 curl -fsSL https://sintbot.com/install.sh | bash
@@ -46,7 +48,7 @@ curl -fsSL https://sintbot.com/install.sh | bash
 
 The script checks the environment, installs SintBot and verifies the result, without `sudo`. You can read [install.sh](./install.sh) before running it. Installation does not sign in to a model account, connect a group or start a service.
 
-**2. Connect your chat and project.** Run `sintbot start --ui`; the browser opens the local setup page. Enter a project name and pick your chat platform. On **Slack**, create the app from a link that is already filled in, paste two tokens and send the bot one message. On **Feishu**, scan the QR code under an enterprise or team identity: it creates the app, a project folder and a group. On **WeCom**, scan to create the bot and send it one message. Setup then writes the configuration. The [installation guide](https://sintbot.com/guide/install/) covers the options, the manual route and the startup steps.
+**2. Connect your chat and project.** The app opens the local setup page; from the terminal, run `sintbot start --ui`. Enter a project name and pick your chat platform. On **Slack**, create the app from a link that is already filled in, paste two tokens and send the bot one message. On **Feishu**, scan the QR code under an enterprise or team identity: it creates the app, a project folder and a group. On **WeCom**, scan to create the bot and send it one message. Setup then writes the configuration. The [installation guide](https://sintbot.com/guide/install/) covers the options, the manual route and the startup steps.
 
 Installing with an AI assistant? Use the [AI-assisted install and first-use guide](./docs/AI-ASSISTED-INSTALL.md).
 

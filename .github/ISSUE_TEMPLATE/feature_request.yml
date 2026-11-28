@@ -1,0 +1,29 @@
+name: Feature request / 功能建议
+description: Suggest an idea or something that's missing / 提一个想法或缺的功能
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would it solve / 想解决什么问题
+      description: What you were trying to do, and where SintBot got in the way / 你想做什么,卡在了哪里
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you'd like / 希望怎么做
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you've tried instead / 试过的其他办法
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Chat platform it concerns / 涉及的聊天平台
+      multiple: true
+      options:
+        - Slack
+        - Feishu / 飞书
+        - WeCom / 企业微信
+        - Not platform-specific / 与平台无关

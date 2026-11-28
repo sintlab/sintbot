@@ -1,0 +1,742 @@
+'use strict'
+
+const { isC2InputRejection, answerC2InputRejection, rejectC2Input } = require('./core/c2inputrejection')
+const { coordinateC2GlobalFault } = require('./core/c2globalfault')
+const { chatLang, pick } = require('./chatlang')
+
+const RECOVERING_NOTICE = '上一个任务出错，正在收尾，这条消息没有处理，请稍后重发。'
+const HELD_NOTICE = '本群上一个任务结果不明，已暂停处理，等待人工确认；其他群不受影响。管理员发送 /resume 即可封存上一轮并恢复。'
+// A Slack channel or direct message, or a WeCom single chat, is not "本群".
+function heldNotice(platform, chatId) {
+  let here = ''
+  try { here = platform?.conversationOf?.(chatId)?.here || '' } catch {}
+  return here && here !== '本群' ? `${here}上一个任务结果不明，已暂停处理，等待人工确认；其他会话不受影响。管理员发送 /resume 即可封存上一轮并恢复。` : HELD_NOTICE
+}
+const UPGRADING_NOTICE = 'SintBot 正在升级，这条消息没有处理，请一分钟后重发。'
+// A conversation bound before any model was set up (src/modelpending.js).
+const NO_MODEL_NOTICE = '还没有配置模型，这条消息没有处理。请管理员在 SintBot 控制台的「模型 · 库」添加一个模型（Claude 账号、ChatGPT 账号或 API Key），之后重发即可。'
+const NO_MODEL_NOTICE_EN = 'No model is set up yet, so this message was not handled. Ask an admin to add one on the Models page of the SintBot console (a Claude or ChatGPT account, or an API key), then resend it.'
+// The same notices for a conversation whose language is English
+// (`groups[chatId].lang`, src/chatlang.js). `here` is the adapter's English
+// name for the conversation ("this channel"); a group chat is "this group".
+const RECOVERING_NOTICE_EN = 'The previous task ran into an error and is being wrapped up, so this message was not handled. Please resend it in a moment.'
+const UPGRADING_NOTICE_EN = 'SintBot is being upgraded, so this message was not handled. Please resend it in a minute.'
+function heldNoticeEn(platform, chatId) {
+  let here = ''
+  try { here = platform?.conversationOf?.(chatId)?.en?.here || '' } catch {}
+  return `The outcome of the previous task in ${here || 'this group'} is unknown, so it is paused until someone confirms what happened; other conversations are not affected. An admin can send /resume to seal the previous task and resume.`
+}
+const SERVICE_NOTICES = Object.freeze({
+  zh: Object.freeze({ recovering: RECOVERING_NOTICE, upgrading: UPGRADING_NOTICE, held: heldNotice, noModel: NO_MODEL_NOTICE }),
+  en: Object.freeze({ recovering: RECOVERING_NOTICE_EN, upgrading: UPGRADING_NOTICE_EN, held: heldNoticeEn, noModel: NO_MODEL_NOTICE_EN }) })
+const serviceNotices = lang => (lang === 'en' ? SERVICE_NOTICES.en : SERVICE_NOTICES.zh)
+const reasonOf = error => String(error?.message || error || 'unknown').slice(0, 300)
+
+// A conversation that reaches the service without any route (never
+// connected, or removed since): kept in memory only, for the console. At most
+// one log line per conversation every 30 minutes; the oldest are forgotten.
+const UNCONFIGURED_LOG_MS = 30 * 60_000
+const UNCONFIGURED_KEEP = 200
+const UNCONFIGURED_SHOWN = 20
+// The platform when the conversation's identity says so (src/config.js
+// inferChatPlatform, strong shapes only); a WeCom single chat has none.
+function platformOfChat(chatId) {
+  if (/^oc_slack_/.test(chatId)) return 'slack'
+  if (/^oc_local_/.test(chatId)) return 'local'
+  if (/^oc_/.test(chatId)) return 'feishu'
+  if (/^wr[A-Za-z0-9_-]{6,}$/.test(chatId)) return 'wecom'
+  return null
+}
+
+// Turns a group binding still holds: a running turn, a non-idle handoff or a
+// busy lifecycle. Scoped to one group's own journal.
+function activeTurns(snapshot) {
+  const lanes = snapshot.state.lanes
+  const turns = []
+  for (const chatId of new Set([...Object.keys(lanes.turn || {}),
+    ...Object.keys(lanes.handoff || {}), ...Object.keys(lanes.lifecycle || {})])) {
+    const turn = lanes.turn?.[chatId]
+    const handoff = lanes.handoff?.[chatId]
+    const lifecycle = lanes.lifecycle?.[chatId]
+    if (turn?.active != null || handoff?.phase && handoff.phase !== 'idle' ||
+        lifecycle?.busy === true || lifecycle?.controller === true) {
+      turns.push({ chatId, turnToken: turn?.active ?? handoff?.turnToken ?? null })
+    }
+  }
+  return turns.sort((a, b) => a.chatId.localeCompare(b.chatId))
+}
+
+const runtimesOf = binding => binding?.engine?.rts instanceof Map ? [...binding.engine.rts.values()] : []
+
+// Process-local organization only. Each binding owns a distinct durable
+// authority; the transport and writer lease belong to this single process.
+// A fault that only one group's journal can explain holds that group: its
+// sealed binding stays as evidence, nothing is replayed or retried, and every
+// other group keeps serving. Only a shared resource (writer lease, transport,
+// model capacity) stops the process. `holds` lists groups whose journal could
+// not be opened before the service was created.
+function createC2MultiGroupService({ routes, assertWriterLock,
+  createTransport, createBinding, onFatal = () => {}, closeCapacity = () => {},
+  quarantine = null, stopTimeoutMs = 2_000, drainTimeoutMs = 12_000,
+  createRecoveryAuthority = null, holds = new Map(), sharedFault = () => null,
+  ingressWaitMs = 60_000, onModelCard = null, modelPending = null, onHeldCommand = null,
+  now = Date.now, log = () => {} } = {}) {
+  if (!Array.isArray(routes) || !routes.length ||
+      new Set(routes.map(route => route.chatId)).size !== routes.length ||
+      routes.some(route => !route || typeof route.chatId !== 'string' ||
+        typeof route.file !== 'string') ||
+      typeof assertWriterLock !== 'function' ||
+      typeof createTransport !== 'function' || typeof createBinding !== 'function' ||
+      typeof onFatal !== 'function' || typeof closeCapacity !== 'function' ||
+      typeof log !== 'function' || typeof sharedFault !== 'function' ||
+      typeof now !== 'function' || !(holds instanceof Map) ||
+      modelPending !== null && typeof modelPending !== 'function' ||
+      onHeldCommand !== null && typeof onHeldCommand !== 'function' ||
+      [...holds.keys()].some(chatId => !routes.some(route => route.chatId === chatId)) ||
+      createRecoveryAuthority !== null && typeof createRecoveryAuthority !== 'function' ||
+      !Number.isSafeInteger(stopTimeoutMs) || stopTimeoutMs < 1 ||
+      !Number.isSafeInteger(drainTimeoutMs) || drainTimeoutMs < 1 ||
+      !Number.isSafeInteger(ingressWaitMs) || ingressWaitMs < 1) {
+    throw new TypeError('C2 multi-group service needs explicit routes and controls')
+  }
+  const configured = new Map(routes.map(route => [route.chatId, route]))
+  const bindings = new Map()
+  // chatId -> { reason, source: 'startup' | 'runtime', since, binding }
+  const suspended = new Map()
+  // Set while a console upgrade switches the service: no message is admitted.
+  let maintenance = false
+  let transport = null
+  let started = false
+  let starting = false
+  let transportStarted = false
+  let stopPromise = null
+  let failed = false
+  let startupDone = null
+  let startupComplete = false
+
+  function held() {
+    if (assertWriterLock() !== true) throw new Error('C2 service writer lock lost')
+  }
+  function writerHeld() {
+    try { return assertWriterLock() === true } catch { return false }
+  }
+  async function bounded(operation, ms) {
+    let timer
+    try {
+      return await Promise.race([Promise.resolve().then(operation),
+        new Promise(resolve => { timer = setTimeout(() => resolve(false), ms) })])
+    } catch { return false } finally { clearTimeout(timer) }
+  }
+  function stop(reason = 'operator-stop', code = 0) {
+    if (stopPromise) return stopPromise
+    started = false
+    // Seal every authority synchronously before awaiting transport shutdown.
+    closeCapacity()
+    for (const binding of bindings.values()) {
+      binding.gate.stop()
+      binding.engine.shutdown()
+    }
+    const startupInProgress = !!startupDone && !startupComplete
+    stopPromise = (async () => {
+      // A signal can arrive while a recovery binding or socket start awaits.
+      // Keep the lease until startup observes the closed state, then seal any
+      // binding that finished after the initial synchronous sweep.
+      const startupStopped = !startupInProgress || await bounded(
+        () => startupDone.then(() => true), drainTimeoutMs) === true
+      if (startupInProgress) {
+        for (const binding of bindings.values()) {
+          binding.gate.stop()
+          binding.engine.shutdown()
+        }
+      }
+      const platformStopped = !transportStarted || await bounded(
+        () => transport.stopPlatform(), stopTimeoutMs) === true
+      const drained = (await Promise.all([...bindings.values()].map(binding =>
+        bounded(() => binding.engine.drainDurableV2(drainTimeoutMs), drainTimeoutMs + 100))))
+        .every(value => value === true) && [...suspended.values()].every(entry =>
+        runtimesOf(entry.binding).every(rt => !rt.v2Controller))
+      return Object.freeze({ reason, code: code === 0 && startupStopped && platformStopped && drained ? 0 : 1,
+        startupStopped, platformStopped, drained })
+    })()
+    return stopPromise
+  }
+  async function fatal(error) {
+    if (failed) return stopPromise
+    failed = true
+    const result = await stop('C2 multi-group ingress failed', 1)
+    await onFatal(error, result)
+    return result
+  }
+  // Seal one group in place. Its binding and journal are kept unchanged as
+  // evidence; a later restart reopens it only through the normal recovery
+  // gate, or after its incident has been sealed by the operator.
+  function suspend(chatId, error, { source, binding = null }) {
+    if (suspended.has(chatId)) return suspended.get(chatId)
+    const entry = Object.freeze({ reason: reasonOf(error), source, since: now(), binding })
+    suspended.set(chatId, entry)
+    for (const sealed of new Set([binding, bindings.get(chatId)])) {
+      if (!sealed) continue
+      try { sealed.gate.stop() } catch {}
+      try { sealed.engine.shutdown() } catch {}
+    }
+    bindings.delete(chatId)
+    log(`group ${chatId}: held (${entry.reason}); other groups keep serving`)
+    return entry
+  }
+  function allowed(chatId) {
+    const route = configured.get(chatId)
+    if (!route || route.paused === true) return false
+    // Once serving, every open route has a binding. A route still being
+    // opened online is not served yet and its messages get no receipt.
+    return !started || bindings.has(chatId)
+  }
+  // chatId -> { chatId, platform, sender, firstAt, lastAt, count, loggedAt }, least recent first.
+  const unconfigured = new Map()
+  function noteUnconfigured(msg) {
+    const chatId = msg.chatId
+    const at = now(), prior = unconfigured.get(chatId)
+    const sender = typeof msg.senderName === 'string' ? msg.senderName.slice(0, 80) : ''
+    const entry = { chatId, platform: platformOfChat(chatId), sender: sender || prior?.sender || '',
+      firstAt: prior?.firstAt ?? at, lastAt: at, count: (prior?.count || 0) + 1, loggedAt: prior?.loggedAt ?? null }
+    unconfigured.delete(chatId)
+    unconfigured.set(chatId, entry)
+    while (unconfigured.size > UNCONFIGURED_KEEP) unconfigured.delete(unconfigured.keys().next().value)
+    if (entry.loggedAt === null || at - entry.loggedAt >= UNCONFIGURED_LOG_MS) {
+      entry.loggedAt = at
+      log(`conversation ${chatId}${entry.platform ? ` (${entry.platform})` : ''}: not connected to any project; message ignored` +
+        (entry.count > 1 ? ` (${entry.count} since this service started)` : ''))
+    }
+  }
+  // Most recent first, for the console.
+  function unconfiguredChats() {
+    return [...unconfigured.values()].reverse().slice(0, UNCONFIGURED_SHOWN).map(entry => Object.freeze({
+      chatId: entry.chatId, platform: entry.platform, sender: entry.sender,
+      firstAt: entry.firstAt, lastAt: entry.lastAt, count: entry.count }))
+  }
+  const activating = new Map()
+  const recovering = new Map()
+  // chatId -> the in-place seal and reopen of a held group (resumeHeld).
+  const resuming = new Map()
+  const failedBindings = new WeakSet()
+  // Same bounded transition as the single-group entry: seal this binding,
+  // wait for its runner to close, abandon the proved active turn with one
+  // notice per receipt (never a retry), then open a fresh binding.
+  function recoverGroup(chatId, binding, error) {
+    if (recovering.has(chatId)) return recovering.get(chatId)
+    if (failedBindings.has(binding) && bindings.get(chatId) !== binding) return Promise.resolve()
+    failedBindings.add(binding)
+    const route = configured.get(chatId)
+    const work = (async () => {
+      log(`group ${chatId}: closing failed turn (${error?.message || String(error)})`)
+      binding.gate.stop()
+      binding.engine.shutdown()
+      await bounded(() => binding.engine.drainDurableV2(drainTimeoutMs), drainTimeoutMs + 100)
+      const quiescent = [...binding.engine.rts.values()].every(rt =>
+        !rt.v2Controller && !rt.v2NormalRouteActive && !rt.v2Compacting)
+      if (!quiescent || !writerHeld() || !route) throw new Error('C2 group fault is not quiescent')
+      const turns = activeTurns(binding.journal.snapshot())
+      const proofs = turns.length ? binding.engine.durableV2ActiveFaultProofs?.(turns) || null : null
+      const result = await coordinateC2GlobalFault({ runtime: binding.runtime,
+        journal: binding.journal, assertWriterLock,
+        abortTurn: turn => binding.engine.abortDurableV2FaultTurn?.(turn) === true,
+        activeTurnProofs: proofs,
+        createAuthority: lock => createRecoveryAuthority({ route, transport, assertWriterLock: lock }) })
+      if (result.status !== 'recovered' || !writerHeld()) {
+        throw new Error(`C2 group recovery sealed: ${result.reason || 'writer lock lost'}`)
+      }
+      result.runtime.close()
+      if (!started || stopPromise) throw new Error('C2 service stopped during group recovery')
+      const next = await createBinding({ route, transport, journal: result.journal })
+      if (!next || !next.gate || !next.engine || next.gate.blocked || !writerHeld()) {
+        next?.gate?.stop?.(); next?.engine?.shutdown?.()
+        throw new Error('C2 group binding did not reopen after recovery')
+      }
+      bindings.set(chatId, next)
+      log(`group ${chatId}: failed turn closed; group reopened`)
+    })()
+    recovering.set(chatId, work)
+    work.then(() => recovering.delete(chatId), () => recovering.delete(chatId))
+    return work
+  }
+  // One group's route, recall or ingress failed. Close the failed turn when
+  // its journal proves every effect; otherwise hold the group alone. Returns
+  // 'recovered', 'held', 'fatal' (process stop begun) or 'stopping'.
+  async function groupFault(chatId, binding, error) {
+    const shared = () => !writerHeld() ? 'writer lock lost' : sharedFault()
+    if (shared()) { await fatal(error); return 'fatal' }
+    if (!started || stopPromise) return 'stopping'
+    if (suspended.has(chatId)) return 'held'
+    const current = bindings.get(chatId)
+    if (!binding || current !== binding && !failedBindings.has(binding)) {
+      // An error from a binding this service never published is not attributable.
+      await fatal(error); return 'fatal'
+    }
+    if (!createRecoveryAuthority) { await fatal(error); return 'fatal' }
+    try {
+      await recoverGroup(chatId, binding, error)
+    } catch (failure) {
+      log(`group ${chatId}: failed turn could not be closed: ${reasonOf(failure)}`)
+      if (shared()) { await fatal(failure); return 'fatal' }
+      if (!started || stopPromise) return 'stopping'
+      suspend(chatId, failure, { source: 'runtime', binding })
+    }
+    return suspended.has(chatId) ? 'held' : 'recovered'
+  }
+  // The words of this service's own notices in one conversation's language,
+  // read from the route's live group each time.
+  const noticesOf = chatId => serviceNotices(chatLang(configured.get(chatId)?.group))
+  function heldReply(msg, sourceAdapter) {
+    return answerC2InputRejection({ error: rejectC2Input('C2 group held',
+      { reason: 'group-held', notice: noticesOf(msg?.chatId).held(sourceAdapter, msg?.chatId) }), msg, platform: sourceAdapter, log })
+  }
+  // Open one more group on the live transport: a newly added route or one
+  // paused since startup. It runs the same recovery gate as startup; only a
+  // fully opened binding is published. Failure leaves the group unserved.
+  function addRoute(route) {
+    if (!route || typeof route.chatId !== 'string' || typeof route.file !== 'string') {
+      return Promise.reject(new TypeError('C2 online route needs an explicit group and journal'))
+    }
+    if (suspended.has(route.chatId)) {
+      return Promise.reject(new Error('This group is held after an unresolved fault; seal its incident and restart'))
+    }
+    if (bindings.has(route.chatId)) return Promise.resolve(bindings.get(route.chatId))
+    if (activating.has(route.chatId)) return activating.get(route.chatId)
+    const opening = (async () => {
+      if (!started || starting || stopPromise || maintenance) throw new Error('C2 service is not serving')
+      held()
+      const binding = await createBinding({ route, transport })
+      if (!started || stopPromise || !writerHeld() || suspended.has(route.chatId) ||
+          !binding || !binding.gate || !binding.engine || binding.gate.blocked) {
+        binding?.gate?.stop?.()
+        binding?.engine?.shutdown?.()
+        throw new Error('C2 group binding did not open its durable authority')
+      }
+      configured.set(route.chatId, route)
+      bindings.set(route.chatId, binding)
+      unconfigured.delete(route.chatId)
+      log(`group ${route.chatId}: opened online`)
+      return binding
+    })()
+    activating.set(route.chatId, opening)
+    opening.then(() => activating.delete(route.chatId), () => activating.delete(route.chatId))
+    return opening
+  }
+  // Why one group cannot be removed online right now (null = it can). A held
+  // group may go once its turn has closed: nothing of it is replayed or
+  // settled, and its journal is archived unchanged as evidence by the caller.
+  function removalBlocked(chatId) {
+    if (!started || starting || stopPromise || maintenance || failed) return 'not-serving'
+    if (activating.has(chatId) || recovering.has(chatId) || resuming.has(chatId)) return 'opening'
+    if (ingress.get(chatId)?.waiting.size) return 'busy'
+    for (const binding of new Set([bindings.get(chatId), suspended.get(chatId)?.binding])) {
+      if (binding && runtimesOf(binding).some(rt => rt.v2Controller || rt.v2NormalRouteActive ||
+          rt.v2Compacting || rt.v2AdmissionPending || rt.v2QueueReceiptIds?.length)) return 'busy'
+    }
+    return null
+  }
+  // Close one group for good: its binding stops admitting and is dropped, and
+  // its later messages are ignored like any unconfigured chat.
+  function removeRoute(chatId) {
+    const blocked = removalBlocked(chatId)
+    if (blocked) throw Object.assign(new Error(`C2 group cannot be removed now: ${blocked}`), { code: blocked })
+    held()
+    for (const binding of new Set([bindings.get(chatId), suspended.get(chatId)?.binding])) {
+      if (!binding) continue
+      try { binding.gate.stop() } catch {}
+      try { binding.engine.shutdown() } catch {}
+      try { binding.runtime?.close?.() } catch {}
+    }
+    bindings.delete(chatId)
+    suspended.delete(chatId)
+    configured.delete(chatId)
+    ingress.delete(chatId)
+    log(`group ${chatId}: removed online`)
+    return true
+  }
+  // A reply or card operation awaiting its platform response blocks the
+  // durable authority only for that moment: blocked, but not closed.
+  const closedForGood = runtime => (runtime?.closed ?? runtime?.blocked) === true
+  const effectInFlight = runtime => runtime?.blocked === true && runtime?.closed === false
+  // Per-group ingress order. The platform runs every inbound event on its own
+  // listener and does not await this route, so messages of one group can reach
+  // it concurrently. A message that finds its group blocked only by an
+  // in-flight effect waits for that effect (polling, bounded) instead of being
+  // refused, and every later message of that group queues behind it in arrival
+  // order until it has been handed to admission or answered. Other groups
+  // never wait, and a group with nothing waiting takes the direct path.
+  // chatId -> { tail, waiting: msgId -> count, recalled: Set of msgId }
+  const INGRESS_POLL_MS = 25
+  const AWAIT_EFFECT = Symbol('await in-flight effect')
+  const ingress = new Map()
+  const pause = () => new Promise(resolve => setTimeout(resolve, INGRESS_POLL_MS))
+  function routeMessage(msg, sourceAdapter) {
+    if (!ingress.has(msg?.chatId)) {
+      const outcome = admitMessage(msg, sourceAdapter, false)
+      if (outcome !== AWAIT_EFFECT) return outcome
+      return queueMessage(msg, sourceAdapter, true)
+    }
+    return queueMessage(msg, sourceAdapter, false)
+  }
+  function queueMessage(msg, sourceAdapter, evaluated) {
+    const { chatId, msgId } = msg
+    // The bound counts from arrival, including time spent behind earlier messages.
+    const deadline = performance.now() + ingressWaitMs
+    let lane = ingress.get(chatId)
+    if (!lane) {
+      lane = { tail: Promise.resolve(), waiting: new Map(), recalled: new Set() }
+      ingress.set(chatId, lane)
+    }
+    lane.waiting.set(msgId, (lane.waiting.get(msgId) || 0) + 1)
+    let release
+    const turn = new Promise(resolve => { release = resolve })
+    const prior = lane.tail
+    lane.tail = turn
+    const admitted = (async () => {
+      try {
+        await prior
+        // A box, so the next message does not wait for this one's turn to end.
+        return await awaitAdmission(msg, sourceAdapter, lane, evaluated, deadline)
+      } finally {
+        const left = lane.waiting.get(msgId) - 1
+        if (left > 0) lane.waiting.set(msgId, left)
+        else lane.waiting.delete(msgId)
+        if (lane.tail === turn && ingress.get(chatId) === lane) ingress.delete(chatId)
+        release()
+      }
+    })()
+    return admitted.then(box => box.outcome)
+  }
+  async function awaitAdmission(msg, sourceAdapter, lane, evaluated, deadline) {
+    if (evaluated) await pause()
+    for (;;) {
+      // Never admitted, so no receipt exists: a stop or a recall meanwhile
+      // only drops this message and is no fault.
+      if (!started || stopPromise) return { outcome: { ignored: true, reason: 'ingress-closed' } }
+      if (lane.recalled.has(msg.msgId)) {
+        log(`group ${msg.chatId}: message recalled before admission`)
+        return { outcome: { ignored: true, reason: 'recalled-before-admission' } }
+      }
+      const outcome = admitMessage(msg, sourceAdapter, performance.now() >= deadline)
+      if (outcome !== AWAIT_EFFECT) return { outcome }
+      await pause()
+    }
+  }
+  function admitMessage(msg, sourceAdapter, expired) {
+    const route = configured.get(msg?.chatId)
+    if (route && route.paused !== true && suspended.has(msg.chatId)) {
+      // A held group admits nothing; a replay of a sealed source stays silent.
+      if (quarantine?.rejects(msg)) return { quarantined: true }
+      // The one thing a held group still takes: the resume command, handled
+      // by the host (who may give it, and the seal itself). It has no receipt.
+      if (started && !stopPromise && onHeldCommand) {
+        const handled = onHeldCommand(msg, sourceAdapter)
+        if (handled) return handled
+      }
+      if (started && !stopPromise) return heldReply(msg, sourceAdapter)
+    }
+    // A held group being sealed and reopened in place admits nothing yet.
+    if (route && route.paused !== true && resuming.has(msg.chatId) && !bindings.has(msg.chatId) &&
+        started && !stopPromise) {
+      if (quarantine?.rejects(msg)) return { quarantined: true }
+      return answerC2InputRejection({ error: rejectC2Input('C2 group recovering',
+        { reason: 'group-recovering', notice: noticesOf(msg.chatId).recovering }), msg, platform: sourceAdapter, log })
+    }
+    // Foreign/paused group events are not faults and never get a receipt.
+    if (!allowed(msg?.chatId)) {
+      // No route at all (not paused, not being opened online): the platform
+      // may tell the conversation once, and the console shows it.
+      if (!route && typeof msg?.chatId === 'string' && msg.chatId && msg.chatId.length <= 128 &&
+          !activating.has(msg.chatId)) {
+        noteUnconfigured(msg)
+        return { ignored: true, reason: 'unconfigured-or-paused', unconfigured: true }
+      }
+      return { ignored: true, reason: 'unconfigured-or-paused' }
+    }
+    if (quarantine?.rejects(msg)) return { quarantined: true }
+    if (maintenance && started && !stopPromise) {
+      return answerC2InputRejection({ error: rejectC2Input('C2 service upgrading',
+        { reason: 'upgrading', notice: noticesOf(msg.chatId).upgrading }), msg, platform: sourceAdapter, log })
+    }
+    if (recovering.has(msg.chatId) && started && !stopPromise) {
+      // The group's failed turn is being closed; nothing is admitted meanwhile.
+      return answerC2InputRejection({ error: rejectC2Input('C2 group recovering',
+        { reason: 'group-recovering', notice: noticesOf(msg.chatId).recovering }), msg, platform: sourceAdapter, log })
+    }
+    if (modelPending && started && !stopPromise && modelPending(msg)) {
+      // No receipt, no turn: the conversation only waits for a model.
+      return answerC2InputRejection({ error: rejectC2Input('C2 group has no model',
+        { reason: 'no-model', notice: noticesOf(msg.chatId).noModel }), msg, platform: sourceAdapter, log })
+    }
+    let binding
+    try {
+      held()
+      binding = bindings.get(msg.chatId)
+      if (!started || starting || stopPromise || !binding) {
+        throw new Error('C2 group ingress authority closed')
+      }
+      if (binding.gate.blocked) {
+        if (effectInFlight(binding.runtime)) {
+          if (!expired) return AWAIT_EFFECT
+          // Still not settled after the bound: refuse as before, no fault.
+          log(`group ${msg.chatId}: message refused; an outbound effect stayed in flight`)
+          return answerC2InputRejection({ error: rejectC2Input('C2 group effect in flight',
+            { reason: 'effect-in-flight', notice: noticesOf(msg.chatId).recovering }), msg, platform: sourceAdapter, log })
+        }
+        // A turn still running under a closed authority delivers its own
+        // rejection; until then this message, which has no receipt, is
+        // refused. An idle closed group is closed as its own fault here.
+        if (runtimesOf(binding).some(rt => rt.v2NormalRouteActive)) {
+          return answerC2InputRejection({ error: rejectC2Input('C2 group closing',
+            { reason: 'group-recovering', notice: noticesOf(msg.chatId).recovering }), msg, platform: sourceAdapter, log })
+        }
+        return groupFault(msg.chatId, binding, new Error('C2 group ingress authority closed'))
+          .then(async outcome => {
+            if (outcome === 'held') return heldReply(msg, sourceAdapter)
+            if (outcome === 'recovered') {
+              return answerC2InputRejection({ error: rejectC2Input('C2 group recovered',
+                { reason: 'group-recovering', notice: noticesOf(msg.chatId).recovering }), msg, platform: sourceAdapter, log })
+            }
+            throw new Error('C2 group ingress authority closed')
+          })
+      }
+      const running = binding.engine.runDurableV2Message(msg, sourceAdapter)
+      return Promise.resolve(running).catch(async error => {
+        // A refused command or premature /stop wrote nothing durable. Answer it
+        // once and keep every group serving. A card update of the running task
+        // that is on its way at this moment blocks the authority without
+        // closing it; it is no reason to fault the group.
+        if (isC2InputRejection(error) && started && !stopPromise &&
+            (!binding.gate.blocked || effectInFlight(binding.runtime)) && writerHeld()) {
+          log(`group ${msg.chatId}: refused input before receipt (${error.reason})`)
+          return answerC2InputRejection({ error, msg, platform: sourceAdapter, log })
+        }
+        // Any other route error belongs to this group alone unless a shared
+        // resource failed. Errors from a superseded binding join its fault.
+        if (started && !stopPromise) {
+          const outcome = await groupFault(msg.chatId, binding, error)
+          if (outcome === 'recovered') return { recovered: true, reason: 'group-fault-closed' }
+          if (outcome === 'held') return { held: true, reason: 'group-held' }
+        }
+        await fatal(error)
+        throw error
+      })
+    } catch (error) {
+      void fatal(error)
+      throw error
+    }
+  }
+  // Taps on the /model card only. They write the configuration through the
+  // same validated writer as the console and never touch a journal, receipt
+  // or session; every other card callback stays unsupported. The return
+  // value is the platform's synchronous answer (toast and replacement card).
+  function cardAction(event) {
+    let value = event?.action?.value
+    if (typeof value === 'string') { try { value = JSON.parse(value) } catch { value = null } }
+    if (typeof onModelCard !== 'function' || !value || value.a !== 'mc' || !allowed(event?.chatId)) {
+      return unsupported('card action')(event)
+    }
+    const lang = chatLang(configured.get(event.chatId)?.group)
+    if (maintenance) return { toast: { type: 'info', content: pick(lang, '正在升级，稍后再点', 'Upgrading; try again in a moment') } }
+    if (suspended.has(event.chatId)) return { toast: { type: 'warning', content: pick(lang, '本群暂停处理中，请管理员处理后再改', 'This group is paused; ask an admin to sort it out before changing this') } }
+    const binding = bindings.get(event.chatId)
+    if (!binding) return { ignored: true }
+    return Promise.resolve().then(() => onModelCard({ ...event, action: { ...event.action, value } }, binding))
+      .catch(error => {
+        log(`model card ${event.chatId}: ${error?.message || String(error)}`)
+        return { toast: { type: 'error', content: pick(lang, '没改成 —— 请稍后再试', 'The change did not go through — try again later') } }
+      })
+  }
+  function unsupported(source) {
+    return event => {
+      // An event without group identity cannot safely be attributed. It has
+      // no accepted receipt and is ignored instead of stopping unrelated work.
+      if (!allowed(event?.chatId)) return { ignored: true }
+      return { ignored: true, reason: `unsupported-${source}` }
+    }
+  }
+  // A reply or card update awaiting its platform response blocks the durable
+  // authority only for that moment. The bot's own card deleted by /stop or
+  // /skip comes back as a recall exactly then, and a person may recall a
+  // queued message while its queue notice is still on its way. The recall
+  // waits for that effect to settle; only an authority closed for good after
+  // the recall is a fault. The platform does not await this result, so the
+  // wait never rejects.
+  const RECALL_WAIT_MS = 60_000
+  const RECALL_POLL_MS = 25
+  function recall(event, waitedMs = 0) {
+    if (suspended.has(event?.chatId)) return { ignored: true, reason: 'group-held' }
+    if (maintenance) return { ignored: true, reason: 'upgrading' }
+    if (!allowed(event?.chatId)) return { ignored: true }
+    // A message still waiting for admission has no receipt yet; it is
+    // dropped there instead of being admitted after its own recall.
+    const lane = ingress.get(event.chatId)
+    if (lane?.waiting.has(event.msgId)) {
+      lane.recalled.add(event.msgId)
+      return { handled: true }
+    }
+    let binding
+    try {
+      held()
+      binding = bindings.get(event.chatId)
+      if (!started || stopPromise || !binding) return { ignored: true, reason: 'ingress-closed' }
+      if (effectInFlight(binding.runtime)) {
+        if (waitedMs >= RECALL_WAIT_MS) {
+          log(`group ${event.chatId}: recall not applied; an outbound effect stayed in flight`)
+          return { ignored: true, reason: 'recall-effect-in-flight' }
+        }
+        return new Promise(resolve => setTimeout(resolve, RECALL_POLL_MS))
+          .then(() => recall(event, waitedMs + RECALL_POLL_MS))
+          .catch(error => {
+            log(`group ${event.chatId}: deferred recall failed: ${reasonOf(error)}`)
+            return { ignored: true, reason: 'recall-failed' }
+          })
+      }
+      const handled = binding.engine.handleRecall?.(event) === true
+      if (closedForGood(binding.runtime)) throw new Error('Recall closed its durable authority')
+      return handled ? { handled: true } : { ignored: true, reason: 'unsupported-or-inactive-recall' }
+    } catch (error) {
+      if (!binding || !writerHeld() || !started || stopPromise) return fatal(error)
+      return groupFault(event.chatId, binding, error).then(outcome =>
+        outcome === 'recovered' || outcome === 'held'
+          ? { ignored: true, reason: `group-${outcome}` } : fatal(error))
+    }
+  }
+  async function start({ preflightOnly = false } = {}) {
+    if (started || starting || stopPromise) throw new Error('C2 service already started or stopped')
+    starting = true
+    let finishStartup
+    startupDone = new Promise(resolve => {
+      finishStartup = () => { startupComplete = true; resolve() }
+    })
+    try {
+      held()
+      transport = createTransport()
+      if (!transport || typeof transport.platform?.start !== 'function' ||
+          typeof transport.stopPlatform !== 'function') {
+        throw new TypeError('C2 transport lacks a single start/stop boundary')
+      }
+      for (const [chatId, reason] of holds) suspend(chatId, reason, { source: 'startup' })
+      for (const route of routes) {
+        if (route.paused || suspended.has(route.chatId)) continue // Paused journals are audited before start.
+        let binding
+        try {
+          binding = await createBinding({ route, transport })
+        } catch (error) {
+          held()
+          if (stopPromise) throw new Error('C2 service stopped during group recovery')
+          // This group's journal could not be recovered; it alone stays closed.
+          suspend(route.chatId, error, { source: 'startup' })
+          continue
+        }
+        held()
+        if (stopPromise) {
+          binding?.gate?.stop?.()
+          binding?.engine?.shutdown?.()
+          if (binding?.engine) bindings.set(route.chatId, binding)
+          throw new Error('C2 service stopped during group recovery')
+        }
+        if (!binding || !binding.gate || !binding.engine || binding.gate.blocked) {
+          binding?.gate?.stop?.()
+          binding?.engine?.shutdown?.()
+          suspend(route.chatId, 'C2 group binding did not open its durable authority', { source: 'startup' })
+          continue
+        }
+        bindings.set(route.chatId, binding)
+      }
+      held()
+      const heldList = [...suspended].map(([chatId, entry]) => `${chatId}: ${entry.reason}`)
+      if (preflightOnly && heldList.length) {
+        throw new Error(`Startup preflight would hold ${heldList.length} group(s): ${heldList.join('; ')}`)
+      }
+      // Every group may be held: the service still starts, so the console stays
+      // up to show the hold and seal it, and a held group's new messages get
+      // their one notice. Exiting instead left a launchd job restarting
+      // without end and a one-group installation without any console.
+      if (preflightOnly) {
+        finishStartup()
+        await stop('preflight', 0)
+        return { groups: bindings.size, connected: false }
+      }
+      starting = false
+      started = true
+      transportStarted = true
+      await transport.platform.start(routeMessage, { onFatal: fatal,
+        onRecall: recall, onReaction: unsupported('reaction'),
+        onCardAction: cardAction, onBoardUpdated: unsupported('board update') })
+      held()
+      if (stopPromise) throw new Error('C2 service stopped during connection')
+      return { groups: bindings.size, connected: true, ...(suspended.size ? { held: heldGroups() } : {}) }
+    } catch (error) {
+      finishStartup()
+      await stop('startup-failed', 1)
+      throw error
+    } finally { starting = false; finishStartup() }
+  }
+  // Seal one held group in place and open it again, without stopping the
+  // service. Only when nothing of that group still runs: its runner closed,
+  // no lane or compaction open, and (checked by the host) no model permit
+  // held. `seal` is the operator tool run under this process's writer lock:
+  // it moves the journal unchanged under incidents/ and leaves a new empty
+  // one; nothing is settled, replayed or notified. A failure before the seal
+  // leaves the hold as it was; a failure to reopen holds the group again.
+  function resumeHeld(chatId, { seal, busy = () => false } = {}) {
+    if (typeof seal !== 'function' || typeof busy !== 'function') {
+      return Promise.reject(new TypeError('Resuming a held group needs the seal tool'))
+    }
+    if (resuming.has(chatId)) return resuming.get(chatId)
+    const work = (async () => {
+      if (!started || starting || stopPromise || maintenance || failed) {
+        throw Object.assign(new Error('C2 service is not serving'), { code: 'not-serving' })
+      }
+      const entry = suspended.get(chatId)
+      if (!entry) throw Object.assign(new Error('This group is not held'), { code: 'not-held' })
+      const route = configured.get(chatId)
+      if (!route || route.paused === true) throw Object.assign(new Error('This group is not served'), { code: 'not-served' })
+      const old = entry.binding
+      if (old && runtimesOf(old).some(rt => rt.v2Controller || rt.v2NormalRouteActive || rt.v2Compacting) ||
+          busy(chatId)) {
+        throw Object.assign(new Error('The held turn has not closed yet'), { code: 'still-running' })
+      }
+      held()
+      try { old?.runtime?.close?.() } catch {}
+      const out = seal(chatId)
+      if (!suspended.has(chatId)) throw new Error('C2 group hold changed during the seal')
+      suspended.delete(chatId)
+      try { await addRoute(route) } catch (error) {
+        if (!stopPromise) suspend(chatId, error, { source: 'runtime' })
+        throw Object.assign(new Error(`Sealed, but the group did not reopen: ${reasonOf(error)}`), { code: 'reopen-failed', sealed: out })
+      }
+      log(`group ${chatId}: sealed in place and reopened; the service kept running`)
+      return out
+    })()
+    resuming.set(chatId, work)
+    work.then(() => resuming.delete(chatId), () => resuming.delete(chatId))
+    return work
+  }
+  function heldGroups() {
+    return [...suspended].map(([chatId, entry]) => Object.freeze({ chatId,
+      reason: entry.reason, source: entry.source, since: entry.since }))
+  }
+  function beginMaintenance() {
+    if (!maintenance) log('upgrade: admission closed for the service switch')
+    maintenance = true
+  }
+  function endMaintenance() {
+    if (maintenance) log('upgrade: admission reopened')
+    maintenance = false
+  }
+  return { start, stop, routeMessage, addRoute, removeRoute, removalBlocked, heldGroups, resumeHeld, beginMaintenance, endMaintenance,
+    // Conversations that reached the service without being connected (most recent first).
+    unconfiguredChats,
+    get inMaintenance() { return maintenance },
+    // A stop (signal, upgrade, console seal or a service fault) has begun.
+    get stopping() { return !!stopPromise },
+    // True only while the transport serves: the console may inject then and
+    // never during startup or a stop, when routing would close the service.
+    get serving() { return started && !starting && !stopPromise && !failed },
+    get bindings() { return new Map(bindings) },
+    get held() { return new Map([...suspended].map(([chatId, entry]) =>
+      [chatId, { reason: entry.reason, source: entry.source, since: entry.since }])) } }
+}
+
+module.exports = { createC2MultiGroupService, serviceNotices }

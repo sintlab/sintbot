@@ -1,0 +1,1038 @@
+[
+  {
+    "version": "1.5.4",
+    "date": "2026-11-26",
+    "name": "The overview shows this Mac's disk space and memory; an expired sign-in says what to sign in again",
+    "items": [
+      {
+        "t": "The overview shows this Mac's disk space and memory",
+        "d": "The header of the console's overview has two new readings: the free space on the disk that holds SintBot's data, and the share of this Mac's memory that is available. Memory uses the system's own available share, not its free pages. A reading changes colour when free space drops below 10 GB or available memory below 20%, and turns red when it gets tighter. The readings update every half minute; hover over one to see the total. On a narrow screen a reading shows only when it is low."
+      },
+      {
+        "t": "An expired sign-in says what to sign in again",
+        "d": "When a turn fails because of the account, the notice in the conversation says what to do: sign in to Claude Code again, sign in to Codex again, or check the model card's own key. Before, it only said the task had failed."
+      },
+      {
+        "t": "The model usage card checks for fresh numbers first",
+        "d": "When the Codex usage is more than ten minutes old, opening the overview checks it again first. A window past its reset time shows Reset instead of the share from before the reset. The collapsed line names the window, and the expanded card says the percent is the share used."
+      },
+      {
+        "t": "A message sent while a task is writing no longer puts the conversation on hold",
+        "d": "A new message or a follow-up that arrived at the moment a task was writing to its reply card was sometimes treated as a fault: the conversation was put on hold and the running task stopped. It was most likely while Codex was writing. Now the new message queues and the follow-up joins the task as usual."
+      },
+      {
+        "t": "Two messages starting at the same moment no longer put the conversation on hold",
+        "d": "When two queued messages came up for handling at the same moment, the second sometimes collided with the first one's queue notice and the conversation was put on hold. Now they are handled one after the other."
+      },
+      {
+        "t": "Two small fixes",
+        "d": "A Claude Code conversation running on its own API key no longer says the subscription ran out when its quota is used up. With the reply card's timed refresh turned off, the list of subagents at the bottom of the card still updates."
+      }
+    ]
+  },
+  {
+    "version": "1.5.3",
+    "date": "2026-11-25",
+    "name": "A running reply shows who is working; several cases no longer put a conversation on hold",
+    "items": [
+      {
+        "t": "A running reply shows who is working",
+        "d": "While a task runs, the Feishu reply card has a small block at the bottom: one line for the main task and one for each subagent Claude Code starts, with its model and elapsed time. It disappears when the task ends, and the footer of the finished reply says how many subagents the turn used. Slack progress messages and /status also list the subagents that are running. A Codex conversation shows the main task only."
+      },
+      {
+        "t": "One plain set of marks in the bot's own messages",
+        "d": "Progress lines, acknowledgements and most notices no longer use emoji, only a few plain marks: ◐ ✓ ✗ △ ▶ ● ↪. Progress lines are shorter too. Slack emoji reactions and unfinished-message reminders are unchanged for now."
+      },
+      {
+        "t": "A used-up quota says which quota",
+        "d": "When a turn ends because a quota ran out, the notice says whether it was the Claude Code subscription, the Codex subscription, or the model card's own quota."
+      },
+      {
+        "t": "A Codex start that fails no longer puts the conversation on hold",
+        "d": "When the Codex program exits before it starts on a message (a broken config file, for example), the message is closed as not handled: the conversation is told and asked to send it again, and later messages are handled as usual. Before, a Codex conversation with busy follow-ups on was put on hold. Two cases are still held as before: while an upgrade is confirming the new version (up to 90 seconds after the switch), and when the turn merged several queued messages."
+      },
+      {
+        "t": "An expired sign-in or a network failure with a follow-up no longer puts the conversation on hold",
+        "d": "When the model reports an expired sign-in or a network failure, the turn is closed as failed together with any follow-up merged into it, with one reply, and nothing is redone. Before, this put the whole conversation on hold."
+      },
+      {
+        "t": "Claude Code startup notes no longer put the conversation on hold",
+        "d": "When a conversation's folder is a mobile app project, a recent Claude Code prints a project scan note as it starts. It used to be taken for a fault and the conversation was put on hold. Notes of this kind are now skipped, including kinds added later."
+      },
+      {
+        "t": "A command sent as a task finishes no longer interrupts it",
+        "d": "A command such as /hud or /status sent just as a task was finishing could collide with an update of the reply card, which closed the turn and put the conversation on hold. The command is now answered and the task finishes as usual."
+      }
+    ]
+  },
+  {
+    "version": "1.5.2",
+    "date": "2026-11-25",
+    "name": "A network proxy at setup; per-group plugin check marks for Claude Code",
+    "items": [
+      {
+        "t": "A network proxy at setup",
+        "d": "On a Mac set to Chinese, the setup pages for Feishu, WeCom, Slack and local chat have a Network proxy line, prefilled with the proxy your terminal or the system is using. You can change it or clear it. Without a proxy, each Codex turn could wait a minute or two before it started."
+      },
+      {
+        "t": "Add the proxy to an existing installation",
+        "d": "When this Mac has a system proxy that SintBot is not using, the overview says so; click \"Use it and restart\". The proxy under General settings can now be saved directly and takes effect after a restart. A service running in the background can be restarted from the console, once every task has finished."
+      },
+      {
+        "t": "Per-group plugin check marks",
+        "d": "The plugin panel of a Claude Code group can now be edited: an unchecked MCP server is no longer loaded for that group, everything else loads as before, from the next turn. A server that cannot be reached is skipped and comes back by itself, with no change to your check marks."
+      },
+      {
+        "t": "A new message no longer interrupts tidying a long conversation",
+        "d": "In a long conversation, the context tidying that starts while the group is idle used to stop as soon as a message arrived, and start over later. The message now waits, the group is told roughly how many minutes, and it is handled right after, within 5 minutes at most."
+      },
+      {
+        "t": "The context bar marks the tidy line and the compaction line",
+        "d": "Each group's context bar on the overview has two marks, and the line below it shows tidying in progress or the last result. A Claude Code model added now starts with a 500k-token compaction line; existing models are unchanged, and you can change it on the model card."
+      },
+      {
+        "t": "Model usage refreshes by itself",
+        "d": "Model usage on the overview refreshes every 2 minutes while the page is open, and when you come back to the page. It used to be read once, when the page opened."
+      },
+      {
+        "t": "The bot's name and picture in the sidebar",
+        "d": "The bot's name and picture at the bottom left of the console now also appear on a new installation, without reloading the page."
+      }
+    ]
+  },
+  {
+    "version": "1.5.1",
+    "date": "2026-11-24",
+    "name": "A redesigned groups page; model usage on the overview",
+    "items": [
+      {
+        "t": "The groups page is redesigned",
+        "d": "Each group is a summary card, two to a row: status, project folder, model, access, follow-ups and schedules at a glance. Click a card and a settings panel opens on the right, with everything that used to be split between the expanded card, More settings and Edit. With many groups you can filter by platform and search."
+      },
+      {
+        "t": "Say something, start over, pause and stop from the card",
+        "d": "Each card has four keys in its top right corner. A key that cannot be used right now is dimmed, and hovering over it says why. These used to live on the overview page."
+      },
+      {
+        "t": "Removing and disbanding are one place",
+        "d": "The last section of the settings panel has a single Remove. For a Feishu group you can tick \"Also disband this Feishu group\", which asks you to type the full group name. The last group in use cannot be removed, and the button says so."
+      },
+      {
+        "t": "Model usage on the overview",
+        "d": "Below Health there is a Model usage line, folded by default: each model shows its tightest figure, with the ones running low first and in color. Unfolded, each model has a cell: subscriptions show how much of each window is used and when it resets, pay-as-you-go shows the balance."
+      },
+      {
+        "t": "!resume works in Slack",
+        "d": "In Slack only @SintBot /resume used to resume a held conversation; !resume (or your own command prefix) now works too. With a Feishu admin list configured, Slack members and local conversations are no longer turned away by it."
+      },
+      {
+        "t": "Feishu shows the sender's name on the first message after a restart",
+        "d": "After a restart, each person's first message used to show the sender as a user ID."
+      },
+      {
+        "t": "Two small fixes",
+        "d": "The model key in Claude Code's settings file is no longer reported as an environment conflict. The \"Declare it as a Slack Agent\" checkbox on the console's Slack card shows again in English."
+      }
+    ]
+  },
+  {
+    "version": "1.4.41",
+    "date": "2026-11-24",
+    "name": "No repeated briefing in the same conversation; lighter turns",
+    "items": [
+      {
+        "t": "The capability briefing is sent once per conversation",
+        "d": "Every message used to carry the full briefing. Now a conversation gets it at the start, and again only when it changes or after the conversation has grown long or been compacted. Restarting the service does not send it again. After upgrading, the next message in each existing conversation carries it once more."
+      },
+      {
+        "t": "GPT conversations no longer grow heavier with use",
+        "d": "The repeated briefings used to stay in the conversation for good and, in a long one, could push out the group-reply conventions from its start. They are no longer repeated; in a long conversation the briefing and the conventions are sent again together."
+      },
+      {
+        "t": "Claude conversations no longer carry tools they cannot use",
+        "d": "About a dozen of Claude Code's built-in tools have no use in a group but were sent with every request. They are no longer offered, so each request is smaller."
+      }
+    ]
+  },
+  {
+    "version": "1.4.40",
+    "date": "2026-11-23",
+    "name": "First-task feedback card",
+    "items": [
+      {
+        "t": "A feedback card after your first task",
+        "d": "After your first successful task, the console's Overview shows a card where you can say where you heard about SintBot (optional) and copy a short feedback summary. You decide whether to share it and where; SintBot sends nothing. Installations already in use don't show the card."
+      },
+      {
+        "t": "A summary with only the basics",
+        "d": "The summary lists the service and App versions, the macOS major version, the chip, the source you picked, the first task's result and how many failures of each kind came before it: no messages, files, project names or accounts. You can close the card or clear the record on this Mac."
+      }
+    ]
+  },
+  {
+    "version": "1.4.39",
+    "date": "2026-11-22",
+    "name": "Slack progress, thread context, files and history",
+    "items": [
+      {
+        "t": "Progress while a task runs in Slack",
+        "d": "In a channel the task's thread, and in a direct message the conversation, shows a progress message that ticks off steps as they finish and closes as Done with the step count and time, or as Stopped. The answer still arrives as its own message."
+      },
+      {
+        "t": "A mention in a thread sees the discussion",
+        "d": "When you @mention the bot inside a thread, it also reads what others said there since its last reply, so you no longer have to repeat it."
+      },
+      {
+        "t": "Files back to Slack, earlier messages",
+        "d": "The bot can send project files and images to the current thread or direct message, and read the conversation's or the thread's earlier messages when it needs them."
+      },
+      {
+        "t": "A hint where the bot isn't connected",
+        "d": "Mentioning the bot in a channel or direct message that isn't connected to a project gets a one-line hint, at most once every 30 minutes. The console's Groups · Projects page lists that conversation with a button to add it."
+      },
+      {
+        "t": "Clearer Slack wording",
+        "d": "!help and the App Home say that channels need an @mention and where answers appear. In the English console Slack comes first in Settings, connected platforms before the others, and Slack items say channel instead of group."
+      },
+      {
+        "t": "Sent files on progress cards",
+        "d": "Feishu progress cards now list a step when the bot sends a file or image to the group."
+      }
+    ]
+  },
+  {
+    "version": "1.4.38",
+    "date": "2026-11-22",
+    "name": "Remove group projects and disband groups from the console",
+    "items": [
+      {
+        "t": "Remove a group project, disband a group",
+        "d": "Under More settings on each group card you can remove a group project, and disband a Feishu group, without stopping the service. Paused groups and groups that ran into a problem can be removed too; their records are archived and never resent. A group with a task running waits until it finishes, and the last active group project stays. Disbanding asks for the full group name; when other members are in the group they are told first, and you confirm after a short wait."
+      },
+      {
+        "t": "Edit on each group card",
+        "d": "The header button is still Add a group project; each group card now has Edit, which opens that group's project folder and model settings directly."
+      },
+      {
+        "t": "Easier folder picking",
+        "d": "When choosing a project folder, a single click selects a folder; double-click or › opens it."
+      },
+      {
+        "t": "A more compact overview",
+        "d": "Each group project row shows its state, executor and model and a wider context bar, with labelled Message, Stop and New chat buttons; the task activity list has one line per task with details in small monospace, and no folder paths."
+      },
+      {
+        "t": "Change the concurrency limit any time",
+        "d": "The maximum number of tasks running at once can be saved while the service runs; it takes effect at the next start, and the overview shows the limit in effect."
+      },
+      {
+        "t": "Setup names follow the page language",
+        "d": "The Feishu app and group created by the scan setup, and project folders created for you, are named in the page's language; a project folder left empty becomes a new folder named after the group and never reuses a folder another group is using. The local chat's default name follows the language too, and the person who scans is recorded as an admin with their name."
+      },
+      {
+        "t": "Input dialogs in the desktop app",
+        "d": "Disbanding a group and marking an issue as handled now use in-page dialogs, so they work in the desktop app too."
+      }
+    ]
+  },
+  {
+    "version": "1.4.37",
+    "date": "2026-11-22",
+    "name": "More usage on model cards",
+    "items": [
+      {
+        "t": "Subscription usage and credits on the model card",
+        "d": "One more Anthropic-compatible service now shows its usage on the model card: the share used and reset time of the 5-hour and weekly windows, the account's remaining credits and, when the key has a cap, how much of it is used. The lookup costs no quota, is cached for 5 minutes, and ↻ refreshes it at once."
+      },
+      {
+        "t": "Usage lines in English in the English console",
+        "d": "With the console in English, the usage and balance labels and values on model cards are in English too."
+      }
+    ]
+  },
+  {
+    "version": "1.4.36",
+    "date": "2026-11-22",
+    "name": "Handle a held group from the group itself",
+    "items": [
+      {
+        "t": "Running out of quota no longer holds the group",
+        "d": "When the Codex subscription quota runs out mid-task (after commands ran, progress was written or a follow-up joined), the turn now ends as a failure: the group is told the quota is used up and asked to check what already ran, then to resend once the quota is back or switch models with /model. Nothing is retried, and the group keeps taking new messages."
+      },
+      {
+        "t": "Send /resume to resume a held group",
+        "d": "When a group is held because a task's outcome is unknown, an admin sends /resume in the group: the previous task's record is archived unchanged, its messages are not handled again or retried, and the group is back right away. With a Feishu admin list, only people on it can use it; the hold notice now mentions this."
+      },
+      {
+        "t": "Sealing no longer restarts the whole service",
+        "d": "Once the held task has fully stopped, both /resume and the console's Seal and continue seal it while the service keeps running, so other groups are unaffected and messages that just arrived are not frozen. Only a task that has not stopped yet still uses the old stop-and-seal path."
+      }
+    ]
+  },
+  {
+    "version": "1.4.35",
+    "date": "2026-11-22",
+    "name": "No holds from background subtasks; one place to update the app",
+    "items": [
+      {
+        "t": "Claude Code groups are no longer held by background subtasks",
+        "d": "When Claude splits work into subtasks, they now run in parallel within the turn instead of in the background. A background-task notice that arrives after the answer no longer leaves the outcome unknown, and a leftover notice no longer holds the next message when the session resumes."
+      },
+      {
+        "t": "Update the app and the service in one place in the SintBot app",
+        "d": "In the Mac app, Software updates shows the app's version as well. When both have a new version the button reads “Update all”: the service upgrades first (waiting for idle groups, rolling back on failure), then the app updates; if the service upgrade fails the app is left alone. Check for Updates in the menu bar opens this card. Needs desktop 0.1.9."
+      }
+    ]
+  },
+  {
+    "version": "1.4.34",
+    "date": "2026-11-21",
+    "name": "Add Feishu from the console",
+    "items": [
+      {
+        "t": "Connect Feishu from the console after starting with local chat",
+        "d": "Settings → Feishu has “Scan to connect Feishu”: the QR code appears on the page, and once you confirm in Feishu on your phone the app and a project group are created and connected. SintBot keeps running and no terminal is needed. Conversations, transcripts and settings stay, the configuration is backed up first, and the new group uses the model your conversation already uses."
+      },
+      {
+        "t": "Setup guide",
+        "d": "The guide link on the Feishu card now opens the “Already using SintBot? Add Feishu later” section, and the setup steps no longer mention choosing an executor."
+      }
+    ]
+  },
+  {
+    "version": "1.4.33",
+    "date": "2026-11-21",
+    "name": "Setup without choosing an executor",
+    "items": [
+      {
+        "t": "No executor to choose on the setup page",
+        "d": "The setup page asks only for the project and the chat platform. Claude Code and Codex, when missing, install in the background side by side (into SintBot's own folder, no sudo, with a mirror when the official registry is unreachable); the page shows progress and a retry, and the scan does not wait."
+      },
+      {
+        "t": "Connect first, add a model later",
+        "d": "An executor already signed in on this Mac is used. Otherwise the group is created waiting for a model: a message there gets one line asking an admin to add a model on the console's Models page, and the first model added becomes the default."
+      },
+      {
+        "t": "Sign in to Claude or ChatGPT from the console",
+        "d": "The Claude and Codex cards on the Models page have a sign-in button that opens the browser; no terminal needed, and the card turns signed-in when you finish."
+      },
+      {
+        "t": "Setup page look",
+        "d": "Appearance and language use designed menus and the chat platform is a segmented control; no orange focus ring after a mouse click; the Slack “Agent” checkbox shows again."
+      }
+    ]
+  },
+  {
+    "version": "1.4.32",
+    "date": "2026-11-21",
+    "name": "Open defaults for new groups, a shorter wait",
+    "items": [
+      {
+        "t": "New groups start with full access and plain data output",
+        "d": "A group added in the console or connected through the setup page now starts in Full access, with phone numbers and emails shown as is. Groups already bound keep their settings; to restrict one, switch it back to read-only or allowlist and data output back to masked on its Groups · Projects card."
+      },
+      {
+        "t": "Acknowledgement after 3 seconds",
+        "d": "When nothing has appeared 3 seconds after a message, a “Got it, working on it…” card is posted (was 25 seconds). Change it in General settings; 0 turns it off."
+      },
+      {
+        "t": "Turn limit 60 minutes by default",
+        "d": "The default limit for one turn is now 60 minutes instead of 30. A value already set in the configuration is kept."
+      },
+      {
+        "t": "No preset DeepSeek card in the model library",
+        "d": "The Models page shows only configured model cards. DeepSeek is still among the Add model presets."
+      },
+      {
+        "t": "No model field when adding Claude sign-in",
+        "d": "With the Claude sign-in preset, the model field is hidden along with the endpoint and key; the model is chosen per group under Groups · Projects."
+      }
+    ]
+  },
+  {
+    "version": "1.4.31",
+    "date": "2026-11-20",
+    "name": "A calmer console",
+    "items": [
+      {
+        "t": "Add a group project and Add model: quieter buttons",
+        "d": "The buttons at the top right of Groups · Projects and Models now use a thin outline with a plus sign and are named Add a group project and Add model. When you pick a group that is already bound in the dialog, the title changes to Edit a group project."
+      },
+      {
+        "t": "An add tile when a list is empty",
+        "d": "With no group projects or models yet, the list shows a dashed add tile that opens the matching dialog."
+      },
+      {
+        "t": "The version number opens Software updates",
+        "d": "Click the version number at the top left to go straight to the Settings → Software updates card."
+      },
+      {
+        "t": "One General card in Settings",
+        "d": "Interface language, bot and network, run limits and access addresses are now one General card, collapsed by default; when collapsed it shows the language, the concurrency cap, whether a proxy is set and who can reach the console. The separate Interface card is gone."
+      }
+    ]
+  },
+  {
+    "version": "1.4.30",
+    "date": "2026-11-20",
+    "name": "Fewer held groups, models chosen per group, a tidier console",
+    "items": [
+      {
+        "t": "A start that fails at once no longer holds the group",
+        "d": "When Claude Code, or Codex in a group with Add follow-up messages to the current task turned off, reports an error before it starts on a message (for example the usage limit is reached, the sign-in has expired, the previous session cannot be resumed, the chosen model is not available, or the model service cannot be reached), the message is closed as not handled: the conversation is told why and asked to send it again later, and the group keeps handling new messages. Before, this held the whole group, and later messages only got a notice that the last task's result was unknown, without the reason. When the session cannot be resumed, the next message starts a new one; when Codex fails before it starts, the service log says what it printed (with secrets masked). Exceptions: within 90 seconds after an upgrade switches over (while it can still roll back to the previous release), or when the turn combined several messages, the group is still held as before. Codex groups with Add follow-up messages to the current task turned on (the default) keep the previous behaviour in this release."
+      },
+      {
+        "t": "A message cut off by a crash is reported, not redone, and the group is not held",
+        "d": "When the service exits on an error nothing caught, the message it was working on gets a note in its conversation after the restart saying it was not finished (with who sent it and how it began); it is not redone and the group is not held. The session is kept, and its next turn tells the model not to continue that request unless you ask again. The group is still held when the turn combined several messages, more messages were waiting in that conversation, the executor had not yet confirmed it started, or the final reply had begun, and for a turn cut off by stopping the service yourself or by an upgrade restart."
+      },
+      {
+        "t": "Sealing a held group is no longer blocked by its own task",
+        "d": "When you seal a held group from Needs attention in the console, that group's own stuck turn no longer counts as another group's task, so the seal goes ahead; it still waits while other groups are running or have messages queued. Before, a group stuck after its usage limit was reached could be refused because other groups still had tasks, and had to be sealed from the command line with the service stopped."
+      },
+      {
+        "t": "A tidier console",
+        "d": "On the settings page, the Feishu, WeCom and Slack cards fold to one row by default (icon, name, status dot and a short summary); open one for the details, and its dot turns red when the connection fails. The interface language moves from the sidebar to a new Interface card at the top of the settings page. Version history is no longer kept in the console: Release notes → at the bottom of the Software updates card, the version badge next to the brand and the upgrade announcement in groups all link to that version's section of the release notes on the website. Chinese text left on the English interface is now in English."
+      },
+      {
+        "t": "Models chosen per group; adding a model starts with the key",
+        "d": "Model cards that use an API key now work like subscription cards: each group picks its model on its card under Groups · Projects or with /model, and once the card has a key, the list shows the models the provider offers right now; a group that has not chosen runs the model stored on the card. Add model asks for the API key right after the preset, and Verify key runs a short trial on the spot and says why it failed (for example the key was refused, or the endpoint does not speak the Anthropic format); the endpoint, small model, default thinking depth and the rest move under Advanced. A custom endpoint still takes its endpoint and model on the card, shared by its groups."
+      },
+      {
+        "t": "Model presets",
+        "d": "The preset list changes: the GLM preset moves to glm-5.3, Kimi is added and Volcano Ark is removed; the default models of the DeepSeek and MiniMax presets follow the providers' current docs as well. The MiniMax preset uses MiniMax's current endpoint, api.minimax.cn. Model cards and presets show the provider's small logo, the two subscription presets (Claude subscription and GPT via Codex) come first, and the terminal wizard's providers change to match. Existing model cards, including Volcano Ark cards and cards on the old MiniMax endpoint, are not affected and can still be used and edited."
+      },
+      {
+        "t": "Check and upgrade Claude Code",
+        "d": "The Claude subscription model card shows the version of the Claude Code program on this Mac and, when a newer one exists, upgrades it after you confirm: a copy installed with npm is reinstalled with npm, one from the native installer uses its own updater, and any other install is left for a manual upgrade. It will not upgrade while a group is running or queuing a Claude Code task, and every attempt is recorded in the audit log; groups that use Claude Code run the new version from their next turn."
+      },
+      {
+        "t": "The installer points to Slack first",
+        "d": "After the one-line install, the closing message links to connecting your project in Slack first, then notes that Feishu and WeCom are supported too, with their links."
+      }
+    ]
+  },
+  {
+    "version": "1.4.29",
+    "date": "2026-11-19",
+    "name": "Scheduled tasks, and a clean exit on crashes",
+    "items": [
+      {
+        "t": "Scheduled tasks",
+        "d": "Create, edit, pause and delete them on a conversation's console card under More settings → Scheduled tasks. There are three kinds: Model (at the time, a line marked [Scheduled] is posted and then handled like an ordinary message), Message (posts the text only) and Script (runs a command in the project folder without the model, and posts one line if it fails or times out). The time can be a cron expression, an alias such as @daily, a shorthand such as 每天 09:00, or one date and time; each task can have its own time zone. Each due time fires at most once; runs missed while the service was down, or reached more than two minutes late, are not made up; failed runs and runs with an unknown result are not retried. In this release tasks are created and changed only in the console, and WeCom conversations do not have them yet."
+      },
+      {
+        "t": "A clean exit on crashes",
+        "d": "When the service hits an error nothing caught, it logs the time and stack trace, stops scheduled tasks and running executors, releases its lock and removes temporary files, then exits with code 1 so the system starts it again; the cleanup waits at most 20 seconds. Before, it exited on the spot and Codex or Claude Code child processes could keep running in the background. The interrupted turn is still treated as having an unknown result after the restart."
+      },
+      {
+        "t": "Stricter proxy addresses",
+        "d": "In Slack setup and settings, the proxy host must be an IP address or a host name in plain ASCII: names in other scripts, labels starting with xn--, and full-width dots and digits are refused; IPv6 addresses in brackets are checked by the standard rules. Before, some of these could be saved and only failed with a different error when connecting."
+      },
+      {
+        "t": "Slack and console fixes",
+        "d": "In Slack, ⚠️ on a held conversation is no longer skipped when checking sealed records fails, and the failure is written to the service log; the log line for another machine connected to the same Slack app is worded more precisely. The busy follow-up switch in the console has English text: Add follow-up messages to the current task."
+      }
+    ]
+  },
+  {
+    "version": "1.4.28",
+    "date": "2026-11-19",
+    "name": "Slack speaks English, stopping inside a thread, a full queue no longer holds the group",
+    "items": [
+      {
+        "t": "A full queue asks you to resend instead of holding the group",
+        "d": "When two messages are already waiting, a new one is not handled: the bot asks you to send it again after the current task, and the running task is not affected. Before, in Feishu, WeCom and direct messages this interrupted the current task and held the whole group. A message that arrives while the current task is wrapping up is also answered with a request to resend."
+      },
+      {
+        "t": "Slack speaks English by default",
+        "d": "In Slack, the bot's notices, command replies, status and errors are in English, and the model is asked to answer in English (it still follows a member who writes in another language). Slack conversations that are already connected switch to English after the upgrade; for Chinese, change it on the conversation's console card under More settings → Notice language. Feishu, WeCom and local conversations are unchanged."
+      },
+      {
+        "t": "Threads in a Slack channel are handled separately",
+        "d": "A new @mention in the channel while a task is running no longer joins that task: it waits its turn, runs on its own and is answered in its own thread. Only a reply in the running task's thread is added to it. Replying !stop in a thread stops only that thread's task and the queue carries on; a new @bot !stop in the channel, or /sint stop, still stops the current task and clears the queue."
+      },
+      {
+        "t": "Unfinished Slack messages are marked",
+        "d": "After the service is killed or a conversation is sealed, messages that did not finish get ⚠️ and a single note asking you to send them again if you still need them. Deleting a queued message that has replies now cancels it as well, and several problems when the connection is renewed are fixed."
+      },
+      {
+        "t": "Slack setup: proxy, Agent option and hints",
+        "d": "The Slack step of the setup page fills in a terminal proxy it detects (http only); it is saved as the network proxy of the whole service, so other platforms and the local model tools use it too. Declaring the app as a Slack Agent is optional and off by default. When the bot is not in a channel, it says to /invite it first; when another machine is connected to the same Slack app, the console warns about it."
+      },
+      {
+        "t": "Wording for direct messages and one-to-one chats",
+        "d": "Help, status and notices name the kind of conversation: \"this direct message\" or \"this channel\" in Slack. In WeCom a one-to-one chat is no longer called a group, and its project note no longer tells you to mention the bot in a group."
+      },
+      {
+        "t": "Console fixes",
+        "d": "After a failed Codex upgrade the button comes back and the reason stays (local paths are masked); when a model card points to a Codex program other than the one on the PATH, the console asks for a manual upgrade instead. The number of tasks that run at once is checked against 1–32, and changing it while the service runs explains that the configuration file must be edited and the service restarted."
+      }
+    ]
+  },
+  {
+    "version": "1.4.27",
+    "date": "2026-11-18",
+    "name": "Confirmations in the desktop app",
+    "items": [
+      {
+        "t": "Confirmations work in the desktop app",
+        "d": "In the desktop app, console actions that need confirmation (full access, plain text, sealing, interrupting a task for a new session, removing a model, upgrading Codex and others) did not ask first. The console now shows its own confirmation dialog, the same in the app and in a browser: Cancel, Esc or a click outside does nothing."
+      }
+    ]
+  },
+  {
+    "version": "1.4.26",
+    "date": "2026-11-18",
+    "name": "Codex upgrades in the console, configuration history and stability",
+    "items": [
+      {
+        "t": "Upgrade Codex and refresh models from the console",
+        "d": "After a model card confirms the sign-in, the model list is read again and the card says which models were added or removed; /model in a group waits for the new list (up to 8 seconds). The Codex model card shows the version of the Codex program on this Mac and, when a newer one exists and it was installed globally with npm, upgrades it in one click. It will not upgrade while a group is running a Codex task."
+      },
+      {
+        "t": "Configuration history and restore",
+        "d": "The service stores a copy of the configuration when it starts and after every change in the console, keeping the latest 50. sintbot config history lists which settings each copy changed, never their values; sintbot config restore <version> puts one back while the service is stopped."
+      },
+      {
+        "t": "Steadier",
+        "d": "A malformed request address no longer stops the service; a Feishu request that gets no answer for 30 seconds is abandoned instead of holding the group; previews check where a file really is before serving it; a queued message reads the group's current settings when it starts; the console accepts only sensible concurrency and turn-time values; password-free access is given only to local requests that do not come through a reverse proxy."
+      },
+      {
+        "t": "Follow-ups that cite the last reply after an idle compaction (experimental)",
+        "d": "When Claude Code compacts its context while idle, the next turn carries the reply that was already sent, so a group message such as \"1 and 3\" still lands on the right items. It is kept in memory only and is gone after a restart."
+      }
+    ]
+  },
+  {
+    "version": "1.4.25",
+    "date": "2026-11-18",
+    "name": "A cleaner console",
+    "items": [
+      {
+        "t": "Group cards show only what works",
+        "d": "Cards now show only the settings this version supports: model, thinking depth, execution mode, busy follow-up, data output and plugins (view only for now). Preview, scheduled tasks, repository, design style, icons, canvas and unbind, which are not available yet, no longer appear. The Claude allowlist folds into one line and opens for editing."
+      },
+      {
+        "t": "A note when the public address is down",
+        "d": "If a public address is set, the console checks that it reaches this Mac. When it does not, Overview and Settings say so: Feishu sign-in from outside is unavailable for now, while the LAN console and all groups keep working."
+      },
+      {
+        "t": "Overview starts with no project selected",
+        "d": "Opening Overview no longer preselects a project. Click a project to see its task activity, and click it again to close it."
+      }
+    ]
+  },
+  {
+    "version": "1.4.24",
+    "date": "2026-11-16",
+    "name": "Slack",
+    "items": [
+      {
+        "t": "Use SintBot in Slack",
+        "d": "Message the bot directly, or @mention it in a channel. Answers arrive in the direct message, or in a thread under your message. It connects over Socket Mode, needs no public address and works in free workspaces."
+      },
+      {
+        "t": "Three steps, no terminal",
+        "d": "Choose Slack on the setup page or in console Settings: create your own app from a link that is already filled in, paste two tokens, then send the bot one message to bind the project. A token pasted in the wrong field is named at once."
+      },
+      {
+        "t": "See that it is working",
+        "d": "While a task runs your message shows ⏳ and a channel thread shows a Stop button; ⏳ becomes ✅ when the answer arrives. A follow-up sent during the task gets ⏳ too once it is read."
+      },
+      {
+        "t": "Commands start with !",
+        "d": "Slack keeps / for its own commands, so use !status, !stop, !skip, !new and !model; outside threads /sint stop works too. Images and files sent with a task are saved on your Mac for the task."
+      },
+      {
+        "t": "Create a Feishu group from the console",
+        "d": "Groups · Projects → Set up a group project can now create a new Feishu group and select it for binding, without creating it in Feishu first."
+      }
+    ]
+  },
+  {
+    "version": "1.4.23",
+    "date": "2026-11-14",
+    "name": "Smoother WeCom settings",
+    "items": [
+      {
+        "t": "WeCom card in Settings",
+        "d": "The WeCom card now sits below Feishu and matches its layout: connection status, bot name and bound projects up front, with the Bot ID, connection refresh and manual entry under Advanced."
+      },
+      {
+        "t": "Choose the project folder",
+        "d": "When adding WeCom you can browse, pick or create the project folder. A missing folder or credential is flagged at once, and the form is locked while a scan runs."
+      },
+      {
+        "t": "Consistent setup wording",
+        "d": "With WeCom selected, the setup steps, finished message and local-chat note describe scanning to create the bot and sending one message to bind the project."
+      }
+    ]
+  },
+  {
+    "version": "1.4.22",
+    "date": "2026-11-14",
+    "name": "Connect WeCom by scanning",
+    "items": [
+      {
+        "t": "Scan to create the WeCom bot",
+        "d": "Choose WeCom during setup, or add it from console Settings, and scan with WeCom on your phone. The bot is created and its credentials are saved on this Mac. You can still enter an existing Bot ID and Secret."
+      },
+      {
+        "t": "Start from any message",
+        "d": "Message the bot directly, or @mention it in a group, to bind the project. A personal organization with only you in it works through direct chat. Existing Feishu projects are kept."
+      },
+      {
+        "t": "Tasks and files in WeCom",
+        "d": "Use Codex or Claude Code, stop tasks, and have the assistant send project files and images back. The reply arrives when a task finishes; unknown send results are not retried automatically."
+      }
+    ]
+  },
+  {
+    "version": "1.4.21",
+    "date": "2026-11-13",
+    "name": "Fast for GPT groups; held groups handled in the console",
+    "items": [
+      {
+        "t": "Fast per GPT group",
+        "d": "Codex models gain a Speed option: Standard or Fast. Turn it on from the console group card, with /model fast in the group (/model standard to go back) or on the /model card. Changing only the speed keeps the session, works while a task is running and applies from the next message. Off by default; remembered per group and per model card; scheduled tasks always run at standard speed. It cannot be enabled for a model without a Fast tier, and switching to such a model returns to Standard with a note. The receipt states the cost: about 1.5–2x speed, quota charged at 2.5x."
+      },
+      {
+        "t": "Standard speed is now stated explicitly",
+        "d": "Every turn explicitly requests Standard unless the group enables Fast. When App Server reports a fallback, the card footer omits Fast. Older executors and the exec route do not report the effective tier, so their requested tier is not proof of acceleration."
+      },
+      {
+        "t": "Seal a held group from the console",
+        "d": "When the service is killed during a task (power loss, forced restart) and every group is held, the service still starts and the console stays available. The overview's Needs attention card and the local conversation page offer Seal and continue: the record is archived unchanged, that message is not processed again, and the service restarts by itself with a new record. Offered only when running as a managed background service; foreground runs keep the terminal steps in the guide."
+      },
+      {
+        "t": "No upgrade while the background service is disabled",
+        "d": "If the launchd job is disabled in the system (for example under Login Items), a console upgrade is refused with a message instead of leaving the service stopped."
+      },
+      {
+        "t": "DeepSeek preset",
+        "d": "Configure an API Key for DeepSeek Flash and select model and effort per project."
+      },
+      {
+        "t": "Missing-key preflight",
+        "d": "Missing API Keys are rejected before executor startup; keyless cards remain selectable in project settings."
+      }
+    ]
+  },
+  {
+    "version": "1.4.20",
+    "date": "2026-11-13",
+    "name": "Local conversations and a refined desktop interface",
+    "items": [
+      {
+        "t": "Chat directly on your Mac",
+        "d": "Choose a project and executor without connecting a chat platform first. Conversations stay on your Mac, and Feishu can be attached later."
+      },
+      {
+        "t": "A compact, consistent interface",
+        "d": "Setup and console share light and dark themes and follow the system by default. Collapsible project cards, settings navigation and responsive layouts fit narrower windows."
+      },
+      {
+        "t": "Project memory accompanies each task",
+        "d": "Each turn points to project convention files and available executor memory, preserving the project context."
+      },
+      {
+        "t": "Safer history and connection setup",
+        "d": "Recover cleanly after interrupted transcript writes. Attaching Feishu preserves local routes and history, and the package includes the complete local conversation module."
+      },
+      {
+        "t": "Compact reply cards",
+        "d": "Elapsed time, usage and model share one footer that wraps naturally on phones."
+      }
+    ]
+  },
+  {
+    "version": "1.4.18",
+    "date": "2026-11-12",
+    "name": "Browser setup and Claude idle compaction",
+    "items": [
+      {
+        "t": "Connect Feishu in the browser",
+        "d": "The first start opens a local setup page for project selection, phone confirmation, progress and resumable failures. Once configuration and journals are initialized, the page enters the console automatically. English and Chinese are supported."
+      },
+      {
+        "t": "Save explicit model and thinking-depth choices for new groups",
+        "d": "Before scanning, setup reads the selected executor's live recommended model and thinking depth and saves them for the new group. An unavailable live catalog stops setup before app creation; existing choices are preserved."
+      },
+      {
+        "t": "Safer cancellation and retries",
+        "d": "Cancellation stops at step boundaries. Retries reuse confirmed apps and groups, while configuration writes recheck current state to avoid overwriting another instance's setup."
+      },
+      {
+        "t": "Idle compaction for Claude groups (experimental)",
+        "d": "Claude Code versions advertising compact can compact an idle session after a task when context reaches half the configured compaction window. New work stops compaction first. Successful compaction and cache behavior still await real-model validation."
+      },
+      {
+        "t": "Immediate Claude quota updates from events",
+        "d": "Quota events from each run refresh the display promptly and reduce extra quota requests. Existing API and cache paths remain when events are unavailable."
+      },
+      {
+        "t": "Compaction exit protection and clearer setup guidance",
+        "d": "Unconfirmed process exit retains capacity and blocks further dispatch for that group. Configuration-file notices, language-specific guide links and startup instructions are also corrected."
+      }
+    ]
+  },
+  {
+    "version": "1.4.17",
+    "date": "2026-11-12",
+    "name": "Feishu scan-to-connect and third-party quotas",
+    "items": [
+      {
+        "t": "Connect Feishu with one scan",
+        "d": "New command sintbot connect: scan a QR code in the Feishu app to create the bot app; SintBot self-checks, opens the contact and availability scope and publishes, creates ~/Projects/<name>, creates a group with you in it, writes the configuration and initializes journals. On failure it stops at that step and tells you how to resume (--app-id, --chat); non-admins in a company organization can use --basic. The manual path remains."
+      },
+      {
+        "t": "Simpler Feishu settings",
+        "d": "Connection status and project groups come first. New users get a three-step scan setup guide; manual setup and app details are folded away. Console administrator sign-in is separate."
+      },
+      {
+        "t": "Third-party quota and balance",
+        "d": "GLM shows the 5-hour and weekly windows and falls back to the balance without a plan; MiniMax shows the 5-hour and weekly windows; DeepSeek shows the balance. Invalid credentials are shown as such; transient failures keep the last value for 10 minutes."
+      },
+      {
+        "t": "Claude subscription quota fallback",
+        "d": "When the Claude Code login token has expired, the CLI refreshes it itself and SintBot reads its cached quota instead of showing \"unverified\"; read-only, never refreshing on its own, never blocking group commands or the console."
+      },
+      {
+        "t": "Environment conflict check",
+        "d": "Preflight and the console model cards list environment variables and ~/.claude/settings.json or ~/.codex/config.toml settings that would reroute Claude Code or Codex; key names only, warnings only."
+      },
+      {
+        "t": "Built-in core ABI 36",
+        "d": "Connect decisions and wording, QR encoding, quota parsing and environment checks live in the built-in core; the core build pins its toolchain and no longer depends on the crate mirror used by the builder."
+      }
+    ]
+  },
+  {
+    "version": "1.4.16",
+    "date": "2026-11-11",
+    "name": "Per-group model and thinking depth",
+    "items": [
+      {
+        "t": "Choose model and depth per group",
+        "d": "Pick the backend, model and thinking depth on each group card in the console. Model lists come live from the local Codex and Claude Code. Subscription model cards no longer carry a model or depth; a third-party endpoint keeps its model on the model card."
+      },
+      {
+        "t": "Group command /model",
+        "d": "Send /model for a tap-to-pick card and confirm to apply, or send /model high, /model <model>, or /model <backend> <model> <depth>. A model or depth change on the same backend continues the conversation; a backend change starts a new one. Changes wait until the group is idle; receipts and the audit log record who made them."
+      },
+      {
+        "t": "Existing settings migrate automatically",
+        "d": "After the upgrade connects, each model card's model and depth move into its groups with the same effective values and no session reset, after a configuration backup. Custom Codex context windows are checked against each group's chosen model."
+      }
+    ]
+  },
+  {
+    "version": "1.4.15",
+    "date": "2026-11-11",
+    "name": "Simpler model settings",
+    "items": [
+      {
+        "t": "Configure the Codex context window",
+        "d": "Choose the executor default or a custom window on each model card. Validate known limits and distinguish requested settings from runtime reports."
+      },
+      {
+        "t": "Keep compaction settings per model",
+        "d": "Remove global inheritance. Choose the executor default or a custom value. Existing explicit global values become independent settings on existing models; new models use the executor default."
+      },
+      {
+        "t": "Streamline model configuration",
+        "d": "Group model and reasoning, context and compaction, and connection settings. Show numeric inputs only when needed and collapse capacity details. Model trials now use the model compaction setting."
+      }
+    ]
+  },
+  {
+    "version": "1.4.14",
+    "date": "2026-11-11",
+    "name": "Model context and per-model compaction",
+    "items": [
+      {
+        "t": "Read model context limits clearly",
+        "d": "Model cards distinguish known official model limits from the active executor window and usable capacity. Reported Claude windows do not replace known model limits."
+      },
+      {
+        "t": "Set compaction per model",
+        "d": "Configure a Codex compaction threshold or a Claude Code compaction window for each model. Models without an override retain the legacy setting; zero uses the executor’s settings. A requested value is not a confirmed trigger point."
+      },
+      {
+        "t": "Keep model details consistent",
+        "d": "Remove unverified compaction-point estimates and fix model-dialog refresh and English window descriptions. Installation guides explain the settings and remove a duplicated paragraph."
+      }
+    ]
+  },
+  {
+    "version": "1.4.13",
+    "date": "2026-11-10",
+    "name": "Reliability and task follow-up improvements",
+    "items": [
+      {
+        "t": "Restore Claude Code health information",
+        "d": "Visible Claude Code models show executor version and probe results. Hidden models do not trigger extra probes."
+      },
+      {
+        "t": "Retry failed upgrades safely",
+        "d": "Keep failed installations for inspection. Retry in a separate directory and verify before switching, without overwriting existing installations."
+      },
+      {
+        "t": "Align runtime version, model and capability information",
+        "d": "Each turn receives the running service version and its exact tool entry. Distinguish service, global installation and available updates; consistently resolve group model overrides and defaults."
+      },
+      {
+        "t": "Read locally retained group replies",
+        "d": "Look up this group’s recorded replies by source message or turn, with explicit provenance, status, truncation and retention limits. Unreadable Feishu cards are never reconstructed by guesswork."
+      },
+      {
+        "t": "Apply concurrency and maintenance checks to trials",
+        "d": "Allow one console trial within shared model capacity. Refuse starts during maintenance, abort and skip saving after writer loss, and retain capacity when process closure is unknown."
+      },
+      {
+        "t": "Handle early timeout callbacks",
+        "d": "If a timer callback arrives before the deadline, wait for the remaining interval. Abort only with elapsed-time evidence so a normal timeout is not misclassified as a fault."
+      },
+      {
+        "t": "Send console messages while a task is running",
+        "d": "Project messages use the same followup or queue path as group messages. The console distinguishes acceptance, waiting for the model to read, and confirmed joining; repeated submissions are deduplicated."
+      },
+      {
+        "t": "Continue output after moving a reply card",
+        "d": "Busy follow-ups preserve already displayed text on the relocated card, then stream subsequent output without replaying the old text. Updates arriving during the move and the final answer remain ordered."
+      }
+    ]
+  },
+  {
+    "version": "1.4.12",
+    "date": "2026-11-10",
+    "name": "Projects and live activity",
+    "items": [
+      {
+        "t": "Projects, concurrency and context in one panel",
+        "d": "Show project paths, runtime, configured reasoning and context together; restore row icon actions and display task tools, reply and compact metrics after selecting a group. Remove the top available-controls notice."
+      },
+      {
+        "t": "Actual task details and reported context",
+        "d": "Shows requests, follow-ups, progress, replies and the latest reported context. Reuses existing events without extra model calls; details load on demand and restored samples are labeled historical."
+      }
+    ]
+  },
+  {
+    "version": "1.4.11",
+    "date": "2026-11-10",
+    "name": "Unified busy follow-ups",
+    "items": [
+      {
+        "t": "Busy follow-ups default on for Codex and Claude Code",
+        "d": "One per-group switch preserves explicit disabling. Claude follow-ups join after confirmed reading, and continuation answers form one final reply. Recalling handed-over input cancels the whole task; uncertain delivery is never replayed."
+      }
+    ]
+  },
+  {
+    "version": "1.4.10",
+    "date": "2026-11-10",
+    "name": "Interrupted task completion",
+    "items": [
+      {
+        "t": "Fix: a group could stop accepting work after an executor exited mid-task",
+        "d": "When an accepted executor exits without a final result, the existing card shows an interruption notice. The group continues after delivery is confirmed. Partial output is not treated as an answer and the task is not automatically rerun. Check any operations already performed; uncertain closure or delivery remains held."
+      }
+    ]
+  },
+  {
+    "version": "1.4.9",
+    "date": "2026-11-10",
+    "name": "Failure completion and reply card improvements",
+    "items": [
+      {
+        "t": "Fix: a reply card could remain in progress after a failed task",
+        "d": "After a confirmed executor error and exit, the existing card shows a failure and the group can handle the next message. Without an open card, one failure notice is sent. Uncertain delivery remains held without automatic retries."
+      },
+      {
+        "t": "Improve: reply cards show the actual model and reasoning effort",
+        "d": "The final card shows the selected model and effort. If an unsupported effort falls back to the model default, it no longer shows that rejected effort. Long durations use minutes or hours, and absent usage no longer appears as zero tokens."
+      },
+      {
+        "t": "Fix: answers stayed at the old card position after a busy-turn follow-up",
+        "d": "After Codex confirms a follow-up landed, the reply card moves beneath that message. An open card is copied to the new position before the old one is recalled."
+      }
+    ]
+  },
+  {
+    "version": "1.4.8",
+    "date": "2026-11-10",
+    "name": "Console interjections, upgrade notices, group messaging skills",
+    "items": [
+      {
+        "t": "Fix: a message sent while the previous reply was still being delivered was refused with \"wrapping up, please resend\"",
+        "d": "A message arriving at the moment a reply, card or the stop confirmation was still on its way to Feishu used to be refused. It now waits for that delivery and is handled in arrival order; a message sent right after /stop is answered normally."
+      },
+      {
+        "t": "New: the console can post a line into an idle group",
+        "d": "A line written in the console is posted to the group as the administrator and handled as an ordinary group message, with the reply in the group. A busy, held or upgrading group is refused with the reason; resubmitting the same line is not processed twice."
+      },
+      {
+        "t": "New: a version notice card in each group after an upgrade",
+        "d": "On the first start after an upgrade, each serving group receives one card listing what changed. Not sent on a first install or a downgrade; can be turned off in the console."
+      },
+      {
+        "t": "New: the agent in a group can send messages, notice cards and files, read history, reply, edit and recall",
+        "d": "The agent gains group skills: send messages, notice cards, files and images, read the group history, reply to, edit and recall its own messages, download group files and add reactions."
+      }
+    ]
+  },
+  {
+    "version": "1.4.7",
+    "date": "2026-11-09",
+    "name": "/stop no longer pauses the group",
+    "items": [
+      {
+        "t": "Fix: /stop during a task could pause the whole group",
+        "d": "/stop removes the task's reply card, and Feishu then reports that removal as a recall. When it arrived while \"stopped\" was still being sent, it was treated as a fault: the group was paused until an administrator released it, and later /model and /new were refused. The recall now waits for that reply to finish and the group keeps serving."
+      },
+      {
+        "t": "Fix: recalling a queued message could pause the group",
+        "d": "Recalling a message while its \"queued\" notice was still being sent also paused the whole group; the message is now cancelled once the notice has been sent."
+      }
+    ]
+  },
+  {
+    "version": "1.4.6",
+    "date": "2026-11-09",
+    "name": "A rejected Codex resume no longer holds the group",
+    "items": [
+      {
+        "t": "Fix: a group held when Codex rejected a resume",
+        "d": "When Codex refused to continue the previous conversation before doing any work (for example a damaged Codex session history on the machine, or a conversation whose record is gone), the whole group was paused until an administrator released it. Now the group gets one \"the last turn did not finish, please send it again\" notice, keeps serving, and starts a new conversation, so resending works."
+      },
+      {
+        "t": "Fix: a queued message stalled the group after a start failure",
+        "d": "When the model could not start (program missing or resume rejected), messages queued behind it each get a resend notice; before, the next new message was treated as a busy group and the whole group was paused."
+      }
+    ]
+  },
+  {
+    "version": "1.4.5",
+    "date": "2026-11-09",
+    "name": "Group commands, console settings and Codex sign-in",
+    "items": [
+      {
+        "t": "New /skip in groups",
+        "d": "Drops only the current task; queued messages run next and the conversation is kept. /stop still cancels the current task and everything queued."
+      },
+      {
+        "t": "/help is written for each group",
+        "d": "It opens with the group's project and model, lists commands by urgency, describes /skip, /stop and /new in the same terms (what happens to the queue and to the conversation), and explains that recalling your own message cancels it."
+      },
+      {
+        "t": "New session from the console",
+        "d": "An idle group with every record settled starts a new conversation right away; a busy group is told to stop or wait first instead of being reported as reset."
+      },
+      {
+        "t": "Models can be added and configured from the model cards",
+        "d": "No service restart. Changing a model id, backend or endpoint waits for the groups using it to be idle and starts a new conversation for them; the default model and models in use cannot be hidden."
+      },
+      {
+        "t": "Fix: tool quality and thinking depth settings could not be saved",
+        "d": "They were wrongly reported as needing a service restart."
+      },
+      {
+        "t": "Codex sign-in is checked with the server",
+        "d": "The console's Codex model card no longer trusts the local sign-in file alone. It asks the server once with the token and shows one of three states: verified, sign-in expired (run codex login again on this machine), or unverified (the server could not be reached; not treated as signed out). A revoked token no longer keeps showing as signed in."
+      },
+      {
+        "t": "Fix: stopping a task before it started could swallow the next answer",
+        "d": "If the model process failed to start after a console stop or /skip, a stale cancelled flag could silently drop the next task's answer."
+      }
+    ]
+  },
+  {
+    "version": "1.4.4",
+    "date": "2026-11-09",
+    "name": "Upgrade progress in the console",
+    "items": [
+      {
+        "t": "Confirm the upgrade in the page",
+        "d": "Upgrade now asks for confirmation in the page, stating the versions and that new messages wait about a minute during the switch."
+      },
+      {
+        "t": "The upgrade window shows each step",
+        "d": "Waiting for idle groups, download and install, stopping the current service, checking records and backing up, preflight, switching and starting, and waiting for every group to connect are ticked off one by one with the elapsed time; while waiting it names the groups still working."
+      },
+      {
+        "t": "Reconnects while the service restarts",
+        "d": "During the switch the page says the service is restarting and reconnects by itself; once the new version connects every group it reloads into the new console and shows the result once. A failed step and the restored version are marked."
+      },
+      {
+        "t": "Can run in the background",
+        "d": "Continue in background keeps a spinner on the top-bar icon, which reopens the progress; a notice appears when the upgrade ends."
+      },
+      {
+        "t": "Takes effect from 1.4.4",
+        "d": "The upgrade window comes from the running version: upgrading from 1.4.3 to 1.4.4 still shows the previous screen, and later upgrades show the window."
+      }
+    ]
+  },
+  {
+    "version": "1.4.3",
+    "date": "2026-11-09",
+    "name": "Progress on the reply card",
+    "items": [
+      {
+        "t": "A card appears even before any output",
+        "d": "If nothing has been produced after 25 seconds, a \"Received, working on it\" card appears and the answer later replaces it in place. A turn that ends without a reply recalls that card."
+      },
+      {
+        "t": "The card shows how far the task has got",
+        "d": "While running, one line updates every 15 seconds: how long it has run and what it is doing (reading, editing or writing which file, running a command, searching the web; file names only). After 10 minutes it updates once a minute, and notes when nothing has happened for more than 2 minutes. Delivered steps such as writing files, committing or pushing, and sending files to the group are listed with ▶ at the top of the card and fold into a \"Process\" section when the turn ends."
+      },
+      {
+        "t": "/status shows progress",
+        "d": "While running it shows how many steps have run, how long ago the last activity was, and what it is doing."
+      },
+      {
+        "t": "Fix: a streamed reply could fail the whole turn",
+        "d": "Text that arrived while the previous update was still being sent used to fail the turn; it now queues behind it and keeps updating the card."
+      }
+    ]
+  },
+  {
+    "version": "1.4.2",
+    "date": "2026-11-09",
+    "name": "Check and install new versions from the console",
+    "items": [
+      {
+        "t": "Version checks in the console",
+        "d": "Software updates in Settings checks for stable releases at startup and daily and shows release notes when a new version is available."
+      },
+      {
+        "t": "One-click upgrade for background runs",
+        "d": "When a launchd agent runs SintBot, Upgrade now waits until every group is idle and settled, installs the new version into its own folder and switches to it; if it does not connect every group within 90 seconds, the previous version is restored. New messages wait about a minute during the switch and are asked to be resent."
+      },
+      {
+        "t": "Steps for foreground runs",
+        "d": "A foreground run shows how to stop, reinstall and start. Upgrades are not announced in groups."
+      }
+    ]
+  },
+  {
+    "version": "1.4.1",
+    "date": "2026-11-09",
+    "name": "A failing group stops only itself",
+    "items": [
+      {
+        "t": "One group's fault leaves the others working",
+        "d": "When a group's last task has an outcome that cannot be confirmed (for example a reply whose delivery is unknown, or a runner that exited without a result), only that group is paused; nothing is replayed or retried and the other groups keep working. A paused group answers new messages with a short notice."
+      },
+      {
+        "t": "One group no longer blocks startup",
+        "d": "If a group's records cannot be recovered, the other groups still start and the console marks that group Needs attention. The startup preflight fails and lists such groups."
+      },
+      {
+        "t": "Incident seal command",
+        "d": "Restart first; for a group that is still paused, stop the service and run sintbot incident seal --group <group ID>. The old records are kept unchanged, the group reopens with new records, and messages left unfinished before the seal are not processed again."
+      }
+    ]
+  }
+]

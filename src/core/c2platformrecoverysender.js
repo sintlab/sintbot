@@ -1,0 +1,275 @@
+'use strict'
+
+const { chatPlatform } = require('../config')
+const { isLocalChatId, isLocalMessageId } = require('../platform/local')
+const { isWecomChatId, isWecomMessageId } = require('../platform/wecom')
+const { isSlackChatId, isSlackMessageId, slackMessageRef, slackChannelOf } = require('../platform/slack')
+
+const RECEIPT_ID = /^[0-9a-f]{32}$/
+const FEISHU_CHAT_ID = /^oc_[A-Za-z0-9_-]{1,124}$/
+const FEISHU_MESSAGE_ID = /^om_[A-Za-z0-9_-]{1,124}$/
+const { chatLang, pick } = require('../chatlang')
+const NOTICE_TEXT = '上一轮没有完成（模型出错或服务中断），请重新发送原请求。'
+const NOTICE_TEXT_EN = 'The last round did not finish (a model error or a service interruption). Please send your request again.'
+// The notice in the conversation's own language, read from the live
+// configuration at the moment it is sent. `platform` is the sender's own: a
+// conversation whose entry does not say speaks that platform's default. A
+// receipt the core closed with its own notice (a start that failed before the
+// executor began, a turn a crash cut off; ABI 40 unfinished_step) gets that
+// notice instead, already in the conversation's language.
+const noticeFor = (cfg, chatId, platform, receiptId = null, notes = null) =>
+  (receiptId && notes?.get(receiptId)) || pick(chatLang(cfg.groups?.[chatId], platform), NOTICE_TEXT, NOTICE_TEXT_EN)
+
+// Process-local notices for receipts the next recovery settles, set just
+// before that recovery and removed after it. Never written anywhere: a notice
+// lost to a restart falls back to the ordinary recovery notice above.
+const MAX_NOTE = 4000
+function createRecoveryNotes() {
+  const notes = new Map()
+  return Object.freeze({
+    set(receiptId, text) {
+      if (!RECEIPT_ID.test(receiptId || '') || typeof text !== 'string' || !text.trim() || text.length > MAX_NOTE) {
+        throw new TypeError('C2 recovery notice invalid')
+      }
+      notes.set(receiptId, text)
+    },
+    get: receiptId => notes.get(receiptId) || null,
+    delete: receiptId => notes.delete(receiptId),
+    get size() { return notes.size },
+  })
+}
+
+// A deliberately narrow recovery sender for a previously accepted Feishu
+// message. The ordinary platform.reply() can fall back to a second send after
+// an ambiguous SDK failure; startup recovery may make exactly one outward
+// attempt, so use the same SDK's reply operation directly and never fall back.
+// The caller supplies the active app's SDK client and the multi-platform
+// router under its single-writer lease. Neither credentials nor reply text
+// enter the durable receipt.
+function createFeishuRecoverySender({ cfg, platform, client, notes = null } = {}) {
+  if (!cfg || typeof cfg !== 'object' || !cfg.groups ||
+      !platform || typeof platform.names !== 'function' ||
+      typeof platform.get !== 'function' || typeof platform.forChat !== 'function' ||
+      !client || typeof client.im?.message?.reply !== 'function' ||
+      !platform.names().includes('feishu') || !platform.get('feishu')) {
+    throw new TypeError('C2 Feishu recovery needs active group routing and SDK client')
+  }
+  const feishu = platform.get('feishu')
+
+  function validReceipt(receipt) {
+    if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt) ||
+        !RECEIPT_ID.test(receipt.id || '') ||
+        !FEISHU_CHAT_ID.test(receipt.chatId || '') ||
+        receipt.source !== 'message' ||
+        !FEISHU_MESSAGE_ID.test(receipt.sourceId || '')) {
+      throw new TypeError('C2 Feishu recovery receipt identity invalid')
+    }
+    const group = cfg.groups[receipt.chatId]
+    if (!group || chatPlatform(cfg, receipt.chatId) !== 'feishu' ||
+        platform.get('feishu') !== feishu || platform.forChat(receipt.chatId) !== feishu) {
+      throw new Error('C2 Feishu recovery group route is unavailable')
+    }
+  }
+
+  function resolveTarget(receipt) {
+    validReceipt(receipt)
+    return Object.freeze({ receiptId: receipt.id, chatId: receipt.chatId,
+      sourceId: receipt.sourceId,
+      replyCtx: Object.freeze({ chatId: receipt.chatId, messageId: receipt.sourceId }) })
+  }
+
+  async function send(receipt, target) {
+    validReceipt(receipt)
+    if (!target || typeof target !== 'object' || Array.isArray(target) ||
+        target.receiptId !== receipt.id || target.chatId !== receipt.chatId ||
+        target.sourceId !== receipt.sourceId ||
+        target.replyCtx?.chatId !== receipt.chatId ||
+        target.replyCtx?.messageId !== receipt.sourceId) {
+      throw new Error('C2 Feishu recovery target differs from durable receipt')
+    }
+    try {
+      const response = await client.im.message.reply({
+        path: { message_id: receipt.sourceId },
+        data: { msg_type: 'text', content: JSON.stringify({ text: noticeFor(cfg, receipt.chatId, undefined, receipt.id, notes) }) },
+      })
+      const id = response?.data?.message_id ?? response?.message_id
+      return response?.code === 0 && typeof id === 'string' &&
+        FEISHU_MESSAGE_ID.test(id) ? id : null
+    } catch {
+      // The SDK call may have reached the platform. The recovery gate records
+      // a null outcome as unknown and will never retry it on another startup.
+      return null
+    }
+  }
+
+  return Object.freeze({ resolveTarget, send })
+}
+
+// The same single-attempt notice for a local conversation: one appended line
+// under the accepted message. A failed append reports null (unknown), exactly
+// as an ambiguous chat service call does; it is never retried.
+function createLocalRecoverySender({ cfg, platform, notes = null } = {}) {
+  if (!cfg || typeof cfg !== 'object' || !cfg.groups ||
+      !platform || typeof platform.get !== 'function' || typeof platform.forChat !== 'function' ||
+      typeof platform.get('local')?.notice !== 'function') {
+    throw new TypeError('C2 local recovery needs active conversation routing')
+  }
+  const local = platform.get('local')
+
+  function validReceipt(receipt) {
+    if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt) ||
+        !RECEIPT_ID.test(receipt.id || '') ||
+        !isLocalChatId(receipt.chatId) ||
+        receipt.source !== 'message' ||
+        !isLocalMessageId(receipt.sourceId)) {
+      throw new TypeError('C2 local recovery receipt identity invalid')
+    }
+    if (!cfg.groups[receipt.chatId] || chatPlatform(cfg, receipt.chatId) !== 'local' ||
+        platform.get('local') !== local || platform.forChat(receipt.chatId) !== local) {
+      throw new Error('C2 local recovery conversation route is unavailable')
+    }
+  }
+
+  function resolveTarget(receipt) {
+    validReceipt(receipt)
+    return Object.freeze({ receiptId: receipt.id, chatId: receipt.chatId,
+      sourceId: receipt.sourceId,
+      replyCtx: Object.freeze({ chatId: receipt.chatId, messageId: receipt.sourceId }) })
+  }
+
+  async function send(receipt, target) {
+    validReceipt(receipt)
+    if (!target || typeof target !== 'object' || Array.isArray(target) ||
+        target.receiptId !== receipt.id || target.chatId !== receipt.chatId ||
+        target.sourceId !== receipt.sourceId ||
+        target.replyCtx?.chatId !== receipt.chatId ||
+        target.replyCtx?.messageId !== receipt.sourceId) {
+      throw new Error('C2 local recovery target differs from durable receipt')
+    }
+    try {
+      const id = local.notice(receipt.chatId, noticeFor(cfg, receipt.chatId, undefined, receipt.id, notes), receipt.sourceId)
+      return isLocalMessageId(id) ? id : null
+    } catch { return null }
+  }
+
+  return Object.freeze({ resolveTarget, send })
+}
+
+// The same single-attempt notice for a WeCom group or direct chat. A receipt
+// keeps no req_id (the callback's reply window does not survive a restart), so
+// the notice is one push to the conversation on the adapter's own connection:
+// it opens that one socket early when recovery runs before the service starts
+// serving, and never a second one. One part, one attempt; anything but a
+// confirmed ACK reports null (unknown), which is never retried.
+function createWecomRecoverySender({ cfg, platform, notes = null } = {}) {
+  const adapter = platform?.get?.('wecom')
+  if (!cfg?.groups || typeof adapter?.pushOnce !== 'function' || typeof platform?.forChat !== 'function') {
+    throw new TypeError('C2 WeCom recovery needs active conversation routing')
+  }
+  function validReceipt(receipt) {
+    if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt) ||
+        !RECEIPT_ID.test(receipt.id || '') || receipt.source !== 'message' ||
+        !isWecomMessageId(receipt.sourceId) || !isWecomChatId(receipt.chatId)) {
+      throw new TypeError('C2 WeCom recovery receipt identity invalid')
+    }
+    if (!cfg.groups[receipt.chatId] || chatPlatform(cfg, receipt.chatId) !== 'wecom' ||
+        platform.get('wecom') !== adapter || platform.forChat(receipt.chatId) !== adapter) {
+      throw new Error('C2 WeCom recovery conversation route is unavailable')
+    }
+  }
+  function resolveTarget(receipt) {
+    validReceipt(receipt)
+    return Object.freeze({ receiptId: receipt.id, chatId: receipt.chatId, sourceId: receipt.sourceId,
+      replyCtx: Object.freeze({ chatId: receipt.chatId, messageId: receipt.sourceId }) })
+  }
+  async function send(receipt, target) {
+    validReceipt(receipt)
+    if (!target || typeof target !== 'object' || Array.isArray(target) ||
+        target.receiptId !== receipt.id || target.chatId !== receipt.chatId ||
+        target.sourceId !== receipt.sourceId ||
+        target.replyCtx?.chatId !== receipt.chatId ||
+        target.replyCtx?.messageId !== receipt.sourceId) {
+      throw new Error('C2 WeCom recovery target differs from durable receipt')
+    }
+    try {
+      adapter.openOutbound?.()
+      const id = await adapter.pushOnce(receipt.chatId, noticeFor(cfg, receipt.chatId, undefined, receipt.id, notes))
+      return isWecomMessageId(id) ? id : null
+    } catch { return null }
+  }
+  return Object.freeze({ resolveTarget, send })
+}
+
+// The same single-attempt notice for a Slack channel or direct message. Both
+// identities of a receipt decode back to the channel and the source message,
+// so the notice is one reply through the adapter's own single-attempt path:
+// in the thread of the source message in a channel, in the conversation itself
+// in a direct message. Sending needs no socket. Anything but a confirmed
+// message reports null (unknown), which is never retried.
+function createSlackRecoverySender({ cfg, platform, notes = null } = {}) {
+  const adapter = platform?.get?.('slack')
+  if (!cfg?.groups || typeof adapter?.replyOnce !== 'function' || typeof platform?.forChat !== 'function') {
+    throw new TypeError('C2 Slack recovery needs active conversation routing')
+  }
+  function validReceipt(receipt) {
+    if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt) ||
+        !RECEIPT_ID.test(receipt.id || '') || receipt.source !== 'message' ||
+        !isSlackMessageId(receipt.sourceId) || !isSlackChatId(receipt.chatId) ||
+        slackMessageRef(receipt.sourceId).channel !== slackChannelOf(receipt.chatId)) {
+      throw new TypeError('C2 Slack recovery receipt identity invalid')
+    }
+    if (!cfg.groups[receipt.chatId] || chatPlatform(cfg, receipt.chatId) !== 'slack' ||
+        platform.get('slack') !== adapter || platform.forChat(receipt.chatId) !== adapter) {
+      throw new Error('C2 Slack recovery conversation route is unavailable')
+    }
+  }
+  function resolveTarget(receipt) {
+    validReceipt(receipt)
+    return Object.freeze({ receiptId: receipt.id, chatId: receipt.chatId, sourceId: receipt.sourceId,
+      replyCtx: Object.freeze({ chatId: receipt.chatId, messageId: receipt.sourceId }) })
+  }
+  async function send(receipt, target) {
+    validReceipt(receipt)
+    if (!target || typeof target !== 'object' || Array.isArray(target) ||
+        target.receiptId !== receipt.id || target.chatId !== receipt.chatId ||
+        target.sourceId !== receipt.sourceId ||
+        target.replyCtx?.chatId !== receipt.chatId ||
+        target.replyCtx?.messageId !== receipt.sourceId) {
+      throw new Error('C2 Slack recovery target differs from durable receipt')
+    }
+    let id = null
+    try {
+      const response = await adapter.replyOnce({ chatId: receipt.chatId, messageId: receipt.sourceId }, noticeFor(cfg, receipt.chatId, 'slack', receipt.id, notes), { notice: true })
+      id = response?.code === 0 ? response.data?.message_id : null
+    } catch {}
+    // Display only: a ⏳ left by the interrupted turn becomes ⚠️ beside the
+    // notice. Best effort, never awaited, never part of the receipt outcome.
+    try { adapter.presence?.unfinished?.(receipt.chatId, [receipt.sourceId]) } catch {}
+    return isSlackMessageId(id) ? id : null
+  }
+  return Object.freeze({ resolveTarget, send })
+}
+
+// One sender for a service that carries several platforms: each receipt goes
+// to the sender of the platform its conversation is configured for. A receipt
+// whose platform has no sender here is refused, never rerouted.
+function createRoutedRecoverySender({ cfg, senders } = {}) {
+  if (!cfg || typeof cfg !== 'object' || !cfg.groups || !senders || typeof senders !== 'object' ||
+      !Object.keys(senders).length ||
+      Object.values(senders).some(sender => typeof sender?.resolveTarget !== 'function' ||
+        typeof sender.send !== 'function')) {
+    throw new TypeError('C2 recovery routing needs one sender per active platform')
+  }
+  const senderOf = receipt => {
+    const name = chatPlatform(cfg, receipt?.chatId)
+    const sender = name && Object.hasOwn(senders, name) ? senders[name] : null
+    if (!sender) throw new Error('C2 recovery route has no sender for this conversation')
+    return sender
+  }
+  return Object.freeze({
+    resolveTarget: receipt => senderOf(receipt).resolveTarget(receipt),
+    send: (receipt, target) => senderOf(receipt).send(receipt, target),
+  })
+}
+
+module.exports = { NOTICE_TEXT, NOTICE_TEXT_EN, createRecoveryNotes, createWecomRecoverySender, createSlackRecoverySender, createFeishuRecoverySender, createLocalRecoverySender, createRoutedRecoverySender }

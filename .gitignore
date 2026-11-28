@@ -1,0 +1,21 @@
+node_modules/
+
+# real config holds secrets — keep only the example in git
+sbot.config.json
+.sbot/
+
+*.log
+.DS_Store
+
+# local package artifacts
+*.tgz
+
+# Claude Code: personal/local settings and notes (never commit)
+.claude/
+CLAUDE.local.md
+
+# per-slice worktrees (Plan v4 parallel rule)
+.wt/
+
+# Also ignore a local dependency symlink.
+/node_modules

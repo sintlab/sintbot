@@ -1,0 +1,992 @@
+'use strict'
+
+// `sintbot connect`: Feishu scan onboarding. The binary core decides every step
+// and every sentence shown for it (connect_manifest / connect_plan /
+// connect_config / qr_matrix); this file only performs I/O in the order the
+// plan fixes: scan → token → app → precheck → scope → publish → dir → chat →
+// config → init. Every network, file system and process dependency is
+// injectable so the flow can run end to end without a Feishu account.
+const nodeFs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+const readline = require('node:readline')
+const { parseArgs } = require('node:util')
+const core = require('./agent/privatecore')
+const { atomicWriteJSON, withFileLock } = require('./core/store')
+const { installationStateDir, MANIFEST } = require('./c2install')
+const { defaultProjectsRoot, tooWideReason, realpathLenient, resolveProjectsRoots, defaultWorkdir } = require('./projectsroot')
+const { fillPicks } = require('./core/modelcmd')
+const { applyBrainChange } = require('./groupbrain')
+const { newLocalChatId, isLocalChatId } = require('./platform/local')
+const { chatLang } = require('./chatlang')
+
+const CONNECT_OPTIONS = Object.freeze({
+  config: { type: 'string' }, 'data-dir': { type: 'string' }, workdir: { type: 'string' },
+  name: { type: 'string' }, provider: { type: 'string' }, 'app-id': { type: 'string' },
+  chat: { type: 'string' }, basic: { type: 'boolean' }, 'no-open': { type: 'boolean' },
+  // No executor is chosen: a signed-in one is used when there is one, else the
+  // group is bound without a model and one is added later in the console.
+  'defer-model': { type: 'boolean' },
+  // Add Feishu to an installation that so far only holds local conversations.
+  attach: { type: 'boolean' },
+  // No folder or project name chosen (console attach, setup page): a new
+  // folder under the projects root is named after the group once the scan
+  // tells who the group is for, so the group and its folder match.
+  'auto-dir': { type: 'boolean' },
+  // The page's language (zh|en): names the app and the group, and words the greeting.
+  lang: { type: 'string' },
+})
+const APP_ID = /^cli_[A-Za-z0-9]{6,64}$/
+const CHAT_ID = /^oc_[A-Za-z0-9_-]{1,124}$/
+const PROJECT_NAME = /^[\p{L}\p{N}][\p{L}\p{N}._-]{0,59}$/u
+const RUNNERS = Object.freeze(['codex', 'claude'])
+// Files whose presence means the data directory is not fresh; the same list
+// initializeInstallation refuses later, checked here before a scan is spent.
+const STATE_FILES = Object.freeze(['state.json', 'pending-turns.json', 'engine-receipts.json', MANIFEST, 'daemon.lock'])
+// The core keys a step failure on a Feishu code or HTTP status. A local
+// failure (file system, missing chat id) has neither; it is reported as code 1.
+const LOCAL_FAILURE = 1
+const PUBLISH_POLL_MS = 30_000
+const PUBLISH_POLL_STEP_MS = 3_000
+const EXIT_INTERRUPTED = 130
+
+function defaultDeps(deps) {
+  const feishu = deps.feishu || require('./platform/feishu')
+  return {
+    registerApp: options => require('@larksuiteoapi/node-sdk').registerApp(options),
+    feishuClient: feishu.feishuClient,
+    feishu,
+    initializeInstallation: (file, options) => require('./c2install').initializeInstallation(file, options),
+    validateAttached: (raw, file, options) => require('./c2install').loadInstallationFromRaw(raw, file, { ...options, allowAddedGroups: true }),
+    spawn: require('node:child_process').spawn,
+    spawnSync: require('node:child_process').spawnSync,
+    fs: nodeFs,
+    now: Date.now,
+    sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
+    stdout: process.stdout,
+    stderr: process.stderr,
+    env: process.env,
+    home: os.homedir(),
+    tmpdir: os.tmpdir(),
+    userName: localUserName(),
+    isTTY: !!(process.stdin.isTTY && process.stderr.isTTY),
+    prompt: null,
+    signals: process,
+    version: require('../package.json').version,
+    ...deps,
+  }
+}
+
+function localUserName() {
+  try { return os.userInfo().username || '' } catch { return '' }
+}
+
+function askLine(question, fallback, { stderr }) {
+  return new Promise(resolve => {
+    const rl = readline.createInterface({ input: process.stdin, output: stderr })
+    rl.question(question, answer => { rl.close(); resolve(answer.trim() || fallback) })
+  })
+}
+
+// Feishu failures arrive as an axios error (body under response.data), as an
+// SDK result whose code is not 0, as the SDK's own token Error ("failed to get
+// tenant_access_token, code: 21001, msg: …") or as a local Error. The core
+// wants { status, code, msg }; no code and no status means the step succeeded.
+function failureInput(error, larkErrMsg) {
+  const data = error?.response?.data
+  let code = Number.isInteger(data?.code) ? data.code
+    : Number.isInteger(error?.code) ? error.code : null
+  const status = Number.isInteger(error?.response?.status) ? error.response.status : null
+  if (code === null && status === null) {
+    const inMessage = /\bcode:\s*(\d+)/.exec(error?.message || '')
+    code = inMessage ? Number(inMessage[1]) : LOCAL_FAILURE
+  }
+  return { status, code, msg: larkErrMsg(error) }
+}
+
+function assertOk(result, what) {
+  if (result && typeof result === 'object' && Number.isInteger(result.code) && result.code !== 0) {
+    const error = new Error(`${what} failed: ${result.msg || result.message || 'code ' + result.code}`)
+    error.response = { data: result }
+    throw error
+  }
+  return result
+}
+
+// The SDK carries scopes, events and callbacks in nested buckets; the core's
+// flat lists are tenant-identity items.
+function sdkAddons(addons) {
+  const out = { preset: addons.preset === true }
+  if (addons.scopes.length) out.scopes = { tenant: addons.scopes }
+  if (addons.events.length) out.events = { items: { tenant: addons.events } }
+  if (addons.callbacks.length) out.callbacks = { items: addons.callbacks }
+  return out
+}
+
+const escapeHtml = text => String(text).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch])
+const shellQuote = text => "'" + String(text).replace(/'/g, "'\\''") + "'"
+
+// One SVG rect per run of dark modules, quiet zone 4 modules, about 360px.
+function qrPage(url) {
+  const matrix = core.qrMatrix(url)
+  const quiet = 4
+  const total = matrix.size + quiet * 2
+  const rects = []
+  matrix.rows.forEach((row, y) => {
+    let x = 0
+    while (x < row.length) {
+      if (row[x] !== '1') { x++; continue }
+      let run = 1
+      while (row[x + run] === '1') run++
+      rects.push(`<rect x="${x + quiet}" y="${y + quiet}" width="${run}" height="1"/>`)
+      x += run
+    }
+  })
+  return `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>SintBot · Feishu</title>
+<style>body{margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;font:14px/1.5 -apple-system,system-ui,sans-serif;background:#fff;color:#222}
+svg{width:360px;height:360px;shape-rendering:crispEdges}p{max-width:560px;word-break:break-all;text-align:center;padding:0 16px}</style></head>
+<body><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${total} ${total}"><rect width="${total}" height="${total}" fill="#fff"/><g fill="#000">${rects.join('')}</g></svg>
+<p><a href="${escapeHtml(url)}">${escapeHtml(url)}</a></p></body></html>
+`
+}
+
+function readExistingConfig(fs, file) {
+  let text
+  try { text = fs.readFileSync(file, 'utf8') } catch (error) {
+    if (error.code === 'ENOENT') return null
+    throw error
+  }
+  try { return JSON.parse(text) || {} } catch { return { unreadable: true } }
+}
+
+// A configuration may be replaced only to finish an earlier attempt: the same
+// app, and no group bound yet. Anything else is someone's installation.
+function assertReplaceable(existing, configPath, reuseAppId) {
+  if (!existing) return
+  const retry = `to reuse that app run sintbot connect --app-id <cli_…>, otherwise move ${configPath} aside first`
+  if (reuseAppId === undefined) {
+    throw new Error(existing.unreadable || existing.feishu?.appId || existing.feishu?.appSecret
+      ? `${configPath} already holds a Feishu app; ${retry}`
+      : `${configPath} already exists; move it aside before connecting`)
+  }
+  if (existing.unreadable) throw new Error(`${configPath} is not readable JSON; move it aside before connecting with --app-id`)
+  if (existing.feishu?.appId !== reuseAppId) {
+    throw new Error(`${configPath} belongs to a different Feishu app (${existing.feishu?.appId || 'none'}); ` +
+      `run sintbot connect --app-id ${existing.feishu?.appId || '<cli_…>'} to continue with it, or move the file aside`)
+  }
+  if (Object.keys(existing.groups || {}).length) {
+    throw new Error(`${configPath} already binds ${Object.keys(existing.groups).length} group(s); ` +
+      'connect never replaces a configuration with groups — add groups in the console or by editing the file')
+  }
+}
+
+function assertFreshState(fs, stateDir) {
+  let names = []
+  try { names = fs.readdirSync(stateDir) } catch (error) { if (error.code === 'ENOENT') return; throw error }
+  const found = names.filter(name => STATE_FILES.includes(name) || /^c2-v2.*\.log$/.test(name))
+  if (!found.length) return
+  if (found.includes('daemon.lock')) throw new Error(`SintBot is running (${path.join(stateDir, 'daemon.lock')} exists); stop it before connecting`)
+  throw new Error(`${found.join(', ')} already exist(s) in ${stateDir}; an existing journal requires review, ` +
+    'and connect never overwrites or migrates existing state')
+}
+
+// --attach: Feishu joins an installation of local conversations. The existing
+// configuration, journals and transcripts stay; only the Feishu block and one
+// new group are added. Anything that already carries platform credentials or
+// a platform group is someone's connected installation and is refused.
+function assertAttachable(existing, configPath) {
+  if (!existing) throw new Error(`${configPath} does not exist; run sintbot connect without --attach for a new installation`)
+  if (existing.unreadable) throw new Error(`${configPath} is not readable JSON; fix it before attaching Feishu`)
+  if (existing.feishu?.appId || existing.feishu?.appSecret || existing.wecom || existing.slack) {
+    throw new Error(`${configPath} already holds chat platform credentials; --attach only adds Feishu to local conversations`)
+  }
+  const groups = Object.entries(existing.groups || {})
+  if (!groups.length || groups.some(([chatId, group]) => group?.platform !== 'local' || !isLocalChatId(chatId))) {
+    throw new Error(`${configPath} must hold only local conversations to attach Feishu`)
+  }
+}
+
+// The console's attach (src/feishuattach.js): Feishu joins a running
+// installation that has no Feishu app yet, whatever else it already connects
+// (local conversations, WeCom, Slack). The service's own writer commits it.
+function assertLiveAttachable(existing, configPath) {
+  if (!existing) throw new Error(`${configPath} does not exist`)
+  if (existing.unreadable) throw new Error(`${configPath} is not readable JSON; fix it before attaching Feishu`)
+  if (existing.feishu?.appId || existing.feishu?.appSecret) throw new Error('这台 SintBot 已经接入了飞书')
+  if (Object.entries(existing.groups || {}).some(([chatId, group]) => group?.platform === 'feishu' || (!group?.platform && /^oc_/.test(chatId) && !isLocalChatId(chatId)))) throw new Error('配置里已有飞书群，不能再次接入')
+}
+
+// The model of the new group: the one the installation's first conversation
+// already uses (backend, model and depth), so the Feishu group answers the same.
+function inheritedBrain(existing) {
+  const groups = Object.values(existing?.groups || {})
+  const from = groups.find(group => group?.platform === 'local' && group.provider) || groups.find(group => group?.provider)
+  if (!from) return {}
+  const out = Object.fromEntries(['provider', 'model', 'effort'].filter(key => typeof from[key] === 'string' && from[key]).map(key => [key, from[key]]))
+  if (from.providerPrefs && typeof from.providerPrefs === 'object') out.providerPrefs = JSON.parse(JSON.stringify(from.providerPrefs))
+  return out
+}
+
+// The service must be stopped: it keeps the configuration it started with, and
+// the new group's journal is registered by the next start. A lock left by a
+// process that no longer exists does not block.
+function assertServiceStopped(fs, stateDir, isAlive = pid => { try { process.kill(pid, 0); return true } catch (error) { return error.code === 'EPERM' } }) {
+  let text
+  try { text = fs.readFileSync(path.join(stateDir, 'daemon.lock'), 'utf8') } catch (error) {
+    if (error.code === 'ENOENT') return
+    throw error
+  }
+  const pid = Number(text.trim())
+  if (!Number.isSafeInteger(pid) || pid < 1 || isAlive(pid)) {
+    throw new Error(`SintBot is running (${path.join(stateDir, 'daemon.lock')}); stop it before attaching Feishu, then start it again`)
+  }
+}
+
+function probeRunners(spawnSync, env) {
+  const runners = {}
+  for (const runner of RUNNERS) {
+    const probe = spawnSync(runner, ['--version'], { encoding: 'utf8', timeout: 10_000, maxBuffer: 64 * 1024, env })
+    runners[runner] = !probe.error && probe.status === 0 && new RegExp(runner, 'i').test(probe.stdout || '')
+  }
+  return runners
+}
+
+// Whether an installed executor is signed in. Local status only (no network,
+// no quota); a revoked token still reads as signed in and fails on first use.
+function probeSignedIn(runner, spawnSync, env) {
+  const args = runner === 'claude' ? ['auth', 'status', '--json'] : ['login', 'status']
+  const r = spawnSync(runner, args, { encoding: 'utf8', timeout: 10_000, maxBuffer: 64 * 1024, env })
+  if (r.error || r.status !== 0) return false
+  if (runner === 'claude') {
+    try { return JSON.parse(r.stdout || '{}').loggedIn === true } catch { return false }
+  }
+  return /logged in/i.test(`${r.stdout || ''}${r.stderr || ''}`) && !/not logged in/i.test(`${r.stdout || ''}${r.stderr || ''}`)
+}
+
+// The executor and live model defaults for a new group. An explicit provider
+// behaves as before: it must answer and its live catalog must load. With
+// `defer`, a signed-in executor whose catalog loads is used; anything less
+// binds the group without a model (provider ''), never a guessed default.
+async function chooseGroupModel({ requested, defer, runners, d, say, failure }) {
+  const available = RUNNERS.filter(runner => runners[runner])
+  const catalog = d.modelCatalog || connectModelCatalog()
+  const live = async (provider) => {
+    let cat
+    try { cat = await catalog(provider, { runner: provider }) } catch {}
+    return cat && cat.ok === true && cat.source === 'live' && Array.isArray(cat.models) && cat.models.length ? cat : null
+  }
+  if (requested === undefined && defer) {
+    const signedIn = d.probeSignedIn || probeSignedIn
+    for (const provider of available) {
+      if (!signedIn(provider, d.spawnSync, d.env)) continue
+      say('正在读取执行器推荐的型号和思考深度…')
+      const cat = await live(provider)
+      if (cat) return { provider, catalog: cat }
+    }
+    return { provider: '', catalog: null }
+  }
+  if (!available.length) throw new Error('Install and sign in to Codex or Claude Code first; neither answered --version')
+  return null
+}
+
+const MODEL_LATER = '还没有配置模型：进入控制台后在「模型 · 库」添加一个，群里就能开始干活。'
+
+// Width is judged on the literal path and on what it really points to, so a
+// link to the home directory or the root is refused as well.
+function dirObserved(fs, workdir, explicit, home) {
+  let exists = false
+  try { exists = fs.statSync(workdir).isDirectory() } catch {}
+  const empty = !exists || fs.readdirSync(workdir).length === 0
+  const tooWide = tooWideReason(workdir, { home }) ||
+    tooWideReason(realpathLenient(workdir), { home: realpathLenient(home) })
+  return { workdir, exists, empty, tooWide, explicit }
+}
+
+// The same CLI catalog and recommendation used by /model and the console.
+// No saved cache or model prompt: a new group must pin a currently observed
+// recommendation, not inherit an old account's defaults or guess a fallback.
+function connectModelCatalog() {
+  const { createModelCatalog } = require('./modelcatalog')
+  const codex = require('./agent/codexstatus')
+  const claude = require('./agent/claudemodels')
+  return createModelCatalog({ cacheFile: null,
+    codexstatus: { listModels: bin => codex.listModels(bin, 12000) },
+    claudemodels: { ...claude, probeModels: bin => claude.probeModels(bin, { timeoutMs: 12000 }) },
+  })
+}
+
+function applyInitialGroupDefaults(config, chatId, cat) {
+  const current = applyBrainChange(config, chatId)
+  if (current.error) throw new Error(`Cannot set the new group's model defaults (${current.error})`)
+  const picks = fillPicks({ switching: true, currentModel: current.before.model || '',
+    currentEffort: current.before.effort || '', cat })
+  // fillPicks may suggest replacing an unsupported old depth on a backend
+  // switch. Onboarding only fills missing fields; it never replaces a choice.
+  const change = {}
+  if (!current.before.model && picks.model) change.model = picks.model
+  if (!current.before.effort && picks.effort) change.effort = picks.effort
+  const result = applyBrainChange(config, chatId, change)
+  if (result.error || !result.after.model || !result.after.effort) throw new Error('The live model catalog did not provide a valid model and thinking depth. Check the executor login and retry.')
+  return { provider: result.target, model: result.after.model, effort: result.after.effort,
+    name: cat.models?.find(m => m.id === result.after.model)?.name || result.after.model, source: cat.source }
+}
+
+async function runConnect(argv, deps = {}) {
+  const d = defaultDeps(deps)
+  // Ctrl-C (or the setup page's cancel) aborts at the next step boundary for
+  // the whole run, not only during the scan; nothing is written after an abort.
+  const abort = new AbortController()
+  const onSignal = () => abort.abort()
+  for (const signal of ['SIGINT', 'SIGTERM']) d.signals.on(signal, onSignal)
+  try { return await connectFlow(argv, d, abort) } finally {
+    for (const signal of ['SIGINT', 'SIGTERM']) d.signals.off(signal, onSignal)
+  }
+}
+
+async function connectFlow(argv, d, abort) {
+  const { fs, feishu, stderr, stdout } = d
+  const { values } = parseArgs({ args: argv, allowPositionals: false, options: CONNECT_OPTIONS })
+  const basic = values.basic === true
+  const reuseAppId = values['app-id']
+  const givenChatId = values.chat
+  if (reuseAppId !== undefined && !APP_ID.test(reuseAppId)) throw new Error('--app-id must be a Feishu app id (cli_…)')
+  if (givenChatId !== undefined && !CHAT_ID.test(givenChatId)) throw new Error('--chat must be a Feishu group id (oc_…)')
+  if (values.provider !== undefined && !RUNNERS.includes(values.provider)) throw new Error('--provider must be codex or claude')
+  const say = text => stderr.write(`${text}\n`)
+  const interrupted = () => {
+    if (!abort.signal.aborted) return false
+    say('已取消，没有写入任何文件。')
+    return true
+  }
+  // A wait notice repeats on every poll; it is printed once per change.
+  let lastWait = null
+  const decide = (step, input) => {
+    const plan = core.connectPlan(step, { basic, ...input })
+    if (plan.verdict === 'wait') {
+      if (!(plan.retryAfterMs > 0)) throw new Error(`The core asked to wait on ${step} without a retry interval`)
+      if (plan.notice !== lastWait) say(plan.notice)
+      lastWait = plan.notice
+    } else {
+      lastWait = null
+      say(plan.notice)
+    }
+    return plan
+  }
+
+  // Step 0: never touch an installation that already has credentials, state
+  // or a running service; --app-id may only finish an attempt for that app.
+  const stateDir = installationStateDir(values['data-dir'] === undefined ? path.join(d.home, '.sbot') : values['data-dir'])
+  const configPath = values.config ? path.resolve(values.config)
+    : d.env.SBOT_CONFIG ? path.resolve(d.env.SBOT_CONFIG) : path.join(d.home, '.sbot', 'config.json')
+  if (!path.isAbsolute(configPath)) throw new Error('The configuration path must be absolute')
+  const attach = values.attach === true
+  // Run by the console inside the service: d.live commits through its writer.
+  const live = attach && d.live ? d.live : null
+  const assertTarget = () => {
+    if (live) assertLiveAttachable(readExistingConfig(fs, configPath), configPath)
+    else if (attach) {
+      assertAttachable(readExistingConfig(fs, configPath), configPath)
+      assertServiceStopped(fs, stateDir, d.isAlive)
+    } else {
+      assertReplaceable(readExistingConfig(fs, configPath), configPath, reuseAppId)
+      assertFreshState(fs, stateDir)
+    }
+  }
+  assertTarget()
+
+  // Project directory per the directory rule: an existing --workdir, or a new
+  // folder under ~/Projects named by --name or a prompt.
+  let workdir
+  const lang = values.lang === 'en' ? 'en' : 'zh'
+  const explicit = values.workdir !== undefined
+  // --auto-dir names the folder after the group; a --workdir or --name given wins.
+  const autoDir = !explicit && values.name === undefined && values['auto-dir'] === true
+  if (autoDir) {
+    // A stand-in for the checks before the scan; the real folder is chosen after it.
+    workdir = defaultWorkdir('sintbot', resolveProjectsRoots(readExistingConfig(fs, configPath) || {}, { home: d.home }).roots, { home: d.home })
+    // The folder is only made after the group exists: make sure it can be, before anyone scans.
+    assertCanCreateUnder(fs, path.dirname(workdir))
+  } else if (explicit) {
+    workdir = values.workdir
+    if (!path.isAbsolute(workdir) || workdir !== path.resolve(workdir)) throw new Error('--workdir must be a normalized absolute path')
+    let stat = null
+    try { stat = fs.statSync(workdir) } catch {}
+    if (!stat?.isDirectory()) throw new Error('--workdir must be an existing directory')
+  } else {
+    let name = values.name
+    if (name === undefined) {
+      name = d.isTTY ? await (d.prompt || askLine)('项目名（默认 sintbot）：', 'sintbot', d) : 'sintbot'
+    }
+    if (!PROJECT_NAME.test(name) || name === '.' || name === '..') throw new Error('The project name may only use letters, digits, ".", "_" and "-" (max 60)')
+    workdir = path.join(defaultProjectsRoot({ home: d.home }), name)
+  }
+  // The core's directory decision is taken before the scan too, so a refused
+  // directory never costs the user a scan; it is taken again before creation.
+  const early = autoDir ? null : core.connectPlan('dir', { basic, observed: dirObserved(fs, workdir, explicit, d.home) })
+  if (early && early.verdict === 'stop') { say(early.notice); return 1 }
+
+  // Runners present on this Mac; the group's provider must be one of them.
+  const runners = live ? { codex: true, claude: true } : probeRunners(d.spawnSync, d.env)
+  const available = RUNNERS.filter(runner => runners[runner])
+  // Live: the group takes the model already in use (inheritedBrain), no catalog.
+  const deferred = live ? { provider: '', catalog: null }
+    : await chooseGroupModel({ requested: values.provider, defer: values['defer-model'] === true, runners, d, say })
+  if (interrupted()) return EXIT_INTERRUPTED
+  let provider = deferred ? deferred.provider : values.provider
+  if (provider && !runners[provider]) throw new Error(`${provider} did not answer --version; install and sign in to it first`)
+  if (!deferred && provider === undefined) {
+    provider = available.length === 1 || !d.isTTY ? available[0]
+      : await (d.prompt || askLine)(`执行器（${available.join(' / ')}，默认 ${available[0]}）：`, available[0], d)
+    if (!runners[provider]) throw new Error('--provider must be codex or claude')
+  }
+  // Everything the configuration needs apart from the scan result is known;
+  // let the core validate it now with placeholders for the scanned identities.
+  const configInput = { appId: reuseAppId || 'cli_pending', appSecret: 'pending', botOpenId: 'ou_pending', adminOpenId: 'ou_pending',
+    chatId: givenChatId || null, workdir, home: d.home, provider, runners, ...(provider ? {} : { deferModel: true }),
+    // The setup page's proxy choice (src/slackproxy.js), saved by the core for the whole service.
+    ...(d.proxyChoice && d.proxyChoice.url ? { proxy: d.proxyChoice.url, noProxy: d.proxyChoice.noProxy || '' } : {}) }
+  const dryRun = core.connectConfig({ ...configInput, chatId: givenChatId || 'oc_onboarding_pending' })
+  if (!dryRun.ok) throw new Error(dryRun.error)
+  let selectedCatalog = deferred?.catalog || null
+  if (!deferred) {
+    const catalog = d.modelCatalog || connectModelCatalog()
+    say('正在读取执行器推荐的型号和思考深度…')
+    try { selectedCatalog = await catalog(provider, { runner: provider }) } catch {}
+    if (interrupted()) return EXIT_INTERRUPTED
+    if (!selectedCatalog || selectedCatalog.ok !== true || selectedCatalog.source !== 'live' ||
+        !Array.isArray(selectedCatalog.models) || !selectedCatalog.models.length) {
+      throw new Error(`Could not read live model defaults for ${provider}. Check the executor login and network, then retry. No new Feishu app was created.`)
+    }
+  }
+  if (selectedCatalog) {
+    const modelDefaults = applyInitialGroupDefaults(dryRun.config, givenChatId || 'oc_onboarding_pending', selectedCatalog)
+    d.onModelDefaults?.(modelDefaults)
+    say(`新群默认：${modelDefaults.name} · ${modelDefaults.effort}。接入后可在控制台修改。`)
+  } else if (!live) say(MODEL_LATER)
+  if (interrupted()) return EXIT_INTERRUPTED
+
+  // Step 1: the scan. The link is printed, and a local page renders the QR
+  // code from the core's matrix; the page is removed however this ends.
+  // The app is named before anyone has scanned, so the only name available
+  // is the local account's; the scanner's Feishu display name (the SDK
+  // returns none, contacts are read later) names the group instead.
+  const manifest = core.connectManifest(basic, d.userName, d.version, lang)
+  say(manifest.hint)
+  let qrDir = null
+  const cleanupQr = () => {
+    if (!qrDir) return
+    try { fs.rmSync(qrDir, { recursive: true, force: true }) } catch {}
+    qrDir = null
+  }
+  process.once('exit', cleanupQr)
+  let lastStatus = null
+  let registration
+  try {
+    registration = await d.registerApp({
+      ...(reuseAppId === undefined ? { createOnly: true } : { appId: reuseAppId }),
+      appPreset: manifest.appPreset, addons: sdkAddons(manifest.addons), source: manifest.source, signal: abort.signal,
+      onQRCodeReady: ({ url, expireIn }) => {
+        if (live) { live.onQr?.(url, Number(expireIn) || 0); say(`请用手机飞书扫码，二维码 ${Math.floor(Number(expireIn) || 0)} 秒内有效。`); return }
+        stdout.write(`${url}\n`)
+        say(`二维码 ${Math.floor(Number(expireIn) || 0)} 秒内有效。`)
+        try {
+          qrDir = fs.mkdtempSync(path.join(d.tmpdir, 'sintbot-connect-'))
+          const page = path.join(qrDir, 'feishu-qr.html')
+          fs.writeFileSync(page, qrPage(url), { mode: 0o600 })
+          if (values['no-open'] !== true) {
+            const child = d.spawn('open', [page], { stdio: 'ignore', detached: true })
+            child.on?.('error', () => {})
+            child.unref?.()
+          }
+        } catch (error) { say(`二维码页面未能打开（${error?.message || error}），请直接打开上面的链接。`) }
+      },
+      onStatusChange: info => {
+        const status = info?.status || ''
+        if (status === lastStatus) return
+        lastStatus = status
+        if (status === 'polling') say('等待扫码…')
+        else if (status === 'slow_down') say('等待扫码…（已放慢轮询）')
+        else if (status === 'domain_switched') say('已切换到 Lark 国际版域名。')
+      },
+    })
+  } catch (error) {
+    if (abort.signal.aborted) return EXIT_INTERRUPTED
+    const reason = error?.description ? `${error.code}: ${error.description}` : (error?.message || String(error))
+    throw new Error(`Feishu scan did not complete (${reason})`)
+  } finally {
+    cleanupQr()
+    process.off('exit', cleanupQr)
+  }
+  const appId = registration?.client_id || ''
+  const appSecret = registration?.client_secret || ''
+  const adminOpenId = registration?.user_info?.open_id || ''
+  if (!appId || !appSecret) throw new Error('Feishu scan returned no app credentials')
+  // The id (never the secret) lets every later stop be resumed with --app-id.
+  say(`应用 ID：${appId}`)
+  const client = d.feishuClient(appId, appSecret)
+  const { larkErrMsg } = feishu
+
+  // Step 2a: credentials and bot identity.
+  let identity = null
+  let plan
+  try {
+    identity = await feishu.fetchAppIdentity(client, appId)
+    // An SDK body with a non-zero code does not throw; read it so a code such
+    // as 21001 reaches the core instead of an empty identity.
+    if (!identity.openId) assertOk(await client.request({ method: 'GET', url: '/open-apis/bot/v3/info' }), 'bot identity')
+    plan = decide('token', {})
+  } catch (error) { plan = decide('token', failureInput(error, larkErrMsg)) }
+  if (plan.verdict === 'stop') return 1
+  if (interrupted()) return EXIT_INTERRUPTED
+
+  // Step 2b: app enabled, waiting for an organization review when there is one.
+  let waitedMs = 0
+  for (;;) {
+    const enabled = identity?.activateOk === true
+    plan = decide('app', { observed: { enabled, pendingReview: enabled ? false : await pendingReview(client, appId), waitedMs } })
+    if (plan.verdict !== 'wait') break
+    await d.sleep(plan.retryAfterMs)
+    if (interrupted()) return EXIT_INTERRUPTED
+    waitedMs += plan.retryAfterMs
+    try { identity = await feishu.fetchAppIdentity(client, appId) } catch { identity = null }
+  }
+  if (plan.verdict === 'stop') return 1
+
+  // Step 2c: the existing readiness checklist.
+  const precheck = await feishu.feishuPrecheck(client, { appId })
+  if (decide('precheck', { observed: { checks: precheck.checks } }).verdict === 'stop') return 1
+  const botOpenId = precheck.botOpenId || identity?.openId || ''
+  if (interrupted()) return EXIT_INTERRUPTED
+
+  // Step 3: contact range, visibility and a published version. Failures only
+  // warn; --basic skips both.
+  if (basic) {
+    decide('scope', {})
+  } else {
+    try {
+      assertOk(await client.request({ method: 'PATCH', url: `/open-apis/application/v7/applications/${encodeURIComponent(appId)}/config`,
+        data: { contacts: { contacts_range_type: 'all' }, visibility: { is_visible_to_all: true } } }), 'scope')
+      decide('scope', {})
+    } catch (error) { decide('scope', failureInput(error, larkErrMsg)) }
+    try {
+      assertOk(await client.request({ method: 'POST', url: `/open-apis/application/v7/applications/${encodeURIComponent(appId)}/publish`,
+        data: { remark: 'SintBot 接入', changelog: `SintBot ${d.version} 接入：机器人、消息事件与卡片回调。`,
+          mobile_default_ability: 'bot', pc_default_ability: 'bot' } }), 'publish')
+      decide('publish', {})
+      await waitPublished(client, appId, d)
+    } catch (error) { decide('publish', failureInput(error, larkErrMsg)) }
+  }
+
+  if (interrupted()) return EXIT_INTERRUPTED
+  // The real configuration input, validated before anything is created.
+  // The group's name; with --auto-dir it names the project folder too, so the two match.
+  const scanner = await scannerName(client, adminOpenId, registration.user_info?.name, basic, d, lang)
+  const chatName = scanner.group || manifest.appPreset.name
+  if (autoDir) {
+    const existing = readExistingConfig(fs, configPath) || {}
+    // A folder another conversation is bound to is never shared silently, even if it is empty or gone.
+    const taken = new Set(Object.values(existing.groups || {}).map(group => group?.workdir).filter(dir => typeof dir === 'string').map(dir => path.resolve(dir)))
+    workdir = freeProjectDir(fs, defaultWorkdir(chatName, resolveProjectsRoots(existing, { home: d.home }).roots, { home: d.home }), taken)
+    configInput.workdir = workdir
+  }
+  Object.assign(configInput, { appId, appSecret, botOpenId, adminOpenId, adminName: scanner.person })
+  let built = core.connectConfig(configInput)
+  if (!built.ok) { decide('config', { code: LOCAL_FAILURE, msg: built.error, observed: { configPath } }); return 1 }
+
+  // Step 4: the project directory is judged now and created with the
+  // configuration below, so a stopped group step leaves no folder behind.
+  const observed = dirObserved(fs, workdir, explicit, d.home)
+  if (decide('dir', { observed }).verdict === 'stop') return 1
+
+  // Step 5: the group. A group given with --chat is bound as it is; otherwise
+  // one is created with the scanner as its first member. Failure stops here,
+  // before any file exists; the core's notice carries the resume command.
+  let chatId = givenChatId || null
+  if (!chatId) {
+    try {
+      const chat = await feishu.createChat(client, chatName, '', adminOpenId ? [adminOpenId] : [])
+      if (!chat.chatId) throw new Error('create chat returned no chat_id')
+      chatId = chat.chatId
+      plan = decide('chat', { observed: { appId } })   // chatId in observed means a group the user supplied
+    } catch (error) { plan = decide('chat', { ...failureInput(error, larkErrMsg), observed: { appId, chatId: null } }) }
+  } else {
+    plan = decide('chat', { observed: { appId, chatId } })
+  }
+  if (plan.verdict === 'stop') return 1
+  d.onGroupReady?.({ appId, chatId })
+  if (interrupted()) return EXIT_INTERRUPTED // the group exists; the config does not, so --app-id/--chat resumes it
+  try {
+    await feishu.sendChatText(client, chatId,
+      lang === 'en' ? `Hi, I'm ${chatName}. This group works in the project folder ${workdir}; @mention me or just say what you need here.`
+        : `你好，我是 ${chatName}。这个群绑定的项目目录是 ${workdir}；有任务直接 @ 我或在群里说。`)
+  } catch {}
+
+  if (interrupted()) return EXIT_INTERRUPTED
+  // Step 6: the folder, config.json (0600 in a 0700 directory) and the README.
+  built = core.connectConfig({ ...configInput, chatId })
+  if (!built.ok) { decide('config', { code: LOCAL_FAILURE, msg: built.error, observed: { configPath } }); return 1 }
+  if (selectedCatalog) applyInitialGroupDefaults(built.config, chatId, selectedCatalog)
+  let createdDir = false, createdReadme = false, configCommitted = false
+  const readme = path.join(workdir, 'README.md')
+  try {
+    // A scan can wait for minutes. Recheck immediately before committing, under
+    // the same short-lived config lock as other writers; never replace a new
+    // installation that appeared while this page was waiting.
+    fs.mkdirSync(path.dirname(configPath), { recursive: true, mode: 0o700 })
+    withFileLock(configPath, () => {
+      assertTarget()
+      // Attach: the installation's own file plus the Feishu block and the new
+      // group. The merged configuration is checked against the existing
+      // journals before anything is written, and the old file is kept.
+      const merge = current => live
+        ? { ...current, feishu: built.config.feishu,
+          groups: { ...current.groups, [chatId]: { ...built.config.groups[chatId], ...inheritedBrain(current) } } }
+        : { ...current, feishu: built.config.feishu,
+          providers: { ...built.config.providers, ...(current.providers || {}) },
+          groups: { ...current.groups, [chatId]: built.config.groups[chatId] } }
+      let next = built.config
+      if (attach) next = merge(readExistingConfig(fs, configPath))
+      if (!observed.exists) {
+        fs.mkdirSync(path.dirname(workdir), { recursive: true, mode: 0o755 })
+        fs.mkdirSync(workdir, { mode: 0o755 })
+        createdDir = true
+      }
+      // Finish fallible project preparation before the config commit. A README
+      // failure must not leave a bound config that the retry correctly refuses.
+      if (!fs.existsSync(readme)) {
+        fs.writeFileSync(readme, built.readme, { mode: 0o644, flag: 'wx' })
+        createdReadme = true
+      }
+      if (attach) {
+        // The project folder exists now, so this is the check the next start makes.
+        d.validateAttached(next, configPath, { dataDir: stateDir })
+        const backups = path.join(stateDir, 'config-backups')
+        fs.mkdirSync(backups, { recursive: true, mode: 0o700 })
+        const backup = path.join(backups, `${new Date(d.now()).toISOString().replace(/[:.]/g, '-')}-attach-feishu.json`)
+        fs.copyFileSync(configPath, backup)
+        fs.chmodSync(backup, 0o600)
+      }
+      if (live) live.commit(merge)
+      else {
+        if (fs.existsSync(configPath)) fs.chmodSync(configPath, 0o600)
+        atomicWriteJSON(configPath, next, { mode: 0o600 })
+      }
+      configCommitted = true
+    })
+    plan = decide('config', { observed: { configPath } })
+  } catch (error) {
+    if (createdReadme && !configCommitted) { try { fs.unlinkSync(readme) } catch {} }
+    if (createdDir) { try { if (!fs.readdirSync(workdir).length) fs.rmdirSync(workdir) } catch {} }
+    plan = decide('config', { code: LOCAL_FAILURE, msg: error?.message || String(error), observed: { configPath } })
+  }
+  if (plan.verdict === 'stop') return 1
+
+  // Step 7: journals, under the unchanged fresh-state rules. An attached
+  // group has none yet: the next start registers it beside the existing ones.
+  try {
+    if (!attach) d.initializeInstallation(configPath, { dataDir: stateDir })
+    // The name and picture just read from Feishu are kept for the console
+    // (display only; a failure here changes nothing about the connection).
+    try { require('./botidentity').saveFeishuIdentity(stateDir, appId, identity) } catch {}
+    plan = core.connectPlan('init', { basic })
+  } catch (error) { plan = decide('init', { code: LOCAL_FAILURE, msg: error?.message || String(error) }) }
+  if (plan.verdict === 'stop') return 1
+  if (live) { live.onBound?.({ appId, chatId, name: chatName }); return 0 }
+  const installed = path.join(d.home, '.local', 'share', 'sintbot', 'bin', 'sintbot')
+  const bin = fs.existsSync(installed) ? '"$HOME/.local/share/sintbot/bin/sintbot"' : 'sintbot'
+  stdout.write(`${plan.notice}\n${bin} start --config ${shellQuote(configPath)} --data-dir ${shellQuote(stateDir)} --ui\n`)
+  return 0
+}
+
+// Setup without a chat platform: one conversation held in the console. It
+// takes the same directory rule, configuration builder (the core's
+// connect_config, platform "local"), live model defaults and fresh-state
+// checks as the scan flow, and writes the same two things: the configuration
+// and the journals. Nothing leaves this Mac.
+async function runLocalSetup(input = {}, deps = {}) {
+  return runConversationSetup(input, deps, 'local')
+}
+
+async function runWecomSetup(input = {}, deps = {}) {
+  return runConversationSetup(input, deps, 'wecom')
+}
+
+// Setup with a Slack app the person created from the prefilled manifest link:
+// both tokens are verified again here, then the first direct message or
+// channel @mention binds the conversation.
+async function runSlackSetup(input = {}, deps = {}) {
+  return runConversationSetup(input, deps, 'slack')
+}
+
+async function runConversationSetup(input = {}, deps = {}, platform = 'local') {
+  const d = defaultDeps(deps)
+  const { fs, stderr, stdout } = d
+  const abort = new AbortController()
+  const onSignal = () => abort.abort()
+  for (const signal of ['SIGINT', 'SIGTERM']) d.signals.on(signal, onSignal)
+  const say = text => stderr.write(`${text}\n`)
+  const interrupted = () => {
+    if (!abort.signal.aborted) return false
+    say('已取消，没有写入任何文件。')
+    return true
+  }
+  const decide = (step, value) => { const plan = core.connectPlan(step, value); say(plan.notice); return plan }
+  try {
+    if (input.provider !== undefined && !RUNNERS.includes(input.provider)) throw new Error('--provider must be codex or claude')
+    const stateDir = installationStateDir(input.dataDir === undefined ? path.join(d.home, '.sbot') : input.dataDir)
+    const configPath = input.config ? path.resolve(input.config)
+      : d.env.SBOT_CONFIG ? path.resolve(d.env.SBOT_CONFIG) : path.join(d.home, '.sbot', 'config.json')
+    if (!path.isAbsolute(configPath)) throw new Error('The configuration path must be absolute')
+    const assertUnclaimed = () => {
+      if (readExistingConfig(fs, configPath)) throw new Error(`${configPath} already exists; move it aside before setting up`)
+      assertFreshState(fs, stateDir)
+    }
+    assertUnclaimed()
+
+    let workdir
+    const explicit = input.workdir !== undefined
+    if (explicit) {
+      workdir = input.workdir
+      if (typeof workdir !== 'string' || !path.isAbsolute(workdir) || workdir !== path.resolve(workdir)) throw new Error('--workdir must be a normalized absolute path')
+      let stat = null
+      try { stat = fs.statSync(workdir) } catch {}
+      if (!stat?.isDirectory()) throw new Error('--workdir must be an existing directory')
+    } else {
+      const name = input.name === undefined ? 'sintbot' : input.name
+      if (typeof name !== 'string' || !PROJECT_NAME.test(name) || name === '.' || name === '..') throw new Error('The project name may only use letters, digits, ".", "_" and "-" (max 60)')
+      workdir = path.join(defaultProjectsRoot({ home: d.home }), name)
+    }
+    const early = core.connectPlan('dir', { observed: dirObserved(fs, workdir, explicit, d.home) })
+    if (early.verdict === 'stop') { say(early.notice); return 1 }
+
+    const runners = probeRunners(d.spawnSync, d.env)
+    const available = RUNNERS.filter(runner => runners[runner])
+    const deferred = await chooseGroupModel({ requested: input.provider, defer: input.deferModel === true, runners, d, say })
+    if (interrupted()) return EXIT_INTERRUPTED
+    const provider = deferred ? deferred.provider : input.provider === undefined ? available[0] : input.provider
+    if (!deferred && !runners[provider]) throw new Error(`${provider} did not answer --version; install and sign in to it first`)
+
+    // The live model defaults are read first: a failure here stops before a
+    // bot is created or a conversation is bound.
+    let selectedCatalog = deferred?.catalog || null
+    if (!deferred) {
+      const catalog = d.modelCatalog || connectModelCatalog()
+      say('正在读取执行器推荐的型号和思考深度…')
+      try { selectedCatalog = await catalog(provider, { runner: provider }) } catch {}
+      if (interrupted()) return EXIT_INTERRUPTED
+      if (!selectedCatalog || selectedCatalog.ok !== true || selectedCatalog.source !== 'live' ||
+          !Array.isArray(selectedCatalog.models) || !selectedCatalog.models.length) {
+        throw new Error(`Could not read live model defaults for ${provider}. Check the executor login and network, then retry.`)
+      }
+    }
+
+    // WeCom conversations are named after the project; local ones keep their title.
+    const title = platform === 'wecom' || platform === 'slack' ? path.basename(workdir) : input.title || '本机对话'
+    // A Slack conversation speaks English unless it is set to Chinese
+    // (src/chatlang.js), whatever the language of the setup page: no `lang`
+    // key is written here, and the core writes the project README in English
+    // (Slack only). No other platform is touched.
+    const buildFor = (chatId, credentials) => core.connectConfig({ platform, chatId, ...credentials, name: title,
+      workdir, home: d.home, provider, runners, ...(provider ? {} : { deferModel: true }), ...(platform === 'slack' ? { lang: 'en' } : {}),
+      // The setup page's proxy choice for a local or WeCom setup; Slack carries its own in `credentials`.
+      ...(platform !== 'slack' && typeof input.proxy === 'string' && input.proxy ? { proxy: input.proxy, noProxy: input.noProxy || '' } : {}) })
+    let chatId, built
+    if (platform === 'wecom') {
+      // Credentials come from the form, or from a scan that creates the bot
+      // (input.scan). Scanned ones live only in this run's memory and the
+      // caller's callback; a retry may hand the same bot back as input.bot.
+      let bot
+      if (input.scan === true) {
+        const preflight = buildFor('wr_setup_preflight', { botId: 'scan_preflight', secret: 'scan_preflight' })
+        if (!preflight.ok) throw new Error(preflight.error)
+        const reuse = input.bot && typeof input.bot.botId === 'string' && typeof input.bot.secret === 'string' ? input.bot : null
+        bot = reuse || await (deps.provisionWecomBot || require('./wecomprovision').provisionWecomBot)({
+          signal: abort.signal, onNotice: say, onQr: url => d.onWecomQr?.(url), ...(deps.wecomScan || {}) })
+        d.onWecomBot?.(bot)
+      } else bot = { botId: input.botId, secret: input.secret }
+      const transport = require('./wecomsetuptransport')
+      // The first direct chat or group @mention binds the conversation. The
+      // core checks the binding while the setup connection is still open, so
+      // the reply in WeCom only follows an accepted configuration.
+      chatId = await (deps.discoverWecomGroup || transport.discoverWecomGroup)({
+        botId: bot.botId, secret: bot.secret, signal: abort.signal,
+        inboxDir: path.join(stateDir, 'wecom-inbox'),
+        ...(input.scan === true ? { notice: require('./wecomprovision').WECOM_SCAN_NOTICES.botReady } : {}),
+        confirm: async ({ chatId: found, chatType }) => {
+          built = buildFor(found, { botId: bot.botId, secret: bot.secret })
+          if (!built.ok) throw new Error(built.error)
+          return transport.confirmReply(title, chatType)
+        },
+        onNotice: say })
+      if (!built || built.config?.groups?.[chatId] === undefined) built = buildFor(chatId, { botId: bot.botId, secret: bot.secret })
+    } else if (platform === 'slack') {
+      // Both tokens are checked against Slack before anything is written; the
+      // core words every refusal. The identity it reports is kept for display.
+      // `input.proxy` is the setup page's choice: a proxy URL, or '' for a
+      // direct connection. Everything here goes that way, and the core saves
+      // it with the connection so a later start without the terminal's proxy
+      // variables still reaches Slack. Absent, the process's own proxy is used.
+      const verify = require('./slackverify')
+      const chosen = typeof input.proxy === 'string'
+      const net = chosen ? require('./slackproxy').slackNet({ url: input.proxy, noProxy: input.noProxy }) : null
+      const via = net ? { fetchImpl: net.fetchImpl } : {}
+      try {
+        const app = await (deps.verifySlackAppToken || verify.verifySlackAppToken)(input.appToken, via)
+        if (!app.ok) throw Object.assign(new Error(app.notice), { network: app.network === true })
+        const bot = await (deps.verifySlackBotToken || verify.verifySlackBotToken)(input.botToken, { appId: app.appId, ...via })
+        if (!bot.ok) throw Object.assign(new Error(bot.notice), { network: bot.network === true })
+        say(bot.notice)
+        if (interrupted()) return EXIT_INTERRUPTED
+        const identity = bot.identity || {}
+        const credentials = { botToken: String(input.botToken).trim(), appToken: String(input.appToken).trim(),
+          ...(identity.appId || app.appId ? { slackAppId: identity.appId || app.appId } : {}),
+          ...(identity.teamId ? { teamId: identity.teamId } : {}),
+          ...(identity.botUserId ? { botUserId: identity.botUserId } : {}),
+          ...(identity.team ? { team: identity.team } : {}),
+          ...(chosen && input.proxy ? { proxy: input.proxy, noProxy: input.noProxy || '' } : {}) }
+        const preflight = buildFor('oc_slack_D0PREFLIGHT', credentials)
+        if (!preflight.ok) throw new Error(preflight.error)
+        d.onSlackIdentity?.({ ...identity, appId: identity.appId || app.appId })
+        const transport = require('./slacksetuptransport')
+        // The first direct message or channel @mention binds the conversation.
+        // The core checks the binding while the setup connection is still open,
+        // so the reply in Slack only follows an accepted configuration.
+        chatId = await (deps.discoverSlackConversation || transport.discoverSlackConversation)({
+          botToken: credentials.botToken, appToken: credentials.appToken, signal: abort.signal,
+          inboxDir: path.join(stateDir, 'slack-inbox'), net,
+          confirm: async ({ chatId: found, chatType }) => {
+            built = buildFor(found, credentials)
+            if (!built.ok) throw new Error(built.error)
+            return transport.confirmReply(title, chatType, chatLang(built.config?.groups?.[found], 'slack'))
+          },
+          onNotice: say })
+        if (!built || built.config?.groups?.[chatId] === undefined) built = buildFor(chatId, credentials)
+      } finally { net?.close() }
+    } else {
+      chatId = (d.newLocalChatId || newLocalChatId)()
+      built = buildFor(chatId, {})
+    }
+    if (interrupted()) return EXIT_INTERRUPTED
+    if (!built.ok) throw new Error(built.error)
+    if ((platform === 'wecom' || platform === 'slack') && built.config.groups?.[chatId] && !built.config.groups[chatId].name) built.config.groups[chatId].name = title
+    if (selectedCatalog) {
+      const modelDefaults = applyInitialGroupDefaults(built.config, chatId, selectedCatalog)
+      d.onModelDefaults?.(modelDefaults)
+      say(`对话默认：${modelDefaults.name} · ${modelDefaults.effort}。之后可在控制台修改。`)
+    } else say(MODEL_LATER)
+
+    const observed = dirObserved(fs, workdir, explicit, d.home)
+    if (decide('dir', { observed }).verdict === 'stop') return 1
+    if (interrupted()) return EXIT_INTERRUPTED
+    let createdDir = false, createdReadme = false, configCommitted = false
+    const readme = path.join(workdir, 'README.md')
+    let plan
+    try {
+      fs.mkdirSync(path.dirname(configPath), { recursive: true, mode: 0o700 })
+      withFileLock(configPath, () => {
+        assertUnclaimed()
+        if (!observed.exists) {
+          fs.mkdirSync(path.dirname(workdir), { recursive: true, mode: 0o755 })
+          fs.mkdirSync(workdir, { mode: 0o755 })
+          createdDir = true
+        }
+        if (!fs.existsSync(readme)) {
+          fs.writeFileSync(readme, built.readme, { mode: 0o644, flag: 'wx' })
+          createdReadme = true
+        }
+        atomicWriteJSON(configPath, built.config, { mode: 0o600 })
+        configCommitted = true
+      })
+      plan = decide('config', { observed: { configPath } })
+    } catch (error) {
+      if (createdReadme && !configCommitted) { try { fs.unlinkSync(readme) } catch {} }
+      if (createdDir) { try { if (!fs.readdirSync(workdir).length) fs.rmdirSync(workdir) } catch {} }
+      plan = decide('config', { code: LOCAL_FAILURE, msg: error?.message || String(error), observed: { configPath } })
+    }
+    if (plan.verdict === 'stop') return 1
+
+    try {
+      d.initializeInstallation(configPath, { dataDir: stateDir })
+      plan = core.connectPlan('init', { observed: { platform } })
+    } catch (error) { plan = decide('init', { code: LOCAL_FAILURE, msg: error?.message || String(error) }) }
+    if (plan.verdict === 'stop') return 1
+    stdout.write(`${plan.notice}\n`)
+    return 0
+  } finally {
+    for (const signal of ['SIGINT', 'SIGTERM']) d.signals.off(signal, onSignal)
+  }
+}
+
+const appVersions = (client, appId) => client.request({ method: 'GET',
+  url: `/open-apis/application/v6/applications/${encodeURIComponent(appId)}/app_versions`,
+  params: { lang: 'zh_cn', page_size: 10, user_id_type: 'open_id' } })
+const versionItems = r => r?.data?.items || r?.items || []
+
+// A version waiting for the organization's review (app_versions status 1).
+// Unreadable (missing scope, no version yet) means no review is pending.
+async function pendingReview(client, appId) {
+  try { return versionItems(await appVersions(client, appId)).some(item => item?.status === 1) } catch { return false }
+}
+
+// After publish, give the app up to 30 s to report a published version. This
+// only paces the next steps; the core has already judged the publish call.
+async function waitPublished(client, appId, d) {
+  const until = d.now() + PUBLISH_POLL_MS
+  do {
+    try { if (versionItems(await appVersions(client, appId)).some(item => item?.status === 2)) return true } catch { return false }
+    await d.sleep(PUBLISH_POLL_STEP_MS)
+  } while (d.now() < until)
+  return false
+}
+
+// The nearest existing folder at or above `dir` must be writable, so the
+// projects root (and the project folder in it) can be made later.
+function assertCanCreateUnder(fs, dir) {
+  let at = dir
+  for (;;) {
+    let stat = null
+    try { stat = fs.statSync(at) } catch {}
+    if (stat) {
+      if (!stat.isDirectory()) throw new Error(`${at} is not a folder; the project folder cannot be created`)
+      try { fs.accessSync(at, nodeFs.constants.W_OK) } catch { throw new Error(`${at} is not writable; the project folder cannot be created`) }
+      return
+    }
+    const up = path.dirname(at)
+    if (up === at) return
+    at = up
+  }
+}
+
+// The first of base, base-2, base-3 … that does not exist or is an empty
+// folder, and that no existing conversation is bound to.
+function freeProjectDir(fs, base, taken = new Set()) {
+  for (let n = 1; n < 100; n++) {
+    const dir = n === 1 ? base : `${base}-${n}`
+    if (taken.has(path.resolve(dir))) continue
+    let stat = null
+    try { stat = fs.statSync(dir) } catch {}
+    if (!stat || (stat.isDirectory() && fs.readdirSync(dir).length === 0)) return dir
+  }
+  return `${base}-${Date.now()}`
+}
+
+// The scanner's display name, through the same core manifest that names the
+// app, so the group is "<name>的 SintBot" (en: "<name>'s SintBot"). A name in
+// the SDK result (the current SDK sends only open_id) wins over the contact
+// lookup; empty when neither is available.
+// Returns { person, group }: the scanner's own name (saved with the admin
+// entry) and the group name built from it; both empty when unknown.
+async function scannerName(client, openId, sdkName, basic, d, lang = 'zh') {
+  let name = typeof sdkName === 'string' ? sdkName.trim() : ''
+  if (!name && openId) {
+    try {
+      const r = await client.contact.user.get({ params: { user_id_type: 'open_id' }, path: { user_id: openId } })
+      name = r?.data?.user?.name || r?.data?.user?.nickname || ''
+    } catch { name = '' }
+  }
+  name = String(name || '').trim().slice(0, 40)
+  return { person: name, group: name ? core.connectManifest(basic, name, d.version, lang).appPreset.name : '' }
+}
+
+module.exports = { runConnect, runLocalSetup, runWecomSetup, runSlackSetup, CONNECT_OPTIONS, sdkAddons, qrPage, failureInput, probeRunners, probeSignedIn, chooseGroupModel, EXIT_INTERRUPTED, connectModelCatalog, applyInitialGroupDefaults }

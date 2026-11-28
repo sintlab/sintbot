@@ -1,0 +1,71 @@
+name: Bug report / 问题反馈
+description: Something doesn't work or doesn't match the docs / 用着不对、和文档说的不一样
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Mask API keys, app secrets and tokens before pasting anything below. / 贴任何内容前,先遮掉 API key、App Secret 和 token。
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened / 发生了什么
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected / 期望的结果
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce / 复现步骤
+      placeholder: |
+        1.
+        2.
+  - type: input
+    id: version
+    attributes:
+      label: SintBot version / 版本
+      description: Output of `sintbot version` / `sintbot version` 的输出
+      placeholder: "1.3.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS / 系统
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other / 其他
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Chat platform / 聊天平台
+      options:
+        - Slack
+        - Feishu / 飞书
+        - WeCom / 企业微信
+        - Not connected yet / 还没接上
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model / 模型
+      placeholder: Codex model name
+  - type: textarea
+    id: startup
+    attributes:
+      label: "Startup / preflight error (redacted) / 启动或预检错误（去除秘密）"
+      render: text
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / 相关日志
+      description: "Relevant foreground output; remove credentials and private project content / 前台相关输出，去除凭据与私有项目内容"
+      render: text

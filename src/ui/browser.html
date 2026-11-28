@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>接管浏览器</title>
+<!-- 接管浏览器:把机器人常驻浏览器的画面推到这一页,人在手机 / 电脑上点、拖、输入,登录态落在机器人那边。
+     两种人会到这里:控制台管理员(从控制台进来,带令牌)与拿到一次性链接的群成员(只带 cookie,只能进这一页)。
+     页面按「身份 × 阶段」切模式(body[data-mode]):panel(持票未兑换 / 结束 / 过期 / 去登录:整屏一句话 + 一个动作,别的全藏)·
+     live(接管中:画面 + 键盘;群成员只看到自己那一页,没有标签页下拉 / 新开 / 控制台入口)。
+     自包含单文件,配色 token 与 console.html 同一套值(两处各写一份 —— 这页故意不加载整份控制台:群成员不该
+     看到控制台其它页面,也不该为一个画面拉几百 KB 的脚本)。图标 = Lucide sprite(lucide-static v1.31.0,与控制台同版,内联)。 -->
+<style>
+:root{
+  --bg:#0f0f13;--panel:rgba(205,214,244,.045);--ink:#cdd6f4;--dim:#a6adc8;--faint:#9399b2;--line:rgba(205,214,244,.16);
+  --ember:#cba6f7;--ember-rgb:203,166,247;--on-ember:#11111b;--ok:#a6e3a1;--warn:#f9e2af;--fail:#f38ba8;--fail-rgb:243,139,168;
+  --btn-bg:rgba(255,255,255,.055);--input-bg:rgba(0,0,0,.28);--stage:#000;
+  --sans:-apple-system,BlinkMacSystemFont,'SF Pro SC','SF Pro Text','PingFang SC','Hiragino Sans GB','Source Han Sans SC','Noto Sans SC','Microsoft YaHei UI','Microsoft YaHei',sans-serif;
+  --mono:'JetBrains Mono','Monaco',ui-monospace,SFMono-Regular,Menlo,'PingFang SC',monospace;
+}
+:root[data-theme="light"]{
+  --bg:#f7f8fc;--panel:#ffffff;--ink:#172033;--dim:#3b4557;--faint:#5b667a;--line:#e2e8f0;
+  --ember:#6d28d9;--ember-rgb:109,40,217;--on-ember:#fff;--ok:#6ea81a;--warn:#df8e1d;--fail:#e55934;--fail-rgb:229,89,52;
+  --btn-bg:rgba(23,32,51,.06);--input-bg:rgba(23,32,51,.07);--stage:#e9ecf3;
+}
+*{box-sizing:border-box}
+/* ⚠ hidden 属性只有浏览器默认样式在撑,任何一条给同一元素写 display 的规则都会把它覆盖掉 —— 真机截图逮到:群成员看到了
+   本该只给管理员的「控制台」链接(a.back 写了 display:inline-flex)。全局兜底一次,以后新加的元素不必逐个记得写 [hidden] */
+[hidden]{display:none!important}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.5 var(--sans);display:flex;flex-direction:column;overflow:hidden}
+/* 模式切换:只有 live 显示工具栏 / 画面 / 键盘;其余模式只显示整屏面板 */
+body:not([data-mode="live"]) .top,body:not([data-mode="live"]) #stage,body:not([data-mode="live"]) .kb{display:none}
+body[data-mode="live"] #panel{display:none}
+.top,.kb{flex:none;display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+.kb{border-bottom:none;border-top:1px solid var(--line);padding-bottom:calc(8px + env(safe-area-inset-bottom))}
+.sp{flex:1}
+select,input,button{font:inherit;color:inherit}
+select{max-width:min(46vw,320px);height:34px;padding:0 8px;border:1px solid var(--line);border-radius:8px;background:var(--input-bg)}
+input{flex:1;min-width:140px;height:36px;padding:0 11px;border:1px solid var(--line);border-radius:8px;background:var(--input-bg);outline:none}
+input:focus-visible,button:focus-visible,select:focus-visible{outline:2px solid var(--ember);outline-offset:1px}
+button{height:34px;padding:0 12px;border:1px solid var(--line);border-radius:8px;background:var(--btn-bg);cursor:pointer;white-space:nowrap;transition:color .16s,background-color .16s,border-color .16s}
+button:hover{border-color:rgba(var(--ember-rgb),.5)}
+button.primary{background:var(--ember);color:var(--on-ember);border-color:transparent;font-weight:600}
+button.danger{color:var(--fail);border-color:rgba(var(--fail-rgb),.45)}
+button.on{background:rgba(var(--ember-rgb),.14);border-color:rgba(var(--ember-rgb),.6);color:var(--ember)}
+.iconbtn{width:34px;padding:0;display:inline-flex;align-items:center;justify-content:center}
+.ic{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;display:block}
+a.back{color:var(--dim);text-decoration:none;font-weight:600;display:inline-flex;align-items:center;gap:6px}
+.ptitle{font-weight:600;max-width:min(52vw,360px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.st{font-size:11.5px;color:var(--faint);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.st.bad{color:var(--fail)} .st.ok{color:var(--ok)}
+.url{font:11px var(--mono);color:var(--faint);width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#stage{flex:1;min-height:0;position:relative;background:var(--stage);overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none;display:flex;align-items:flex-start;justify-content:center}
+/* 宽度钉成容器宽度(不是 max-width):帧的像素宽会随 maxWidth / 视口变,钉住显示宽度,画面才不会在两帧之间挪位置 —— 手指正按着时挪一下,坐标就漂了 */
+#frame{display:block;width:100%;height:auto;-webkit-user-drag:none;pointer-events:none;transform-origin:0 0;will-change:transform}
+#frame:not([src]){display:none}
+#hint{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center;color:var(--dim);line-height:1.8;pointer-events:none}
+/* ⚠ 提示层整体 pointer-events:none 是为了让画面上的手势穿过它;层里可点的东西要逐个放开 —— 只放了 a 没放 button,
+   手机上真手指点「开始接管」直接穿透、什么都不发生(2026-09-10 真机;桌面用程序化 click() 绕过了这一层所以没测出来) */
+#hint a,#hint button{color:var(--ember);pointer-events:auto}
+#hint button.primary{color:var(--on-ember)}
+/* 首帧引导:接管中第一次看到画面时飘一句怎么用,手指一碰就收 */
+#tip{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);background:rgba(0,0,0,.72);color:#fff;font-size:12px;padding:8px 14px;border-radius:20px;white-space:nowrap;pointer-events:none;transition:opacity .4s}
+#tip.fade{opacity:0}
+/* 缩放控件:在顶栏、不在画面里(浮在画面右上角时正好压住网页自己右上角的按钮 —— 多数站点的「设置 / 登录」都在那儿,
+   点过去落在控件上而不是网页上)。凡叠在画面上的东西都会抢走它底下那块的点击,所以控件一律放画面区外。没画面时靠 body.streaming 藏。
+   手机上只留「100%」一枚(既是指示也是还原;缩放靠双指捏合,首帧提示已教),− / + 只给桌面 —— 窄屏顶栏挤不下三枚。 */
+#zoom{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--btn-bg)}
+body:not(.streaming) #zoom{display:none}
+#zoom button{height:32px;min-width:32px;padding:0 8px;border:none;border-radius:0;background:transparent;font-size:16px}
+#zoom button+button{border-left:1px solid var(--line)}
+#zoom button#zoomv{font-size:12px;min-width:52px;font-variant-numeric:tabular-nums}
+#zoom.on #zoomv{color:var(--ember);background:rgba(var(--ember-rgb),.14)}
+.keys{display:flex;gap:6px;flex-wrap:wrap;width:100%}
+.keys button{height:32px;padding:0 10px;font-size:12px;display:inline-flex;align-items:center;justify-content:center;flex:1;min-width:38px}
+/* 整屏面板(欢迎 / 结束 / 过期 / 去登录):居中、一句话、一个动作 */
+#panel{flex:1;display:flex;align-items:center;justify-content:center;padding:32px 24px calc(32px + env(safe-area-inset-bottom))}
+#panel .pbox{width:min(420px,100%);text-align:center}
+#panel .pico{width:56px;height:56px;border-radius:16px;margin:0 auto 18px;display:flex;align-items:center;justify-content:center;background:rgba(var(--ember-rgb),.12);color:var(--ember)}
+#panel .pico .ic{width:26px;height:26px}
+#panel .pico.grey{background:rgba(127,127,127,.12);color:var(--faint)}
+#panel h1{font-size:20px;margin:0 0 10px;line-height:1.35}
+#panel p{margin:0 0 22px;color:var(--dim);line-height:1.8;font-size:14px}
+#panel button.primary,#panel a.primary{height:46px;padding:0 28px;font-size:15px;border-radius:12px;width:100%;display:inline-flex;align-items:center;justify-content:center;text-decoration:none;background:var(--ember);color:var(--on-ember);border:none;font-weight:600}
+#panel .note{margin-top:14px;font-size:12px;color:var(--faint)}
+#panel .err{margin-top:12px;font-size:13px;color:var(--fail);min-height:1.2em}
+.mask{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:16px;z-index:9}
+.mask[hidden]{display:none}
+.card{background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:18px;width:min(520px,100%);box-shadow:0 10px 28px rgba(0,0,0,.3)}
+.card h3{margin:0 0 10px;font-size:15px}
+.card .lnk{font:12px var(--mono);word-break:break-all;background:var(--input-bg);padding:10px;border-radius:8px;border:1px solid var(--line);user-select:all}
+.card .row{display:flex;gap:8px;margin-top:12px;justify-content:flex-end;flex-wrap:wrap}
+.hint2{font-size:11.5px;color:var(--faint);margin-top:8px;line-height:1.7}
+@media (max-width:520px){ select{max-width:100%;width:100%} .top{gap:6px} button{padding:0 10px} .ptitle{max-width:100%;width:100%} #zoom [data-z]{display:none} #zoom button+button{border-left:none} }
+</style>
+<script>document.documentElement.dataset.theme=localStorage.getItem('sbot-theme')||'light'</script>
+</head>
+<body data-mode="boot">
+<section id="panel"><div class="pbox" id="pbox"></div></section>
+<header class="top">
+  <a class="back" id="back" href="/" hidden>控制台</a>
+  <select id="tabs" aria-label="标签页"><option value="">读取标签页…</option></select>
+  <span class="ptitle" id="ptitle" hidden></span>
+  <button class="iconbtn" id="reload" title="重新读取标签页" aria-label="重新读取标签页"><svg class="ic"><use href="#lu-refresh"/></svg></button>
+  <button class="iconbtn" id="newtab" title="新开标签页" aria-label="新开标签页"><svg class="ic"><use href="#lu-plus"/></svg></button>
+  <span class="sp"></span>
+  <button id="mode" title="点按:手指 / 鼠标动作原样传给页面(能拖滑块)。点一下换成「滚动」">点按</button>
+  <div id="zoom" title="画面缩放(手机上双指捏合)"><button data-z="out" aria-label="缩小" title="缩小">−</button><button id="zoomv" title="还原到适应宽度">100%</button><button data-z="in" aria-label="放大" title="放大">+</button></div>
+  <button id="mklink" hidden title="生成一条只能打开一次的接管链接,发给群里要登录的人"><svg class="ic" style="display:inline;vertical-align:-3px;margin-right:4px"><use href="#lu-link"/></svg>接管链接</button>
+  <button id="end" class="danger" hidden>结束接管</button>
+  <button class="iconbtn" id="theme" title="切换亮/暗主题" aria-label="切换主题"><svg class="ic"><use href="#lu-sun"/></svg></button>
+  <span class="st" id="st">连接中…</span>
+  <span class="url" id="url"></span>
+</header>
+<main id="stage">
+  <img id="frame" alt="">
+  <div id="hint" hidden></div>
+  <div id="tip" hidden>一指点、拖 = 操作页面;两指捏合缩放、两指拖动移动;打字用下面的输入框</div>
+</main>
+<footer class="kb">
+  <input id="txt" placeholder="输入文字,回车 = 发到页面并按回车" autocomplete="off" autocapitalize="off">
+  <button id="send" class="primary">发送</button>
+  <div class="keys">
+    <button data-key="Enter" title="回车"><svg class="ic"><use href="#lu-enter"/></svg></button>
+    <button data-key="Backspace" title="退格"><svg class="ic"><use href="#lu-backspace"/></svg></button>
+    <button data-key="Tab">Tab</button><button data-key="Escape">Esc</button>
+    <button data-key="ArrowUp" title="上" aria-label="上"><svg class="ic"><use href="#lu-up"/></svg></button><button data-key="ArrowDown" title="下" aria-label="下"><svg class="ic"><use href="#lu-down"/></svg></button><button data-key="ArrowLeft" title="左" aria-label="左"><svg class="ic"><use href="#lu-left"/></svg></button><button data-key="ArrowRight" title="右" aria-label="右"><svg class="ic"><use href="#lu-right"/></svg></button>
+  </div>
+</footer>
+<div class="mask" id="mask" hidden><div class="card" id="card"></div></div>
+<svg style="display:none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="lu-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
+  <symbol id="lu-plus" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></symbol>
+  <symbol id="lu-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
+  <symbol id="lu-enter" viewBox="0 0 24 24"><path d="M20 4v7a4 4 0 0 1-4 4H4"/><path d="m9 10-5 5 5 5"/></symbol>
+  <symbol id="lu-backspace" viewBox="0 0 24 24"><path d="M10 5a2 2 0 0 0-1.344.519l-6.328 5.74a1 1 0 0 0 0 1.481l6.328 5.741A2 2 0 0 0 10 19h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2z"/><path d="m12 9 6 6"/><path d="m18 9-6 6"/></symbol>
+  <symbol id="lu-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></symbol>
+  <symbol id="lu-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></symbol>
+  <symbol id="lu-up" viewBox="0 0 24 24"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></symbol>
+  <symbol id="lu-down" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></symbol>
+  <symbol id="lu-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></symbol>
+  <symbol id="lu-right" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></symbol>
+  <symbol id="lu-hand" viewBox="0 0 24 24"><path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></symbol>
+  <symbol id="lu-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="lu-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol>
+  <symbol id="lu-lock" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+</svg>
+<script>
+/* 令牌来源与 console.html 同一套:本机环回免密时服务端注入;否则读登录时存下的 localStorage。
+   都没有 ⇒ 看服务端注入的接管标记:'1' = 带着有效的接管 cookie 进来的群成员(只能到这一页)。 */
+let TOKEN='__SBOT_TOKEN__';
+const TAKEOVER='__SBOT_TAKEOVER__'==='1';
+/* 票在 URL 片段里(#k=…):服务器收不到它,链接预览 / 安全扫描的裸 GET 也拿不走;人点「开始接管」才拿去兑换 cookie */
+const ticket=(()=>{const m=(location.hash||'').match(/[#&]k=([0-9a-f]{16,128})/i)||(location.search||'').match(/[?&]k=([0-9a-f]{16,128})/i);return m?m[1]:''})();
+TOKEN=TOKEN||localStorage.getItem('sbot-token')||sessionStorage.getItem('sbot-token')||'';
+/* ⚠ 手里有票(或人已经在接管会话里)就一律按接管走,丢掉浏览器里存着的控制台令牌 —— 否则在存过令牌的电脑上点同一条
+   链接会变成管理员布局:既没有「开始接管」也没有「结束接管」;那枚令牌要是还过期了,整页只剩一句 unauthorized、
+   画面都出不来、什么都点不动(2026-09-10 真机复现,手机上没存过令牌所以一直正常)。票是当下最明确的意图,它说了算。 */
+if(ticket||TAKEOVER) TOKEN='';
+const ADMIN=!!TOKEN;
+const $=(s)=>document.querySelector(s);
+const st=$('#st'),img=$('#frame'),stage=$('#stage'),hint=$('#hint'),tip=$('#tip'),sel=$('#tabs'),ptitle=$('#ptitle'),urlEl=$('#url'),txt=$('#txt'),pbox=$('#pbox');
+const H=()=>TOKEN?{'X-Sbot-Token':TOKEN}:{};
+const setSt=(s,cls)=>{st.textContent=s;st.className='st'+(cls?' '+cls:'')};
+const setMode=(m)=>{document.body.dataset.mode=m};
+const esc=(s)=>String(s).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+/* 整屏面板:icon + 标题 + 一句话 + (可选)动作 + 小字 */
+const panel=({icon='hand',grey=false,title,text,action='',note=''})=>{ setMode('panel'); pbox.innerHTML=`<div class="pico${grey?' grey':''}"><svg class="ic"><use href="#lu-${icon}"/></svg></div><h1>${title}</h1><p>${text}</p>${action}${note?`<div class="note">${note}</div>`:''}<div class="err" id="perr"></div>` };
+/* 群成员的会话到期(或被结束)⇒ 整屏说清楚,别露服务端那句「unauthorized — 重新打开控制台页面」(群成员没有控制台)。推流 401 与接口 401 两条路都走这里 */
+const expired=()=>{ stopStream(); panel({icon:'clock',grey:true,title:'这次接管已到期',text:'链接只在发出后的几分钟内有效。还需要的话,回群里让机器人重新发一条。'}) };
+async function api(path,method='GET',obj){
+  const r=await fetch(path,{method,headers:{...H(),...(obj?{'Content-Type':'application/json'}:{})},body:obj?JSON.stringify(obj):undefined,credentials:'same-origin'});
+  const j=await r.json().catch(()=>({}));
+  if(r.status===401&&TAKEOVER&&!ADMIN){ expired(); throw new Error('接管已到期'); }
+  // 存着的控制台令牌过期了:清掉再请人登录 —— 留着它下次进来还是同一句 unauthorized、画面都出不来
+  if(r.status===401&&ADMIN){ try{localStorage.removeItem('sbot-token');sessionStorage.removeItem('sbot-token')}catch{} stopStream(); panel({icon:'lock',grey:true,title:'这一页需要先登录',text:'控制台的登录已经过期。重新登录后再进来,或者用群里机器人发的链接打开。',action:'<a class="primary" href="/">去登录</a>'}); throw new Error('登录已过期'); }
+  if(!r.ok)throw new Error(j.error||('HTTP '+r.status));
+  return j;
+}
+/* 主题:与控制台共用同一个 localStorage 键,两边切换互相看得见 */
+const themeBtn=$('#theme');
+const paintTheme=()=>{themeBtn.innerHTML=`<svg class="ic"><use href="#${document.documentElement.dataset.theme==='light'?'lu-moon':'lu-sun'}"/></svg>`};
+themeBtn.onclick=()=>{const t=document.documentElement.dataset.theme==='light'?'dark':'light';document.documentElement.dataset.theme=t;localStorage.setItem('sbot-theme',t);paintTheme()};
+paintTheme();
+if(ADMIN){$('#back').hidden=false;$('#mklink').hidden=false}
+if(TAKEOVER&&!ADMIN){$('#end').hidden=false}
+
+if(!ADMIN&&!TAKEOVER){
+  if(ticket){
+    panel({icon:'hand',title:'机器人请你帮它一把',text:'它卡在一个需要真人的步骤 —— 登录、验证码、滑块或扫码。点下面开始,之后就在这一页上直接操作它的浏览器,做完回群里说一声。',action:'<button id="claim" class="primary">开始接管</button>',note:'链接只能用一次,几分钟内有效'});
+    $('#claim').onclick=async()=>{
+      const b=$('#claim'); b.disabled=true; b.textContent='正在连接…';
+      try{ await api('/api/browser/claim','POST',{k:ticket}); history.replaceState(null,'',location.pathname); location.reload(); }
+      catch(e){ b.disabled=false; b.textContent='开始接管'; $('#perr').textContent=e.message; }
+    };
+  } else {
+    panel({icon:'lock',grey:true,title:'这一页需要先登录',text:'从控制台登录后再进来,或者用群里机器人发的链接打开。',action:'<a class="primary" href="/">去登录</a>'});
+  }
+}
+
+/* ── 标签页 ── */
+let curId='',bound='';
+async function loadTargets(){
+  let j; try{ j=await api('/api/browser/targets') }catch(e){ setSt(e.message,'bad'); return }
+  setMode('live');
+  if(!j.ok){ setSt(j.error||'浏览器没连上','bad'); hint.hidden=false; hint.textContent=j.error||'浏览器没连上'; sel.innerHTML='<option value="">(没有标签页)</option>'; return }
+  bound=j.bound||'';
+  if(j.mode==='takeover'){ $('#newtab').hidden=true; $('#reload').hidden=!!bound; } // 票不是「随便开网页」的许可(服务端同样拒);绑了单页连刷新列表都不需要
+  // 绑了单页:不显示下拉,只显示页面标题 —— 群成员没有「选标签页」这件事
+  if(bound&&j.targets.length===1){ sel.hidden=true; ptitle.hidden=false; ptitle.textContent=j.targets[0].title||j.targets[0].url||'页面'; }
+  else { sel.hidden=false; ptitle.hidden=true; }
+  const remembered=sessionStorage.getItem('sbot-takeover-tab')||'';
+  sel.innerHTML=j.targets.length?j.targets.map(t=>`<option value="${t.id}">${esc((t.title||t.url||'(空白页)').slice(0,60))}</option>`).join(''):'<option value="">(没有标签页,点 + 新开)</option>';
+  const pick=j.targets.find(t=>t.id===remembered)||j.targets.find(t=>!/^about:blank$/.test(t.url))||j.targets[0];
+  if(pick){ sel.value=pick.id; if(pick.id!==curId) startStream(pick.id) } else { stopStream(); setSt('浏览器里没有标签页'); }
+}
+sel.onchange=()=>{ if(sel.value) startStream(sel.value) };
+$('#reload').onclick=loadTargets;
+$('#newtab').onclick=async()=>{
+  const u=window.prompt('要打开的网址(http 或 https 开头)','https://');
+  if(!u)return;
+  try{ const r=await api('/api/browser/targets','POST',{url:u}); await loadTargets(); if(r.id){ sel.value=r.id; startStream(r.id) } }catch(e){ setSt(e.message,'bad') }
+};
+
+/* ── 画面:服务端按 SSE 形状写,这里用 fetch 流式读(令牌走请求头,不进 URL) ── */
+let ac=null,meta={w:0,h:0},frames=0,tipShown=false;
+let zoom=1,tx=0,ty=0,streamW=0,rezoomTimer=null; // 本地缩放 / 平移(只动 CSS transform)与当前推流宽度
+/* 推流宽度上限 1024(2026-09-15 从 1600 压下来):帧和输入走同一条公网隧道,桌面按容器宽 × dpr 要到 1440~1600 时一帧约 40 KB、拖动中连续出帧,
+   把隧道发送队列塞满后输入的响应排在帧后面,每个事件 1.7~2 秒、滑块拖不动(隧道退化时尤甚);手机本来只要 780 左右所以一直没事。
+   1024 把桌面每帧砍掉约一半给输入让路,1280 宽的页面缩到 80% 仍看得清;放大时也不再超过它 —— 用一点清晰度换拖得动。 */
+const STREAM_W_MAX=1024;
+const W=()=>Math.min(STREAM_W_MAX,Math.max(320,Math.round(stage.clientWidth*Math.min(2,window.devicePixelRatio||1)*zoom))); // 放大了就按放大后的尺寸要帧(CDP 不会放大超过页面本身的宽)
+function stopStream(keepView){ if(ac){ac.abort();ac=null} curId=''; if(!keepView){ img.removeAttribute('src'); document.body.classList.remove('streaming') } }
+async function startStream(id,{keepView=false}={}){
+  stopStream(keepView); curId=id; if(!keepView){ zoom=1; tx=0; ty=0; applyView() } sessionStorage.setItem('sbot-takeover-tab',id); frames=0; meta={w:0,h:0};
+  hint.hidden=true; setSt('连接中…'); urlEl.textContent='';
+  api('/api/browser/targets/activate','POST',{id}).catch(()=>{}); // 机器旁边的人也能看到这一页(失败无所谓)
+  const mine=new AbortController(); ac=mine;
+  try{
+    // q=45:手机上一帧约 12 KB,文字仍可读;想更清晰把它调高,代价是流量翻倍
+    streamW=W(); const r=await fetch(`/api/browser/stream?id=${encodeURIComponent(id)}&w=${streamW}&q=45`,{headers:H(),signal:mine.signal,credentials:'same-origin'});
+    if(!r.ok){ const j=await r.json().catch(()=>({})); if(r.status===401&&TAKEOVER&&!ADMIN){ expired(); return } setSt(j.error||('连不上:'+r.status),'bad'); hint.hidden=false; hint.textContent=j.error||'连不上浏览器'; return }
+    const rd=r.body.getReader(),dec=new TextDecoder(); let buf='';
+    while(true){
+      const {value,done}=await rd.read(); if(done)break;
+      buf+=dec.decode(value,{stream:true});
+      let i; while((i=buf.indexOf('\n\n'))>=0){ onEvent(buf.slice(0,i)); buf=buf.slice(i+2) }
+    }
+    if(ac===mine){ setSt('画面断了,重连中…','bad'); setTimeout(()=>{ if(ac===mine) startStream(id) },1500) }
+  }catch(e){
+    if(ac===mine&&!mine.signal.aborted){ setSt('画面断了:'+e.message,'bad'); setTimeout(()=>{ if(ac===mine) startStream(id) },2000) }
+  }
+}
+function onEvent(chunk){
+  let ev='message',data='';
+  for(const line of chunk.split('\n')){ if(line.startsWith('event:'))ev=line.slice(6).trim(); else if(line.startsWith('data:'))data+=line.slice(5).trim() }
+  let j; try{ j=JSON.parse(data) }catch{ return }
+  if(ev==='frame'){
+    frames++; if(j.w&&j.h){meta.w=j.w;meta.h=j.h}
+    img.src='data:image/jpeg;base64,'+j.b64; document.body.classList.add('streaming'); // 顶栏的缩放控件只在有画面时显示
+    // 状态文案给人看:群成员只需要知道「可以动手了」;尺寸与帧数是排障信息,管理员才显示
+    setSt(ADMIN?`画面 ${meta.w}×${meta.h} · ${frames} 帧`:'可以操作了','ok');
+    document.body.dataset.frames=String(frames); // headless 验证读这个
+    if(!tipShown&&!ADMIN){ tipShown=true; tip.hidden=false; setTimeout(()=>tip.classList.add('fade'),4500); }
+  } else if(ev==='meta'){ if(j.url) urlEl.textContent=j.url; if(j.title&&bound) ptitle.textContent=j.title; }
+  else if(ev==='error'){ setSt(j.error||'出错','bad') }
+}
+
+/* ── 输入:坐标从帧图片换算成页面 CSS 像素;move 合并成 33ms 一批,down/up 立刻发且保持顺序 ── */
+/* move 攒全部中间点、整批发出(2026-09-15)。此前 pendingMove 是单个变量、每来一个 move 就覆盖:请求在飞的那段时间里
+   (公网隧道一个往返约 160 ms)所有中间点全丢 —— 实测 30 步拖动到服务端只剩 5 个点,轨迹成了跳跃,验证码的轨迹检测不认;
+   局域网往返 10 ms 才显不出来。攒下来整批发、服务端按序回放,轨迹形状就保住了。上限 MOVE_KEEP:超过就隔一个抽一个
+   (保形状不保密度,最后一个点必留),免得一次长拖攒出几百条撞上服务端一批 200 条的上限。 */
+const q=[]; let flushing=false,moveTimer=null,pendingMoves=[]; const MOVE_KEEP=60;
+const takeMoves=()=>{ if(pendingMoves.length){ q.push(...pendingMoves); pendingMoves=[] } };
+async function flush(){
+  if(flushing||!curId)return; takeMoves();
+  if(!q.length)return;
+  flushing=true; const batch=q.splice(0,q.length);
+  try{ await api('/api/browser/input','POST',{id:curId,events:batch}) }catch(e){ setSt('输入没送到:'+e.message,'bad') }
+  finally{ flushing=false; if(q.length||pendingMoves.length) flush() }
+}
+const push=(ev)=>{ q.push(ev); flush() };
+function map(e){ const r=img.getBoundingClientRect(); if(!meta.w||!r.width)return null; return { x:Math.round(Math.min(meta.w,Math.max(0,(e.clientX-r.left)/r.width*meta.w))*10)/10, y:Math.round(Math.min(meta.h,Math.max(0,(e.clientY-r.top)/r.height*meta.h))*10)/10 } }
+/* ── 缩放 / 移动:bot 那边多半是 1280 宽的桌面页,手机上一屏缩到 390 看不清 ⇒ 两指捏合缩放、两指拖动移动(一指仍归页面);
+   「移动」模式下一指拖动也是移动;桌面 ctrl+滚轮(触控板捏合)缩放;右上角 − / + / 百分比(点百分比还原)。
+   只动 CSS transform(transform-origin 左上);map() 读的是 getBoundingClientRect = 变换后的矩形,坐标换算不用改 ── */
+const zoomBox=$('#zoom'),zoomLabel=$('#zoomv');
+function applyView(){
+  if(zoom<=1){ zoom=1; tx=0; ty=0 }
+  const sw=stage.clientWidth,sh=stage.clientHeight,w=img.clientWidth*zoom,h=img.clientHeight*zoom;
+  tx=Math.min(0,Math.max(Math.min(0,sw-w),tx)); ty=Math.min(0,Math.max(Math.min(0,sh-h),ty)); // 夹住:画面不能拖出视口;比视口矮就贴顶
+  img.style.transform=zoom===1?'':`translate(${tx}px,${ty}px) scale(${zoom})`;
+  zoomLabel.textContent=Math.round(zoom*100)+'%'; zoomBox.classList.toggle('on',zoom>1);
+  // 放大到一定程度就按新尺寸重开推流(按手机宽要的 780px 帧放大三倍就糊了);600ms 没再动才重开,画面不清空
+  // ⚠ 帧宽到了页面原宽就别再为「放大」重开:上一路要 1600 却只回来 1280(页面本身就 1280 宽)⇒ 再要更大也不会更清楚,只会多一次断流重连
+  //   (真机:桌面 ctrl+滚轮一步步放大,90 秒重开了 6 路);缩小(要更小的帧省流量)照旧
+  clearTimeout(rezoomTimer); rezoomTimer=setTimeout(()=>{ if(!curId||!streamW)return; const need=W(),capped=meta.w>0&&meta.w<streamW-2; if(need>streamW&&capped)return; if(Math.abs(need-streamW)/streamW>0.3) startStream(curId,{keepView:true}) },600);
+}
+function zoomAt(f,cx,cy){ const z=Math.min(5,Math.max(1,zoom*f)),k=z/zoom; tx=cx-(cx-tx)*k; ty=cy-(cy-ty)*k; zoom=z; applyView() } // 以 stage 内 (cx,cy) 为锚:锚点下的画面缩放前后不动
+zoomBox.addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b)return; const sw=stage.clientWidth/2,sh=stage.clientHeight/2; if(b.dataset.z==='in')zoomAt(1.5,sw,sh); else if(b.dataset.z==='out')zoomAt(1/1.5,sw,sh); else{ zoom=1; applyView() } });
+window.addEventListener('resize',()=>applyView());
+/* 模式:点按(一指 = 页面动作)· 滚动(一指上下 = 页面滚动)· 移动(一指 = 拖画面) */
+let mode='tap'; const MODES={tap:'点按',scroll:'滚动',pan:'移动'};
+const MODE_TITLES={tap:'点按:手指 / 鼠标动作原样传给页面(能拖滑块)。点一下换成「滚动」',scroll:'滚动:上下拖动变成页面滚动。点一下换成「移动」',pan:'移动:一指拖动放大后的画面、滚轮缩放。点一下换回「点按」'};
+$('#mode').onclick=()=>{ mode=mode==='tap'?'scroll':mode==='scroll'?'pan':'tap'; $('#mode').textContent=MODES[mode]; $('#mode').title=MODE_TITLES[mode]; $('#mode').classList.toggle('on',mode!=='tap') };
+/* 指针:ptrs 记着所有按着的手指。一指按下不立刻发 down —— 等 120ms 或手指动了才发:第二根手指在这窗口里落下就是捏合,页面不该收到一次点击 */
+const ptrs=new Map(); let down=false,drag=null,pend=null,gesture=null,pan=null,lastP=null;
+const commitDown=()=>{ if(!pend)return; const p=pend.p; clearTimeout(pend.timer); pend=null; down=true; lastP=p; push({t:'down',...p}) };
+stage.addEventListener('pointerdown',e=>{
+  if(e.target.closest('#zoom'))return;
+  if(!curId)return; e.preventDefault(); try{stage.setPointerCapture(e.pointerId)}catch{}
+  tip.classList.add('fade');
+  // 自愈:primary 指针按下 = 浏览器认为此刻没有别的触点(触摸序列的第一指 / 鼠标)⇒ 之前丢了 up / cancel 留下的幽灵指针一律清掉,否则手势态卡死、一指点什么都不发
+  if(e.isPrimary){ if(down&&lastP) push({t:'up',...lastP}); down=false; if(pend){clearTimeout(pend.timer);pend=null} drag=null; ptrs.clear(); gesture=null; pan=null } // 上一次的 down 没等到 up ⇒ 先把远端鼠标松开,不然页面那边一直按着
+  ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(ptrs.size===2){ // 进入两指手势:没发出去的 down 作废;已发出去的补一个 up(页面会看到一次轻点,少见)
+    if(pend){clearTimeout(pend.timer);pend=null}
+    if(down){ down=false; if(moveTimer){clearTimeout(moveTimer);moveTimer=null} pendingMoves=[]; if(lastP)push({t:'up',...lastP}) }
+    drag=null; pan=null;
+    const [a,b]=[...ptrs.values()]; gesture={d:Math.hypot(a.x-b.x,a.y-b.y),cx:(a.x+b.x)/2,cy:(a.y+b.y)/2,zoom,tx,ty}; return;
+  }
+  if(ptrs.size>2||gesture)return;
+  if(mode==='pan'){ pan={x:e.clientX,y:e.clientY,tx,ty}; return }
+  const p=map(e); if(!p)return;
+  if(mode==='scroll'){ drag={y:e.clientY,p}; return }
+  pend={p,x0:e.clientX,y0:e.clientY,timer:setTimeout(commitDown,120)};
+});
+stage.addEventListener('pointermove',e=>{
+  if(!curId)return;
+  if(ptrs.has(e.pointerId)) ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(gesture){
+    if(ptrs.size<2)return; const [a,b]=[...ptrs.values()]; const d=Math.hypot(a.x-b.x,a.y-b.y),cx=(a.x+b.x)/2,cy=(a.y+b.y)/2; const r=stage.getBoundingClientRect();
+    const z=Math.min(5,Math.max(1,gesture.zoom*d/gesture.d)),k=z/gesture.zoom; const ax=gesture.cx-r.left,ay=gesture.cy-r.top;
+    tx=ax-(ax-gesture.tx)*k+(cx-gesture.cx); ty=ay-(ay-gesture.ty)*k+(cy-gesture.cy); zoom=z; applyView(); return; // 缩放锚在起始中点 + 中点位移 = 移动
+  }
+  if(pan){ tx=pan.tx+(e.clientX-pan.x); ty=pan.ty+(e.clientY-pan.y); applyView(); return }
+  if(drag){ const r=img.getBoundingClientRect(); const dy=(drag.y-e.clientY)/r.height*meta.h; if(Math.abs(dy)>=4){ drag.y=e.clientY; push({t:'wheel',...drag.p,dy:Math.round(dy)}) } return }
+  if(pend){ if(Math.hypot(e.clientX-pend.x0,e.clientY-pend.y0)<6)return; commitDown() }
+  if(!down)return; const p=map(e); if(!p)return; lastP=p;
+  pendingMoves.push({t:'move',...p,down:true});
+  if(pendingMoves.length>MOVE_KEEP) pendingMoves=pendingMoves.filter((_,i,a)=>i%2===1||i===a.length-1); // 隔一个抽一个,最后一个点必留
+  if(!moveTimer) moveTimer=setTimeout(()=>{moveTimer=null;flush()},33); // 33ms ≈ 30 次/秒:拖滑块够顺,又不至于每次指针抖动都打一个请求
+});
+const endPtr=(e)=>{
+  ptrs.delete(e.pointerId);
+  if(gesture){ if(ptrs.size===0)gesture=null; return } // 手势里先松一指:等全松开才回到正常,剩下那指不算页面操作
+  if(pan){ if(ptrs.size===0)pan=null; return }
+  if(!curId)return;
+  if(drag){drag=null;return}
+  if(pend) commitDown(); // 轻点:down 还没发就松开了 ⇒ 先补 down 再 up
+  if(!down)return; down=false; const p=map(e); if(moveTimer){clearTimeout(moveTimer);moveTimer=null} takeMoves(); if(p) push({t:'up',...p}); else flush()
+};
+stage.addEventListener('pointerup',endPtr); stage.addEventListener('pointercancel',endPtr);
+stage.addEventListener('wheel',e=>{ if(!curId)return; e.preventDefault();
+  if(e.ctrlKey||mode==='pan'){ const r=stage.getBoundingClientRect(); zoomAt(e.deltaY<0?1.15:1/1.15,e.clientX-r.left,e.clientY-r.top); return } // 触控板捏合到浏览器 = ctrl+wheel
+  const p=map(e); if(!p)return; push({t:'wheel',...p,dx:Math.round(e.deltaX),dy:Math.round(e.deltaY)}) },{passive:false});
+/* 键盘 */
+const KEYS=new Set(['Enter','Backspace','Tab','Escape','Delete','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Home','End','PageUp','PageDown']);
+const sendText=()=>{ const s=txt.value; if(!s)return false; push({t:'text',text:s}); txt.value=''; return true };
+$('#send').onclick=()=>{ sendText(); txt.focus() };
+txt.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); sendText(); push({t:'key',key:'Enter'}) } });
+for(const b of document.querySelectorAll('.keys button')) b.onclick=()=>{ push({t:'key',key:b.dataset.key}); };
+document.addEventListener('keydown',e=>{
+  if(!curId||e.target===txt||e.target.tagName==='SELECT'||e.target.tagName==='INPUT')return;
+  if(KEYS.has(e.key)){ e.preventDefault(); push({t:'key',key:e.key,shift:e.shiftKey,ctrl:e.ctrlKey,alt:e.altKey,meta:e.metaKey}) }
+  else if(e.key.length===1&&!e.ctrlKey&&!e.metaKey){ e.preventDefault(); push({t:'text',text:e.key}) }
+});
+
+/* ── 接管链接(管理员)/ 结束接管(群成员) ── */
+const mask=$('#mask'),card=$('#card');
+const closeCard=()=>{mask.hidden=true};
+mask.addEventListener('click',e=>{ if(e.target===mask) closeCard() });
+$('#mklink').onclick=async()=>{
+  try{
+    const r=await api('/api/browser/link','POST',{});
+    card.innerHTML=`<h3>接管链接</h3><div class="lnk" id="lnk"></div><div class="hint2">发给需要登录的人。${r.minutes} 分钟内有效,<b>只能打开一次</b>;打开后在那边的页面上点、拖、输入,登录态会留在机器人的浏览器里。${r.reach==='public'?'':'<br>⚠ 这是局域网地址,出了局域网打不开(要给外面的人用,先在控制台设置里填公网地址)。'}</div><div class="row"><button id="cp" class="primary">复制</button><button id="cl">关闭</button></div>`;
+    $('#lnk').textContent=r.url; mask.hidden=false;
+    $('#cp').onclick=async()=>{ try{ await navigator.clipboard.writeText(r.url); $('#cp').textContent='已复制' }catch{ $('#cp').textContent='长按上面的地址复制' } };
+    $('#cl').onclick=closeCard;
+  }catch(e){ setSt(e.message,'bad') }
+};
+$('#end').onclick=async()=>{
+  try{ await api('/api/browser/end','POST',{}) }catch{}
+  stopStream(); panel({icon:'check',title:'已结束接管',text:'这条链接不能再用了。要再来一次,回群里让机器人重新发一条。'});
+};
+if(ADMIN||TAKEOVER) loadTargets();
+</script>
+</body>
+</html>

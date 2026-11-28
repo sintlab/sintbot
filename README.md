@@ -81,7 +81,7 @@ Choose a model for each project and keep durable context in shared project notes
 | **Commands** | Check status, switch models, stop work or start a fresh conversation from the group. See the [usage guide](https://sintbot.com/guide/usage/). |
 | **Permissions** | Set permissions per group: read-only, developer or full trust. Configure allowed tools, mask secrets in outgoing messages and choose how personal data is handled. |
 | **Scheduled tasks** | Cron, aliases such as `daily`, or plain “every day at 09:00”. A task can wake the agent, post a reminder or run a script, once or on a schedule. |
-| **Design** | Work from an existing project style, extract one from references or choose a style preset. Save it in `DESIGN.md`, and iterate through annotations on Feishu whiteboards. |
+| **Design** | Design pages and interfaces in the project itself, from a description or a reference image, and review the result in the chat. |
 | **Images** | Generate images, edit existing artwork, repaint a masked region or produce a transparent background. |
 | **Previews & browser** | Share interactive HTML prototypes with the team. When a browser task needs sign-in or verification, a group member takes over through a one-time link. |
 | **Console** | One local page for groups, projects, models, permissions, plugins, previews, running tasks, queues and live activity. Available in English or Chinese. |

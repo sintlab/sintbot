@@ -487,4 +487,3 @@ DEALINGS IN THE SOFTWARE.
 ## Not bundled
 
 - Runtime dependencies (`@larksuiteoapi/node-sdk`, `ws`) are installed by npm with their own license files; both are MIT.
-- The optional icon libraries used by the design tooling (Lucide, Tabler, Phosphor, Pixelarticons) are **not** shipped; they are installed separately on the machine that needs them. Icons that the tooling copies into *your* project carry a license comment naming their source.

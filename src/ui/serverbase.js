@@ -13,7 +13,7 @@ const path = require('node:path')
 const { StringDecoder } = require('node:string_decoder')
 const { applyNewGroupDefaults, loadConfig, migrateModelSettings, applyProxyEnv, deriveNoProxy, DEFAULTS, resolveSecret } = require('../config')
 const verify = require('../core/verify') // 凭据最近一次验证的记录:模型测试 / 平台预检写,概览读
-const projectsroot = require('../projectsroot') // 项目根目录围栏:目录浏览 / 保存绑定 / 风格提炼三处同一份判据
+const projectsroot = require('../projectsroot') // 项目根目录围栏:目录浏览 / 保存绑定同一份判据
 const { atomicWriteJSON } = require('../core/store')
 const { isChatLang, chatLang, defaultChatLang, pick } = require('../chatlang') // the language of the bot's own words in one conversation
 const { createLedger } = require('../core/ledger')
@@ -38,7 +38,6 @@ const codexAgent = require('../agent/codexcode') // codex --version 探针(概�
 const { globalPlugins, codexPlugins, projectPlugins, mcpReachability, claudePluginFacts } = require('../plugins')
 const { createBotIdentity } = require('../botidentity')
 const gitrepo = require('../gitrepo') // 群项目 ↔ git 远端关联(「仓库地址」:init + origin,幂等)+ ls-remote 连通性探测
-const design = require('../design') // 设计风格档:风格库(内置预设 + 自定义)与各群当前风格档的可视化卡片
 const preview = require('../preview') // 群预览服务:运行中的预览要在概览里看得见、能一键停(那个挂了一周的服务就是因为没人看得见)
 const { createIssues, summarize, fingerprint } = require('../core/issues') // 群内反馈本:同理 —— 只躺在文件里没人看,和消失没区别
 const leftover = require('../leftover') // 遗留进程:对话轮次结束后仍在跑的后台 shell —— 同一条道理,那条每 5 秒打线上接口的循环跑了 35 天就是因为没处看见
@@ -82,7 +81,7 @@ const { createBrowserRoutes } = require('./browserroutes') // /api/browser/* 的
 const PKG_VERSION = (() => { try { return 'v' + require('../../package.json').version } catch { return '' } })() // 顶栏版本徽章
 const isEnvRef = (v) => typeof v === 'string' && v.startsWith('env:')
 // 目录浏览—— 只在**项目根目录**之内一层层列。围栏判据(哪些根 / realpath 比较)全在
-// src/projectsroot.js,与保存绑定、风格提炼、doctor 同一份;这里只管列目录。
+// src/projectsroot.js,与保存绑定、doctor 同一份;这里只管列目录。
 // `roots` = 有效根目录数组(字符串也认,单测传单个根)。target 在某个根之内就列它,否则**夹回**:
 // 单根 ⇒ 根本身;多根 ⇒ 先出「选一个根」的列表(cwd 为空,rootList=true,前端据此不画新建行)。
 // 只列目录;点开头目录与 node_modules 不列(那些不是项目,只是噪音);符号链接不列(Dirent.isDirectory
@@ -738,12 +737,13 @@ function createUiServer({ configPath, identityDir = null, pluginHome = null, get
   const clCli = claudeCli || createClaudeCli() // likewise
   // Account sign-in from the model library (src/runnerlogin.js): the
   // executor's own login command, run on this Mac; a finished sign-in drops
-  // the cached "not signed in" so the card turns green on its next check.
+  // the cached "not signed in" so the card turns green on its next check, and
+  // what a check still running with the old sign-in brings back is not kept.
   const runnerLogin = require('../runnerlogin').createRunnerLogin({
     binOf: runner => runner === 'claude' ? (loadConfig(configPath).agent.bin || 'claude') : 'codex',
     env: () => { const cfg = loadConfig(configPath); applyProxyEnv(cfg); return process.env },
     onDone: runner => {
-      if (runner === 'claude') { claudeStatusCache = null; claudestatus.clearCache() } else { codexStatusCache = null; codexstatus.clearCache(); codexstatus.clearUsage() }
+      if (runner === 'claude') { claudeStatusCache = null; claudestatus.clearCache() } else { codexStatusCache = null; codexstatus.newSignIn() }
       probeCache = null
       audit.append({ kind: 'runner-login', runner, ok: true, ts: Date.now() })
     } })
@@ -884,16 +884,14 @@ function createUiServer({ configPath, identityDir = null, pluginHome = null, get
       // per-group spawn git 会把控制台拖垮,所以只读文件、不 spawn。
       .map(([chatId, g]) => ({ chatId, name: g.name || '', workdir: g.workdir || '', repo: g.repo || '', platform: chatPlatformOf(raw, chatId) /* 群属于哪个平台:配置写了就认,没写按 id 形态 / 唯一平台推断(与 config.normalizeGroupPlatforms 同口径) */, repoState: gitrepo.quickLinkState(g.workdir, g.repo), board: g.board && g.board.url ? { url: g.board.url, createdAt: g.board.createdAt || null } : null, provider: g.provider || '', effectiveProvider: (control && control.providerOf && control.providerOf(chatId)) || g.provider || raw.defaultProvider || cfg.defaultProvider, codexSteer: followupEnabled(g, 'codex'), steer: g.steer ?? null, followupEnabled: followupEnabled(g, cfg.providers[(control && control.providerOf && control.providerOf(chatId)) || g.provider || cfg.defaultProvider]?.runner || 'claude'), model: g.model || '', allowedTools: g.allowedTools || [], disallowedTools: g.disallowedTools || [], permissionMode: g.permissionMode || '', paused: g.paused === true, plugins: g.plugins || null, plug: (() => { try { const plan = pluginPlanOf(g); return { managed: plan.managed, off: plan.off.length } } catch { return null } })() /* 群卡摘要:存没存过勾选、停用了几个(核心的计划) */,
         // 项目级插件/技能(workdir 自带声明,随项目恒加载)—— 群卡摘要行不点开也看得见。
-        // projectPlugins 纯 fs 读且各错各兜(readJson/scanSkills 都 catch),与同行的 projectStyleCard 同量级。
+        // projectPlugins 纯 fs 读且各错各兜(readJson/scanSkills 都 catch)。
         // ⚠ workdir 必须先判空:空串会让 path.join 退化成 daemon cwd 相对读(实验证实能读到别的项目的
         // .mcp.json)—— 无 workdir 的群就是没有项目声明,不能拿 cwd 凑。
         proj: (() => { if (!g.workdir) return { mcp: [], skills: [] }; try { const pp = projectPlugins(g.workdir); return { mcp: pp.mcp.map((m) => m.name), skills: pp.skills.map((s) => s.name) } } catch { return { mcp: [], skills: [] } } })(),
         redactPii: g.redactPii !== false, // false = 数据明文群;true = 默认遮盖
         lang: chatLang(g, chatPlatformOf(raw, chatId)), // 'zh' | 'en': the effective language of the bot's own notices and command replies in this conversation (set, or the platform's default)
-        preview: g.preview || null, styles: design.projectStyleCards(g.workdir),
-        // 图标那一行:与「设计风格」平级的第二个选择(2026-08-25)。用哪套图标系统是**项目**的
-        // 事、住在 design/icons.md ——「换风格就换图标」是要拆掉的那个绑定。
-        icons: g.workdir ? design.projectIconCard(g.workdir) : null, crons: (Array.isArray(g.crons) ? g.crons : []).map((c) => ({ ...c, human: describeTask(c, nowTzStr), expired: cronExpired(c.at) })), exists: g.workdir ? fs.existsSync(g.workdir) : false }))
+        preview: g.preview || null,
+        crons: (Array.isArray(g.crons) ? g.crons : []).map((c) => ({ ...c, human: describeTask(c, nowTzStr), expired: cronExpired(c.at) })), exists: g.workdir ? fs.existsSync(g.workdir) : false }))
     // Console overview health — deliberately minimal: backend CLI 探针 + "有无可用模型/群"。
     // Codex CLI 行仅在配了 codex provider 时出现(与 doctor 一致);`sbot doctor` 保留全量。
     const hasClaude = providers.some((p) => !p.hidden && p.runner !== 'codex')
@@ -1007,10 +1005,6 @@ function createUiServer({ configPath, identityDir = null, pluginHome = null, get
         return { projectsRoots: pr.roots, projectsRootsInfo: { roots: pr.roots.map((r) => ({ root: r, exists: fs.existsSync(r) })), fromConfig: pr.fromConfig, dropped: pr.dropped, configured, outside } }
       })(),
 
-      // 图标系统的可选项(两条,约 120 字节)。⚠ 随心跳下发而不是让前端另拉一次:群卡上那个
-      // 下拉要在**每次重画群卡时**就绪,单独拉会有「先画出来只剩『未选』、拉回来才补上」的空窗,
-      // 而那种空窗看起来和「这个项目没选」一模一样(与图标包没装要如实标是同一条理由)。
-      iconSystems: design.iconSystemList(),
       feishu,
       wecom,
       slack,
@@ -1140,7 +1134,7 @@ function createUiServer({ configPath, identityDir = null, pluginHome = null, get
 
   // ── request handling ──────────────────────────────────────────────────────
   const sendJSON = (res, code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(obj)) }
-  // 按 UTF-8 流式解码:逐块转字符串会把跨两次读取的多字节字符拆成 U+FFFD(群消息 / 项目名 / 风格档里的中文被静默写坏)
+  // 按 UTF-8 流式解码:逐块转字符串会把跨两次读取的多字节字符拆成 U+FFFD(群消息 / 项目名里的中文被静默写坏)
   const body = (req) => new Promise((resolve) => { const dec = new StringDecoder('utf8'); let b = ''; req.on('data', (c) => { b += dec.write(c); if (b.length > 1e6) req.destroy() }); req.on('end', () => { b += dec.end(); try { resolve(b ? JSON.parse(b) : {}) } catch { resolve({}) } }) })
 
   // 安装命令执行(操作台专用,等价一个开放终端):白名单 env(剔 provider 密钥,npx postinstall
@@ -2868,204 +2862,6 @@ function createUiServer({ configPath, identityDir = null, pluginHome = null, get
       }
       // Plugin discovery: the machine's global library, plus — when
       // chatId is given — that group's project-level plugins and enablement state.
-      // 风格库(只读):内置预设(assets/design-styles/,数量随版本增删)+ ~/.sbot/design-styles 自定义。每项带 layout 图元表,前端直接
-      // 画成 SVG。不进 /api/state —— 它是自动刷新定时拉的,而风格库只在切到「群·项目」页时要,
-      // 没必要让每次心跳都背着 8 份图元。坏掉的单个预设跳过即可,不让整个库列不出来。
-      if (p === '/api/design/styles' && req.method === 'GET') {
-        const out = []
-        for (const s of design.allStyles()) {
-          try { out.push(design.styleCard(fs.readFileSync(s.path, 'utf8'), { slug: s.slug, source: s.source, name: s.name, description: s.description, suits: s.suits })) } catch { /* 单个预设读不动就跳过 */ }
-        }
-        // 不回传预设目录的绝对路径:控制台不展示内部实现路径(前端也不再有地方用),
-        // 少一份就少一处泄漏面 —— 新建与收录都在这一页上做,operator 用不着知道它们存在哪儿。
-        // ⚠ 也不回传字体说明(2026-09-02 产品决定:表单里连那行只读说明都不要)——
-        // 字体恒定用 SANS_STACK 那一套,新建风格时不需要知道,更没有可选项;
-        // 留个没人消费的字段只会变成下一次「两处各写一份」的种子。
-        return sendJSON(res, 200, { styles: out })
-      }
-      // ── 图标库(只读,2026-08-25)───────────────────────────────────────────────
-      // ⭐ **与设计风格库平级**:一个项目分别选「用哪套风格」和「用哪套图标」,而不是把图标
-      //   绑在风格上(换风格就换图标是错的)。这张表在代码里预先整理好,**不开放自定义**。
-      // 每套带 8 个真实图标做样张 —— 挑哪套是「认不认得出、好不好看」的判断,**断言判不了,
-      // 必须按真实尺寸渲染出来看**;而这 8 个正是实测两套库几何全不同的那几个。
-      // ⚠ 图标包不随 sbot 分发(四套合计约 160MB) ⇒ 没装如实标 installed:false(空白会被读成「这套是空的」)。
-      if (p === '/api/design/icons' && req.method === 'GET') {
-        return sendJSON(res, 200, { systems: design.iconSystemPreviews() })
-      }
-      // 给某个群项目选一套图标系统 ⇒ **落进那个项目的 design/icons.md**(不写群配置)。
-      // ⚠ 落点必须在项目里:`sbot design icon` 是 agent 在项目目录里跑的,够不着群配置;
-      //   而项目 clone 到别处时,写在群配置里的选择会整个丢掉。控制台是入口,项目档是落点
-      //   (与「设计风格」那一行同款做法)。
-      if (p === '/api/design/icons' && req.method === 'POST') {
-        const { chatId, system, style, force } = await body(req)
-        const g = (readRaw().groups || {})[chatId]
-        if (!g || !g.workdir) return sendJSON(res, 400, { error: '这个群还没绑定项目目录' })
-        if (!fs.existsSync(g.workdir)) return sendJSON(res, 400, { error: '项目目录不存在:' + g.workdir })
-        const cur = design.findIconsDoc({ cwd: g.workdir })
-        // 换系统 = 换掉整套命名词汇,而**页面上已经取过的图标不会自动跟着变**(教训 10:
-        // 做了 A 别让人以为做了 B)⇒ 换之前必须让人明确知道这件事。
-        if (cur && cur.system !== system && !force) {
-          return sendJSON(res, 409, {
-            error: 'confirm',
-            current: cur.system,
-            note: `这个项目现在用的是「${cur.system}」。换成「${system}」会换掉整套命名词汇`
-              + `(同一个「更多」:${design.resolveIconName('more', design.ICON_SYSTEMS[cur.system] || {})} → ${design.resolveIconName('more', design.ICON_SYSTEMS[system] || {})}),`
-              + '页面上已经取过的图标不会自动跟着变 —— 换完要把用到图标的页面重新取一遍。',
-          })
-        }
-        // ⚠ 已有档只改 front matter,正文逐字节保留(同 CLI:人往这份档里写的项目细则不许被冲掉)
-        let text
-        // 线性/实心。⚠ **「没传」与「传了空」是两回事**:没传 = 这次不动它,
-        //   得把当前值原样传回(withIconsDocFront 里空值 = 删键)—— 否则前端「只换系统」
-        //   那一次请求会把人家声明过的实心静默抹成线性;传空串 = 明确清掉,回默认线性。
-        const carried = style === undefined ? (cur && cur.style) || '' : String(style || '')
-        // ⚠ 换到一套供不起当前形态的系统时(Tabler 实心 → Lucide),**丢掉形态而不是报错**:
-        //   这一步用户想做的是换系统,拿「Lucide 没有实心」把整个操作挡下来只会让人卡在这儿;
-        //   而带着它写盘又会落出一份自相矛盾的档。丢掉,并在回执里说一声(不声不响地丢
-        //   就成了「做了 A 让人以为做了 B」)。
-        const sysDef = design.ICON_SYSTEMS[String(system || '').toLowerCase()]
-        const styleDropped = !!(carried && sysDef && !(sysDef.styles || []).includes(carried))
-        // ⭐ 形态要改到**真正说得上话的那份档**去。优先级是 风格档 > 图标档 ⇒
-        //   风格档一旦声明了形态,只写图标档就是白写。真机实证:测试群的两份风格档都写着 filled,
-        //   群卡那个控件因此被压成灰的 —— 「加了个控件但它不管用」比没加更糟。
-        // ⚠ 多份档各说各话时**不替人统一**:点名让人去各自那份里改(小程序用实心、后台用线性
-        //   本来就是正当的,替他抹平等于毁掉别人的设计决定)。
-        let styleTargets = []
-        if (style !== undefined && !styleDropped) {
-          const declared = []
-          for (const d of design.findStyleDocs({ cwd: g.workdir })) {
-            let t = null
-            try { t = fs.readFileSync(d.abs, 'utf8') } catch { continue }
-            const tk = design.parseStyleTokens(t)
-            const st = tk && tk.icons && tk.icons.style
-            if (st) declared.push({ ...d, text: t, style: String(st).toLowerCase() })
-          }
-          if (declared.length) {
-            const forms = [...new Set(declared.map((x) => x.style))]
-            if (forms.length > 1) {
-              return sendJSON(res, 400, {
-                error: '这个项目的几份风格档形态各不相同(' + declared.map((x) => x.name + ' → ' + (x.style === 'filled' ? '实心' : '线性')).join(' · ')
-                  + ')—— 要改请到各自那份档里改,这里不替你统一',
-              })
-            }
-            for (const d of declared) {
-              const next = design.withIconsStyleInStyleDoc(d.text, carried)
-              if (next == null || next === d.text) continue
-              const t2 = d.abs + '.' + process.pid + '.tmp'
-              try { fs.writeFileSync(t2, next); fs.renameSync(t2, d.abs) }
-              catch (e) { try { fs.unlinkSync(t2) } catch { /* 没写出来 */ }
-                return sendJSON(res, 500, { error: '写入风格档失败:' + ((e && e.message) || e) }) }
-              styleTargets.push(d.name)
-            }
-          }
-        }
-        const opts = { system, style: styleDropped ? '' : carried, assets: cur ? cur.assets.join(' , ') : '', fallback: cur && cur.fallbackLibrary === null ? 'none' : '' }
-        try { text = design.iconsDocText(cur && cur.text, opts) }
-        catch (e) { return sendJSON(res, 400, { error: (e && e.message) || '写入失败' }) }
-        const abs = path.join(g.workdir, design.ICONS_DOC_REL)
-        const tmp = abs + '.' + process.pid + '.tmp'
-        try {
-          fs.mkdirSync(path.dirname(abs), { recursive: true })
-          fs.writeFileSync(tmp, text)
-          fs.renameSync(tmp, abs) // 原子写:半截档会被认帧挡下,连带图标口径整个消失
-        } catch (e) {
-          try { fs.unlinkSync(tmp) } catch { /* 没写出来 */ } // 不清的话项目 design/ 里会留一个 .tmp
-          return sendJSON(res, 500, { error: '写入图标档失败:' + ((e && e.message) || e) })
-        }
-        log(`design icons: ${chatId} → ${system}${opts.style ? ' · ' + opts.style : ''}${styleTargets.length ? ' · 风格档 ' + styleTargets.join('/') : ''}`)
-        return sendJSON(res, 200, { ok: true, styleDropped, styleTargets, icons: design.projectIconCard(g.workdir), styles: design.projectStyleCards(g.workdir) })
-      }
-      // ── 自定义风格:表单 → 标准风格档 ────────────────────────────────
-      // 实时预览:表单值 → 编译成档 → styleCard。**不落盘、不报错** —— 半填的表单也要出图
-      // (边填边看才是这张表单存在的理由)。布局仍在服务端算,前端只把 rects 画成 SVG:
-      // 与群里那张 PNG 永远同一份几何,不给「两端各画各的」留缝。
-      // ⚠ 这两条都把 form **整个**交给 design.js,**不要**在这里挑字段:表单会长出新项
-      //   (补充色 extraColors、字距/描边/间距那组 extraTokens 就是这么加的),白名单一旦
-      //   写在这层,新字段就会静默丢在半路,而校验与归一的唯一权威在 design.js。
-      if (p === '/api/design/preview' && req.method === 'POST') {
-        const { form } = await body(req)
-        try { return sendJSON(res, 200, { card: design.styleCard(design.composeStyleDoc(form)) }) }
-        catch (e) { return sendJSON(res, 400, { error: (e && e.message) || '预览失败' }) }
-      }
-      // 保存:严格校验 → 编译 → 原子落盘。同 slug 已有自定义 ⇒ 409(前端提示勾「覆盖同名」);
-      // 与内置同名不是错误,但要如实回 shadowed,让人知道自己遮住了哪一套。
-      if (p === '/api/design/styles' && req.method === 'POST') {
-        const { form, slug, overwrite, keepProse } = await body(req)
-        try {
-          const f = design.validateStyleForm(form)
-          const s = design.validateStyleSlug(slug)
-          let doc = design.composeStyleDoc(f)
-          // 「修改」默认保留原正文:表单只管 tokens,正文里的 Do's/Don'ts 与具体参照
-          // 是人在群里一轮轮磨出来的 —— 换个强调色就把它冲掉,是这个功能最容易造成的损失。
-          // 勾了「按新设定重写正文」才走整份重生成(那时 keepProse 为假)。
-          // ⚠ 与正文分开的一件事:**表单管不到的 front matter 段(如 icons)一律原样带过去**,
-          // 不受「重写正文」那个勾影响 —— 图标声明不是正文,改个强调色就把它冲掉是静默的损失
-          // (v0.11.33 审出来的:往返后 icons 段整段消失,而页面上没有任何提示)。
-          const cur0 = design.allStyles().find((x) => x.slug === s && x.source === 'user')
-          if (cur0) {
-            try {
-              const old = fs.readFileSync(cur0.path, 'utf8')
-              if (keepProse) doc = design.withStyleProse(doc, old)
-              doc = design.withKeptSections(doc, old)
-            } catch { /* 读不动就用新骨架,不阻断保存 */ }
-          }
-          const r = design.saveUserStyle(s, doc, { overwrite: !!overwrite })
-          return sendJSON(res, 200, { ok: true, slug: s, name: f.name, replaced: r.replaced, shadowed: r.shadowed })
-        } catch (e) { return sendJSON(res, e && e.code === 'CONFLICT' ? 409 : 400, { error: (e && e.message) || '保存失败' }) }
-      }
-      // 删除只碰用户目录 —— 内置的删不掉;删掉一个遮蔽内置的同名 slug ⇒ 那一套回归内置。
-      if (p === '/api/design/styles' && req.method === 'DELETE') {
-        const b = await body(req)
-        try { return sendJSON(res, 200, { ok: true, ...design.deleteUserStyle(b.slug || url.searchParams.get('slug')) }) }
-        catch (e) { return sendJSON(res, 400, { error: (e && e.message) || '删除失败' }) }
-      }
-      // 从参考提炼(确定性提取器,不过模型):网址 ⇒ 抓 HTML + 同源样式表;绝对路径 ⇒ 扫本机目录。
-      // 回的是**候选 + 证据**,不是结论 —— 用户看得见它凭什么这么猜,才知道该改哪一项。
-      //
-      // 两侧的围栏口径**故意不同**:
-      //   网址侧 = 「服务器替我去取」的口子 ⇒ 只接公网地址,本机/内网/云元数据段一律拒。
-      //     这里先挡一次(读代码的人在端点上就看得见围栏);跟跳时**每一跳**的重校验在 design
-      //     那侧 —— 跟跳发生在那儿,只查首跳等于没查(公网 301 到 127.0.0.1 是最省事的一招)。
-      //   目录侧 = 与目录浏览、保存绑定**同一道**项目根目录围栏(src/projectsroot.js)。2026-09-08 之前这里
-      //     敞开着(「他本来就能开终端」)—— 但控制台已开到公网、名单可能不止 operator 一人,而且围栏
-      //     写在三处必然漂:一处收紧另两处还敞着,等于没围。
-      if (p === '/api/design/extract' && req.method === 'POST') {
-        const { ref } = await body(req)
-        const s = String(ref == null ? '' : ref).trim()
-        if (!s) return sendJSON(res, 400, { error: '先填一个参考:网址,或本机上项目所在目录的绝对路径' })
-        try {
-          if (/^https?:\/\//i.test(s)) { design.assertPublicUrl(s); return sendJSON(res, 200, await design.extractFromUrl(s)) }
-          if (path.isAbsolute(s)) {
-            const info = projectsroot.resolveProjectsRoots(readRaw())
-            if (!projectsroot.withinRoots(s, info.roots)) return sendJSON(res, 400, { error: `本机目录须在项目根目录下(${projectsroot.describeRoots(info.roots)}):${s}` })
-            return sendJSON(res, 200, design.extractFromDir(s))
-          }
-          return sendJSON(res, 400, { error: '认不出这个参考 —— 网址要以 http:// 或 https:// 开头,本机目录要写绝对路径' })
-        } catch (e) { return sendJSON(res, 400, { error: (e && e.message) || '提炼失败' }) }
-      }
-      // 收录:把某个群项目里打磨好的那份风格档复制进全局库(原文照抄,只允许改 name)。
-      // 认帧仍走 findStyleDoc + isStyleDoc —— 项目根的 DESIGN.md 很可能是架构文档,不能当风格档收。
-      if (p === '/api/design/collect' && req.method === 'POST') {
-        const { chatId, slug, name, overwrite, rel } = await body(req)
-        const raw = readRaw()
-        const g = raw.groups && raw.groups[chatId]
-        if (!g || !g.workdir) return sendJSON(res, 404, { error: '这个群还没绑定项目目录' })
-        // 一个项目可能有多份风格档(小程序一份、后台一份…)⇒ 必须说清收哪一份。
-        // rel 缺省时收列表第一份(通用档),与 pickStyleDoc 同一套匹配 —— 各写一份必漂移。
-        const docs = design.findStyleDocs({ cwd: g.workdir })
-        if (!docs.length) return sendJSON(res, 404, { error: '这个项目里还没有风格档,没有可收录的内容' })
-        const pick = design.pickStyleDoc(docs, rel || '')
-        if (!pick) return sendJSON(res, 404, { error: '这个项目里没有这一份风格档' })
-        const abs = pick.abs
-        try {
-          let text = fs.readFileSync(abs, 'utf8')
-          if (!design.isStyleDoc(text)) return sendJSON(res, 400, { error: '这个项目里的那份不是风格档,没有收录' })
-          if (name && String(name).trim()) text = design.withStyleName(text, name)
-          const s = design.validateStyleSlug(slug)
-          const r = design.saveUserStyle(s, text, { overwrite: !!overwrite })
-          return sendJSON(res, 200, { ok: true, slug: s, replaced: r.replaced, shadowed: r.shadowed })
-        } catch (e) { return sendJSON(res, e && e.code === 'CONFLICT' ? 409 : 400, { error: (e && e.message) || '收录失败' }) }
-      }
       // Read-only probe; sbot never installs plugins, it only gates them per group.
       if (p === '/api/plugins' && req.method === 'GET') {
         const chatId = url.searchParams.get('chatId')
@@ -3268,7 +3064,13 @@ function createUiServer({ configPath, identityDir = null, pluginHome = null, get
         const cfg = loadConfig(configPath)
         if (force) claudestatus.clearCache()
         else if (claudeStatusCache && Date.now() - claudeStatusCache.at < 60_000) return sendJSON(res, 200, claudeStatusCache.login)
-        const login = await claudestatus.cachedLoginStatus(cfg.agent.bin)
+        // A sign-in finished while this was asking: its answer may be from before, so it is
+        // asked again (the page shows whatever comes back) and kept only when nothing changed.
+        let gen = claudestatus.cacheGeneration()
+        let login = await claudestatus.cachedLoginStatus(cfg.agent.bin)
+        for (let again = 0; again < 2 && gen !== claudestatus.cacheGeneration(); again++) {
+          gen = claudestatus.cacheGeneration(); login = await claudestatus.cachedLoginStatus(cfg.agent.bin)
+        }
         // 订阅额度(v0.11.3,cc-hud 同源通道):已登录才拉。拿不到(网络/门禁/凭据过期)⇒ null,
         // 前端不显示额度行,不拖垮登录检测本身。
         let usage = null
@@ -3277,7 +3079,7 @@ function createUiServer({ configPath, identityDir = null, pluginHome = null, get
         }
         // 订阅卡 = 无 baseUrl、无 key 的直连形态;环境里的 ANTHROPIC_API_KEY 对它是合法鉴权,核心据此不报。
         const envWarnings = envWarningsFor('claude', { baseUrl: null, hasApiKey: false })
-        claudeStatusCache = { at: Date.now(), login: { ...login, usage, envWarnings } }
+        if (gen === claudestatus.cacheGeneration()) claudeStatusCache = { at: Date.now(), login: { ...login, usage, envWarnings } }
         return sendJSON(res, 200, { ...login, usage, envWarnings })
       }
       // Claude 模型下拉的候选。**未登录不给任何型号**(产品决定:没登录就别列)。
@@ -3296,11 +3098,15 @@ function createUiServer({ configPath, identityDir = null, pluginHome = null, get
       }
       if (p === '/api/claude/models' && req.method === 'GET') {
         const cfg = loadConfig(configPath)
-        const login = await claudestatus.cachedLoginStatus(cfg.agent.bin)
+        let gen = claudestatus.cacheGeneration()
+        let login = await claudestatus.cachedLoginStatus(cfg.agent.bin)
+        for (let again = 0; again < 2 && gen !== claudestatus.cacheGeneration(); again++) {
+          gen = claudestatus.cacheGeneration(); login = await claudestatus.cachedLoginStatus(cfg.agent.bin)
+        }
         // ⚠ 回填这份缓存时必须**留住上一次拉到的 usage**:本条路不查额度,直接写 { at, login }
         // 会把 usage 字段洗掉,而 /api/claude/verify 的 60s 去抖随后会把这份缺 usage 的缓存原样
         // 吐回去 —— 表现就是卡片上的额度行凭空消失,而登录态一切正常,没人查得出为什么。
-        if (login && login.ok) {
+        if (login && login.ok && gen === claudestatus.cacheGeneration()) {
           const prev = (claudeStatusCache && claudeStatusCache.login) || {}
           const keep = prev.usage
           claudeStatusCache = { at: Date.now(), login: { ...login, ...(keep ? { usage: keep } : {}), ...(prev.envWarnings ? { envWarnings: prev.envWarnings } : {}) } }
@@ -3317,7 +3123,13 @@ function createUiServer({ configPath, identityDir = null, pluginHome = null, get
         // 前者只读本地文件,令牌被吊销后照样「已登录」,卡片一直绿着。现在服务端明确拒绝 ⇒ dead:true、loggedIn:false;
         // 探不到(超时)⇒ verified:false,保留上一份额度、文案「未验证」,不当成未登录。
         if (force) codexstatus.clearCache()
-        const probe = await codexstatus.cachedAuthProbe('codex')
+        // A sign-in finished while this was asking: the answer may be the previous account's,
+        // so it is asked again; the page shows whatever this returns.
+        let signIn = codexstatus.signInGeneration()
+        let probe = await codexstatus.cachedAuthProbe('codex')
+        for (let again = 0; again < 2 && signIn !== codexstatus.signInGeneration(); again++) {
+          signIn = codexstatus.signInGeneration(); probe = await codexstatus.cachedAuthProbe('codex')
+        }
         const file = codexstatus.readAuthFile()
         const d = codexstatus.describeLogin(probe, file)
         // B5:每张 codex 卡各算一份(baseUrl / key 不同,核心的判据不同);OPENAI_* / config.toml 的 model_provider,只有键名
@@ -3326,10 +3138,12 @@ function createUiServer({ configPath, identityDir = null, pluginHome = null, get
         const login = { ok: true, verified: !!probe.verified, loggedIn: !!(probe.ok || (!probe.verified && file.exists && !file.expired)), dead: !!probe.dead, mode: file.mode || 'chatgpt', level: d.level, text: d.text }
         // An ask that reaches nothing keeps the last limits the service gave
         // (the card says the sign-in is unverified). They keep the time they
-        // were read, in codexstatus: nothing here dates them again.
-        const last = probe.dead ? null : codexstatus.lastUsage('codex')
+        // were read, in codexstatus: nothing here dates them again. An answer
+        // the service accepted without limits shows none: the card has no way
+        // to mark older numbers as old (the overview does).
+        const last = probe.dead || (probe.verified && probe.ok) ? null : codexstatus.lastUsage('codex')
         const usage = probe.usage || (last && last.usage) || null
-        codexStatusCache = { login, usage, envWarningsByProvider } // cached into /api/state so the card survives a page reload
+        if (signIn === codexstatus.signInGeneration()) codexStatusCache = { login, usage, envWarningsByProvider } // cached into /api/state so the card survives a page reload
         return sendJSON(res, 200, { login, usage, envWarningsByProvider })
       }
       if (p === '/api/playground/run' && req.method === 'POST') {

@@ -176,7 +176,7 @@ function normalizeConfig(raw, p = null, { registerSecrets = true } = {}) {
   // 注释里「配置里的 design.iconsDir 优先(operator 可以指到别处)」是一句假话。
   // **新增顶层配置项时,连同这里和 tests/unit/config.test.js 的透传用例一起加。**
   if (user.instance) cfg.instance = String(user.instance)   // 这台机器在反馈本里怎么自称(跨机汇总用)
-  if (user.design) cfg.design = { ...user.design }          // design.iconsDir:图标库另指目录
+  // 旧配置里的 design(图标库目录)不再读:风格库和图标库 11-28 删除,写着也不报错。
   if (user.browser) cfg.browser = { ...user.browser }       // browser.cdpUrl / takeoverMinutes:常驻浏览器地址与接管链接有效期(docs/BROWSER.md)
   if (user.alerts) cfg.alerts = { ...user.alerts }          // alerts.chatId:运维告警群 —— 模型账号异常 / 额度用完 / 自动切换发到这里(src/core/opsalert.js)
   // 产品在群成员面前叫什么(自知清单的自我认知 + 升级播报)。不写 = SintBot。

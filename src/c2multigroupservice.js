@@ -580,6 +580,10 @@ function createC2MultiGroupService({ routes, assertWriterLock,
       binding = bindings.get(event.chatId)
       if (!started || stopPromise || !binding) return { ignored: true, reason: 'ingress-closed' }
       if (effectInFlight(binding.runtime)) {
+        // Noted at once, applied once the effect settles: meanwhile the
+        // engine neither admits the recalled message nor hands it to the
+        // running task.
+        if (waitedMs === 0) binding.engine.noteRecall?.(event)
         if (waitedMs >= RECALL_WAIT_MS) {
           log(`group ${event.chatId}: recall not applied; an outbound effect stayed in flight`)
           return { ignored: true, reason: 'recall-effect-in-flight' }

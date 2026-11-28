@@ -421,9 +421,6 @@ p.hint{margin:0 0 8px}
 .chip.none{color:var(--faint);background:none}
 /* 两个 CLI 后端:中性标签,靠文字区分(第 1 期起不再靠颜色) */
 .cli-tag.codex,.cli-tag.claude{color:var(--sb-fg2)}
-/* 图标样张:尺寸由**外层格子**定,svg 撑满它 —— 同一份 svg 因此能在图标库(22px)与群卡(18px)
-   两处按各自尺寸画,服务端不必为两种尺寸各出一份。 */
-.iconstrip>span>svg{width:100%;height:100%;display:block}
 /* 分段控件(规范的档位,同官网场景档位):浅槽里一排档,选中的那档是槽里的一枚真键(细边、4px 圆角、短阴影)。色只上在**文字**上(完全访问 = 警示色),
    选中与否由滑块浮起表达 —— 没选中的危险档不染色,否则一眼看去像是已经开着了。
    独立出现时 36px;排在卡片的键值行里时 28px。 */
@@ -731,7 +728,7 @@ label.f{display:block;font-size:12px;line-height:18px;font-weight:500;color:var(
 h2.sec{display:flex;align-items:center;gap:8px;font-size:15px;line-height:22px;color:var(--ink);margin:20px 0 8px;font-weight:500}
 h4.sec{font-size:12px;line-height:18px;font-weight:500;color:var(--dim);margin:16px 0 8px;padding-top:12px;border-top:1px solid var(--line)}
 .modal h4.sec:first-of-type{border-top:0;padding-top:0;margin-top:0}
-/* 风格与图标库都是按需入口,在「模型」页保持低强调并默认折叠。 */
+/* 按需展开的折叠块(如模型弹窗的「高级」),保持低强调。 */
 .library-fold{margin-top:8px}
 .library-fold:first-of-type{margin-top:20px}
 .library-fold>summary{list-style:none;cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px;min-height:28px;color:var(--faint);font-size:13px;font-weight:500;transition:color var(--dur) var(--ease)}
@@ -926,33 +923,6 @@ h4.sec{font-size:12px;line-height:18px;font-weight:500;color:var(--dim);margin:1
 .ask-msg{white-space:pre-wrap;word-break:break-word;line-height:1.6;margin:0 0 18px}
 .ask-input{width:100%;margin:-6px 0 16px}
 .btn.primary.danger{background:var(--sb-key-signal);border-color:transparent;color:#fff}.btn.primary.danger:active{background:var(--sb-key-signal-down)}.btn.primary.danger:disabled{opacity:.45}
-/* ── 新建/编辑自定义风格(左表单 · 右实时预览)────────────────────────────────
-   预览必须**一直在视野里** —— 这张表单的每一项都对应预览图的一条通道,改哪儿图上立刻变哪儿
-   才是它区别于「填一份 YAML」的全部价值;所以右列 sticky,滚表单时图不走。 */
-.modal.wide{width:min(780px,94vw)}
-.nsgrid{display:grid;grid-template-columns:1fr 196px;gap:20px;align-items:start}
-.nsprev{position:sticky;top:64px}
-.nsprev .pvbox{border:1px solid var(--line);border-radius:var(--r);padding:8px;background:var(--inset-bg);display:flex;justify-content:center}
-@media(max-width:720px){.nsgrid{grid-template-columns:1fr}.nsprev{position:static}}
-/* 取色行:色块 + hex 双向。原生 input[type=color] 会吃掉全局 input 的 padding/width,单独收 */
-.nscolor{display:flex;align-items:center;gap:8px;margin-bottom:8px}
-.nscolor .lb{font-size:12px;color:var(--faint);width:34px;flex:none}
-.nscolor input[type=color]{width:36px;height:var(--h-md);flex:none;padding:2px;cursor:pointer}
-.nscolor input[type=text]{flex:1;min-width:0;text-transform:uppercase;font-family:var(--mono);font-size:12px}
-/* 多选场景:hover/选中都靠 --ink / --ember 这两个主题变量表达 —— 亮色下它们本身就是「更深」,
-   暗色下是「更亮」,不必也不该为两套主题各写一条。 */
-.nschips{display:flex;flex-wrap:wrap;gap:6px}
-.nschk{display:inline-flex;align-items:center;height:24px;font-size:12px;color:var(--faint);
-  padding:0 10px;border:1px solid var(--ctl-line);border-radius:999px;cursor:pointer;transition:var(--tr-ui);user-select:none}
-.nschk:hover{border-color:var(--muted);color:var(--ink)}
-.nschk.on{color:var(--ember);border-color:rgba(var(--ember-rgb),.45);background:rgba(var(--ember-rgb),.10)}
-.nschk input{display:none}
-.nsev{border:1px solid var(--line);border-radius:var(--r-ctl);background:var(--inset-bg);padding:8px 10px;margin-top:8px;font-size:12px;line-height:20px;color:var(--dim)}
-.nsev .sw{display:inline-block;width:11px;height:11px;border-radius:2px;box-shadow:inset 0 0 0 1px var(--line);vertical-align:-1px;margin-right:4px}
-/* 证据区里的补充色勾选:整块复用 .nschk —— 只把高度收紧一点,让色块与 hex 在一行里不显臃肿。 */
-.nsev .nschk{height:20px;padding:0 8px}
-.nsev .nschk .sw{margin-right:5px}
-button.btn.nsmini{height:20px;padding:0 8px;font-size:11px;vertical-align:1px}
 /* 绑群弹窗第二步的「已选」摘要行 + 手动填 ID 的入口链接 */
 .picked-row{display:flex;align-items:center;gap:10px;min-height:36px;padding:6px 10px;border:1px solid var(--line);border-radius:var(--r-ctl);background:var(--inset-bg);margin-bottom:12px;font-size:13px}
 .picked-row .pnm{font-weight:500;color:var(--ink);white-space:nowrap}
@@ -1223,7 +1193,7 @@ button.btn.nsmini{height:20px;padding:0 8px;font-size:11px;vertical-align:1px}
 .gsheet .kv>.vv.inline{flex-wrap:wrap;row-gap:4px}
 .gsheet .kv>div>.inline{flex-wrap:wrap}
 .gsheet .kv label.inline{gap:8px;cursor:pointer;color:var(--dim)}
-/* 富内容行(旧服务的仓库 / 风格 / 图标那几行):标签顶对齐 */
+/* 富内容行(旧服务的仓库那几行):标签顶对齐 */
 .gsheet .kv[style*="flex-start"]>.kk{padding-top:1px}
 .gsheet .kv[style*="flex-start"]:has(>div>.inline:first-child .btn,>div>.inline:first-child select)>.kk{padding-top:5px}
 .gsheet .kv[style*="flex-start"]:has(>div>.inline:first-child>input)>.kk{padding-top:7px}
@@ -1582,7 +1552,7 @@ button.btn.gi .ic{width:15px;height:15px;stroke-width:1.6}
 @media(prefers-reduced-motion:reduce){.cronrow .cdot,.cronrow .cdot::after{transition:none}}
 /* ── end groups ── */
 /* ── stage 4 · providers-settings ── (only the providers-settings task writes here) */
-/* 模型 · 库、设置页,以及从它们打开的弹窗(添加 / 配置模型、风格编辑)。只管怎么画;键上的字在模板里改。
+/* 模型 · 库、设置页,以及从它们打开的弹窗(添加 / 配置模型)。只管怎么画;键上的字在模板里改。
    设置页信息最密:板不铺颗粒(第 3 期已定 --sb-plate-plain),卡内只留结构性的刻线 —— 折叠头下一道、「高级」上一道、
    小节标题后一道;装饰性的外框和分隔(后台网络状态的框、保存键上面那道线、项目根目录说明上那道线、身份条的框)撤掉。
    模型卡保留颗粒:一屏两三张、每张五六行,不密。 */
@@ -1632,7 +1602,7 @@ button.btn.gi .ic{width:15px;height:15px;stroke-width:1.6}
 /* 插件库两张卡:输入框旁的 + 键与输入框等高 */
 #plugLib .inline:has(>input)>.btn.ic-only{width:var(--h-md);height:var(--h-md)}
 
-/* ── 弹窗(添加 / 配置模型、风格编辑) ── */
+/* ── 弹窗(添加 / 配置模型) ── */
 /* 小节标题:等宽小字 + 刻线(中文字距收到 +0.03em),和设置页的小节同一种 */
 #modal h4.sec,#settings .fx-sub{font:500 11px/16px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--sb-fg2)}
 :root[data-lang="zh"] :is(#modal h4.sec,#settings .fx-sub){letter-spacing:.03em}
@@ -1641,8 +1611,6 @@ button.btn.gi .ic{width:15px;height:15px;stroke-width:1.6}
 /* 登录状态框:沉下去的浅槽,不要描边 */
 #modal .statbox{border:0;background:var(--sb-well);box-shadow:var(--sb-sunk)}
 #modal .mfoot .btn.ghost{padding:0 12px}
-/* 风格编辑的色板:英文的色名放得下(原来 34px 只够两个汉字) */
-:root[data-lang="en"] #modal .nscolor .lb{width:76px}
 
 /* ── 设置 ── */
 /* 结构刻线:折叠头下、「高级」上、小节标题后,一深一亮 */
@@ -1831,7 +1799,7 @@ async function api(path,method='GET',bodyObj){
   const r=await fetch(path,o); const j=await r.json().catch(()=>({}));
   if(r.status===401){ if(TOKEN){dropToken();TOKEN='';} showLogin(); throw new Error('需要登录'); }
   // ⚠ 把状态码与整份响应体挂在 error 上:有些接口的「不 ok」是**要人确认一次**而不是失败
-  //   (如换图标系统的 409,body 里带着「换完会怎样」那段话)。只留 message 的话,
+  //   (如 409 时 body 里带着「换完会怎样」那段话)。只留 message 的话,
   //   调用方就只能再发一次请求去把那段话要回来 —— 而那正是刚写过又删掉的那段笨代码。
   if(!r.ok){const err=new Error(j.error||('HTTP '+r.status));err.status=r.status;err.payload=j;throw err;}
   return j;
@@ -2953,38 +2921,8 @@ function renderProviders(){
     <div class="grid cols2 stagger" id="pgrid">${cards||`<button type="button" class="add-tile" id="addModelTile"><span class="pl">${IC.plus}</span><b>添加模型</b><span>Claude 或 Codex 订阅，或填一个 API Key</span></button>`}</div>
     <h2 class="sec">插件库 · MCP</h2>
     <div class="hint lead">本机装好的 MCP · 按运行时分两套 · 命令行安装、即时刷新</div>
-    <div id="plugLib"><span class="spin"></span></div>
-    <details class="library-fold" id="styleLibFold"${styleLibFoldOpen?' open':''}>
-      <summary><span class="caret">${IC.chevronRight}</span><span>设计风格库</span><span class="hint" style="font-size:11px;font-weight:400">按需管理</span></summary>
-      <div class="library-fold-content">
-        <div class="inline" style="justify-content:space-between;gap:8px;margin-bottom:8px;flex-wrap:wrap">
-          <div class="hint">仅在全新产品且未定方向时按需使用预设</div>
-          <div class="inline" style="gap:6px"><button class="btn ghost ic-only" id="styleRescan" title="重新扫描风格预设(导入或改过自定义风格后用)" aria-label="重新扫描">${IC.refresh}</button><button class="btn ic-only" id="styleNew" title="用一张表单配一套自己的风格:色板、圆角、字重逐项定,右侧实时看效果。存进库后全部群都能用" aria-label="新建风格">${IC.plus}</button></div>
-        </div>
-        <div id="styleLib"><span class="spin"></span></div>
-      </div>
-    </details>
-    <details class="library-fold" id="iconLibFold"${iconLibFoldOpen?' open':''}>
-      <summary><span class="caret">${IC.chevronRight}</span><span>图标库</span><span class="hint" style="font-size:11px;font-weight:400">按需查看</span></summary>
-      <div class="library-fold-content">
-        <div class="hint lead">与设计风格<b>平级</b>:风格管怎么画(颜色/字体/圆角/描边),图标库管图形从哪来、叫什么名 · 一个项目分别选,在「群·项目」页那个群的「图标」行</div>
-        <div id="iconLib"><span class="spin"></span></div>
-      </div>
-    </details>`;
+    <div id="plugLib"><span class="spin"></span></div>`;
   mountPageActions('providers');
-  // 风格库按需展开再加载与绘制,默认折叠以降低存在感;页内重绘时保留用户刚才的展开状态。
-  const styleFold=$('#styleLibFold');
-  if(styleFold){
-    styleFold.addEventListener('toggle',()=>{styleLibFoldOpen=styleFold.open;if(styleFold.open)loadStyleLib();});
-    if(styleFold.open)loadStyleLib();
-  }
-  const iconFold=$('#iconLibFold');
-  if(iconFold){
-    iconFold.addEventListener('toggle',()=>{iconLibFoldOpen=iconFold.open;if(iconFold.open)loadIconLib();});
-    if(iconFold.open)loadIconLib();
-  }
-  $('#styleRescan').onclick=async()=>{styleLib=null;$('#styleLib').innerHTML='<span class="spin"></span>';await loadStyleLib();toast('风格库已重新扫描','ok');};
-  $('#styleNew').onclick=()=>openStyleModal(null);
   if($('#showAll'))$('#showAll').onclick=()=>{showAll=!showAll;renderProviders();};
   $('#addModel').onclick=()=>openProviderModal(null);
   const addModelTile=$('#addModelTile');if(addModelTile)addModelTile.onclick=()=>openProviderModal(null);   // 空状态的虚线卡
@@ -3384,648 +3322,6 @@ const PERM_PRESETS={
     allow:['Bash(*)','Read(*)','Edit(*)','Write(*)','Grep','Glob','WebSearch','WebFetch(*)','Skill(*)','TodoWrite'],
     deny:[]},
 };
-/* ── 风格图标 ────────────────────────────────────────────────────────────────
-   服务端(src/design.js swatchLayout)算好的图元表 → SVG。这里**只做 rect → <rect> 的机械映射**:
-   群里那张 PNG 走的是同一份 layout,一旦在这儿自己算坐标,两端就会各画各的 —— 而「控制台的图标
-   和群里发出去的不一样」这种不一致,用户根本不会当成 bug 报上来。
-   rx 要在这里 clamp:SVG 规范把 rx 收到 width/2、ry 收到 height/2 ⇒ 胶囊哨兵(9999)在宽扁的
-   按钮上会渲成椭圆,而光栅器给的是两端半圆。取 min(r, w/2, h/2) 才和 PNG 一致。 */
-let SWG=0; /* 渐变 id 计数:一页上会有十几张风格图,defs 的 id 重了后面那张会去用前面那张的渐变 */
-function swatchSvg(lay,w,style){
-  if(!lay||!lay.rects)return'';
-  const h=Math.round(w*lay.h/lay.w);
-  /* 渐变(v0.11.22):图元多带一个 grad 就画成线性渐变。角度公式与光栅那侧**同一个向量**
-     (CSS 口径:0deg 自下而上、90deg 自左向右)—— 各写一份就会出现「控制台朝右下、群里朝右上」。 */
-  let defs='';
-  const fillOf=r=>{
-    if(!r.grad)return esc(r.fill);
-    const id='swg'+(++SWG),a=(Number(r.grad.angle)||0)*Math.PI/180,dx=Math.sin(a),dy=-Math.cos(a);
-    defs+=`<linearGradient id="${id}" x1="${(.5-dx/2).toFixed(3)}" y1="${(.5-dy/2).toFixed(3)}" x2="${(.5+dx/2).toFixed(3)}" y2="${(.5+dy/2).toFixed(3)}">`
-      +`<stop offset="0" stop-color="${esc(r.fill)}"/><stop offset="1" stop-color="${esc(r.grad.to)}"/></linearGradient>`;
-    return `url(#${id})`;
-  };
-  const body=lay.rects.map(r=>{const rr=Math.min(r.r,r.w/2,r.h/2);const f=fillOf(r);
-    return `<rect x="${r.x.toFixed(2)}" y="${r.y.toFixed(2)}" width="${r.w.toFixed(2)}" height="${r.h.toFixed(2)}"${rr>0?` rx="${rr.toFixed(2)}"`:''} fill="${f}"/>`;}).join('');
-  return `<svg viewBox="0 0 ${lay.w} ${lay.h}" width="${w}" height="${h}" aria-hidden="true" style="display:block;flex:none;${style||''}">`
-    +(defs?`<defs>${defs}</defs>`:'')+body+'</svg>';
-}
-/* 群卡「图标」行那排缩略图。⚠ **异步填充**:群卡是同步渲染的,先留空位、拉回来再填 ——
-   把整块渲染卡在一个网络请求上,换来的是每次刷新群卡都要闪一下。
-   ⚠ 同一份 svg 在两处按不同尺寸画(库里 22px / 群卡 18px):尺寸由外层格子定,svg 撑满它。 */
-async function paintGroupIconStrips(){
-  const slots=$$('#gsheet [data-sysstrip]'); if(!slots.length)return;
-  const lib=await ensureIconLib();
-  const by={}; for(const s of ((lib&&lib.systems)||[]))by[s.system]=s;
-  for(const el of slots){
-    const s=by[el.dataset.sysstrip];
-    // 取不到就如实说,不留空排 —— 空排会被读成「这套系统没有图标」
-    if(!s||!s.icons||!s.icons.length){el.innerHTML='<span class="hint" style="font-size:11px">样张取不到</span>';continue;}
-    /* 按生效形态取样张。⚠ **「要实心但这套没有实心」必须当场说破**:那时真正取到的是线性
-       (iconStyleGap 说的就是这条),界面若跟着声明画一排线性还标着「实心」,就成了
-       「声明与事实不符」——本项目最贵的一类 bug,而且这行本来是用来看「现在长什么样」的。 */
-    const wantFilled=el.dataset.sysstyle==='filled';
-    const hasFilled=!!(s.filled&&s.filled.length);
-    const use=wantFilled&&hasFilled?s.filled:s.icons;
-    el.innerHTML=(wantFilled&&!hasFilled?'<span class="chip warn" style="flex:none" title="风格档/图标档声明的是实心,但这套系统没有实心目录 —— 实际取到的是下面这排线性图">这套没有实心</span>':'')
-      +use.map(i=>`<span title="${esc(i.sem+' → '+i.name)}" style="flex:none;width:18px;height:18px">${i.svg}</span>`).join('');
-  }
-  const box=$('#gsheet'); if(box)fitStrips(box);
-}
-/* 风格库(只读):内置预设 + ~/.sbot/design-styles 自定义。走独立 API 而不是塞进 /api/state ——
-   它只在「群·项目」页要用,没必要让 15s 自动刷新的每次心跳都背着 8 份图元表。拉到就缓存,
-   改了自定义预设点「重新扫描」再拉。 */
-/* 图标库(只读):代码里预先整理好的两套系统,**不开放自定义**(2026-08-25 拍板)。
-   ⭐ 与设计风格库**平级** —— 它回答的是「图形从哪来、叫什么名」,风格回答「怎么画它」;
-   一个项目分别选,换风格不该把图标一起换掉。
-   ⚠ 每套配 8 个**真实渲染**的图标做样张:挑哪套是「认不认得出」的判断,断言判不了,
-   必须按真实尺寸摆出来看(教训 31)。而这 8 个正是实测两库几何全不同的那几个 ——
-   把它们并排放,「换一套到底换了什么」一眼就有答案。
-   ⚠ 图标包不随产品分发(四套合计约 160MB) ⇒ 没装的如实标「未安装」,不留空白(空白会被读成「这套是空的」)。*/
-let iconLib=null;
-let iconLibFoldOpen=false;
-/* 取一次就缓存。⚠ 样张是**系统的属性、不是项目的属性** ⇒ 它不进 /api/state 那条 15s 心跳:
-   塞进去就是每个绑定群每次心跳多读 8 个 svg、多背几 KB,而这份数据全部群共用同一套。
-   群卡「图标」行那排缩略图因此也走这里,前端按系统名对上 —— 同一份数据两处用,服务端零额外开销。*/
-async function ensureIconLib(){
-  if(iconLib)return iconLib;
-  try{iconLib=await api('/api/design/icons');}catch(e){iconLib=null;}
-  return iconLib;
-}
-async function loadIconLib(){
-  const box=$('#iconLib'); if(!box)return;
-  await ensureIconLib();
-  if(!iconLib){box.innerHTML='<div class="card"><div class="hint">图标库读取失败</div></div>';return;}
-  /* 一排样张:左边一个窄标签说这排是什么形态,右边是图 + 它在这套系统里的名字。
-     名字必须跟着图走 —— 「换一套系统连叫法都变了」是这张卡最该传达的一件事,
-     而只看图看不出 house / home 的区别。 */
-  /* 一排样张:标签独立成行 + 图标**定宽格子**平铺。
-     ⚠ 定宽是「按卡片宽度自适应」的前提 —— 格子等宽,能摆几个才算得出来;图标名因此从格子里
-     撤掉(名字宽度各不相同,留着就没法算),改成行下面那句「叫法」,一行说清两套的差别。
-     实际画几个由 fitStrips() 在**布局之后**按真实宽度决定(见下),这里先全画出来。 */
-  const CELL=22, GAP=13;
-  const strip=(label,icons,note)=>`
-    <div style="margin-top:11px;min-width:0">
-      <div class="hint" style="font-size:11px;opacity:.6;margin-bottom:6px">${label}</div>
-      ${icons.length
-        ? `<div class="iconstrip inline" data-cell="${CELL}" data-gap="${GAP}" style="gap:${GAP}px;flex-wrap:nowrap;overflow:hidden;color:var(--ink);min-width:0">${icons.map(i=>
-            `<span title="${esc(i.sem+' → '+i.name)}" style="flex:none;width:${CELL}px;height:${CELL}px">${i.svg}</span>`).join('')}</div>`
-        : `<span class="hint faint" style="font-size:11px">${note}</span>`}
-    </div>`;
-  /* 叫法那一句:同一个语义在两套系统里叫什么。**这是「换一套等于换一整套名字」的证据**,
-     从格子里撤掉名字后由它承担。只挑差得最明显的三个,多了就成噪音。 */
-  const naming=s=>{const pick=['more','home','delete'].map(k=>(s.icons.find(i=>i.sem===k)||{}).name).filter(Boolean);
-    return pick.length?`<div class="hint faint" style="margin-top:9px;font-size:11px">叫法:${pick.map(esc).join(' · ')}</div>`:'';};
-  const card=s=>`
-    <div class="card" style="min-width:0">
-      <div class="inline" style="gap:8px;align-items:baseline;flex-wrap:wrap">
-        <span style="font-size:13px;font-weight:600">${esc(s.label)}</span>
-        ${s.installed?`<span class="hint" style="font-size:11px">${s.count?esc(String(s.count))+' 个图标 · ':''}语义名 ${s.semantics} 条${s.fallbackLibrary?' · 兜底 '+esc((iconLib.systems.find(x=>x.library===s.fallbackLibrary)||{}).label||s.fallbackLibrary):''}</span>`
-          :'<span class="chip warn" title="这套的图标包没装在这台机器上(几个包合计约 160MB,不随产品分发)—— 别的功能不受影响,但选了它取图标会取不到。装一次即可">未安装</span>'}
-      </div>
-      ${s.installed
-        ? strip('线性',s.icons,'')+strip('实心',s.styles.includes('filled')?s.filled:[],'这套没有实心 —— 要实心得选另一套')+naming(s)
-        : `<div class="hint faint" style="margin-top:10px;font-size:11px">装上 ${esc(s.pkg)} 后这里会出样张</div>`}
-    </div>`;
-  box.innerHTML=`<div class="grid cols2 stagger">${(iconLib.systems||[]).map(card).join('')}</div>`
-    +`<div class="hint faint" style="margin-top:8px">每套的画法<b>逐个都不一样</b>,连叫法都不同(同一个「更多」:more-horizontal / dots / dots-three)—— 换一套是换一整套图形和名字,不是换个皮肤。已选的那套写在项目里,跟着代码走</div>`;
-  fitStrips(box);
-}
-/* 一行画几个图标 —— **按卡片实际宽度算,不写死个数**。
-   ⚠ 只能在布局之后量:innerHTML 刚写完时 clientWidth 是最终值(同步布局),但窗口一变、
-   侧边一收,同一张卡的宽度就变了 ⇒ 必须挂 ResizeObserver 跟着重算,否则窄屏下这排图会被
-   `overflow:hidden` 齐刷刷切掉半个图标(比少画几个难看得多)。
-   ⚠ 同一张卡的线性排与实心排取**同一个 n**:两排是要逐列对照看的,各算各的就错位了。 */
-function fitStrips(box){
-  // ⚠ **观察这一排本身,不是外面的卡片** —— 实测:把容器压窄时,这一排从 306px 掉到 53px,
-  //   而挂在卡片上的 ResizeObserver **一次都没触发**(卡片宽度没变,变的是排内可用空间)。
-  //   判据挂错对象的表现是「窄屏下图标被 overflow:hidden 切掉半个」,而那比少画几个难看得多。
-  const calc=(s)=>{
-    const w=s.clientWidth; if(!w)return; // 页面还没显示时宽度为 0:先不动,等 RO 拿到真实宽度再算
-    // 格子尺寸**每排自带**:图标库那张卡 22px,群卡缩到 18px —— 写死一个常量必然有一处算错
-    const CELL=+(s.dataset.cell||22), GAP=+(s.dataset.gap||13);
-    const n=Math.max(1,Math.floor((w+GAP)/(CELL+GAP))); // 最后一个格子后面不占 gap
-    [...s.children].forEach((el,i)=>{el.style.display=i<n?'':'none';});
-  };
-  const strips=[...box.querySelectorAll('.iconstrip')];
-  strips.forEach(calc);
-  // ⚠ **不能只靠 ResizeObserver**:实测这页上它连初次回调都不给(卡片 454→206、这一排 279→58,
-  //   两个 RO 各 0 次)。⇒ 关键时刻**确定性地重算一次**:刚画完时页面可能还没显示(宽度为 0),
-  //   下一帧再补一次;切页与改窗口大小各再算一次。RO 留着当锦上添花,不当依靠。
-  requestAnimationFrame(() => strips.forEach(calc))
-  if(window.ResizeObserver){
-    const ro=new ResizeObserver(es=>{for(const e of es)calc(e.target);});
-    strips.forEach(s=>ro.observe(s));
-    if(box._iconRO)box._iconRO.disconnect(); // 重画时把上一批观察者收掉,别越攒越多
-    box._iconRO=ro;
-  }
-  if(!window._iconFitBound){ // 只绑一次:每次重画都绑会越攒越多
-    window._iconFitBound=1
-    let t=0
-    addEventListener('resize',()=>{clearTimeout(t);t=setTimeout(refitAllStrips,120)})
-  }
-}
-// 全部样张排重算一次。切页 / 改窗口大小 / 数据到齐后各调一次 —— 这三处正是「刚画的时候宽度还不对」
-// 的全部来源,而宽度不对的表现是被 overflow:hidden 切掉半个图标。
-function refitAllStrips(){for(const id of ['#iconLib','#gsheet']){const b=$(id);if(b)fitStrips(b);}}
-/* 风格库(只读):内置预设 + ~/.sbot/design-styles 自定义。 */
-let styleLib=null;
-let styleLibFoldOpen=false;
-async function loadStyleLib(){
-  const box=$('#styleLib'); if(!box)return;
-  if(styleLib){paintStyleLib();return;}
-  try{const _r=await api('/api/design/styles');styleLib=_r;registerStyleI18n(_r.styles);paintStyleLib();}
-  catch(e){box.innerHTML=`<div class="card"><div class="hint">风格库读取失败:${esc(e.message)}</div></div>`;}
-}
-/* 风格的英文名与一句话写在各自的风格档里(name_en / description_en),这里登记进翻译表 ——
-   卡片照旧按中文渲染,英文界面由那套 MutationObserver 逐节点换掉,切回中文也是同一条路。
-   「适合 · 内容阅读 · 品牌门面」那行按 · 分段逐段译,场景词的译文在 I18N_EN 里。 */
-function registerStyleI18n(list){
-  for(const s of list||[]){
-    if(s.name&&s.nameEn&&s.name!==s.nameEn)I18N_MAP.set(s.name,s.nameEn);
-    if(s.description&&s.descriptionEn&&s.description!==s.descriptionEn)I18N_MAP.set(s.description,s.descriptionEn);
-  }
-}
-/* 启动后在后台登记一次:群卡上的项目风格名多半照抄自内置预设,英文界面里也要换掉 —— 不能等人点开「模型 · 库」才登记。
-   只登记一次(styleLib 已有就跳过);取不到就算了,风格库那页打开时还会再取。 */
-let styleI18nAsked=false;
-function preloadStyleI18n(){
-  if(styleI18nAsked||styleLib)return; styleI18nAsked=true;
-  api('/api/design/styles').then(r=>{if(!styleLib)styleLib=r;registerStyleI18n(r.styles);if(langOf()==='en')applyI18n(document.body);}).catch(()=>{styleI18nAsked=false;});
-}
-function paintStyleLib(){
-  const box=$('#styleLib'); if(!box||!styleLib)return;
-  // 特征标签只标「有性格」的信号:衬线/深色/等宽/圆角值 —— 「无衬线」「直角」是大多数的常态,
-  // 8 张卡有 6 张挂同一个标签就成噪音了(常态不用说,例外才值得标)。
-  const feat=s=>[s.source==='user'?'<span class="tag">自定义</span>':'',
-    /* 载体单独一枚驼色标(v0.11.22):它不是「特征」而是**分类** —— 标了就说明这套只服务
-       那种载体,是挑档时第一眼要看的东西。绝大多数风格不标(通用),所以它一出现就有信息量。 */
-    s.platform?`<span class="chip tan" title="这套风格是按这个载体定的(小程序与后台网站的圆角、间距、字号本就不该一样)">${esc(s.platform)}</span>`:'',
-    s.dark?'<span class="chip cap" title="底色为深色">深色</span>':'',
-    s.serif?`<span class="chip cap" title="${esc(s.fontStack||'')}">衬线</span>`:'',
-    s.mono?'<span class="chip cap" title="字体族里有等宽(代码/数据)">等宽</span>':'',
-    /* ⚠ 只标**不走常规那一路**的那几套(裁决在服务端 cjkState 三态,别在这儿判)——
-       那个词的权威在 design.js 的 CJK_KIND_RE,前端抄一份必然漂移。常规那路是压倒性
-       常态:18 张卡 12 张,标了就违反上面那条「常态不用说」,还把该看见的 6 张淹掉。
-       第三态「未声明」是给自建档留的防线:v0.11.65 曾把它与「走黑体」合成同一个不标。 */
-    s.cjkState==='exception'?`<span class="chip cap" title="这套风格的汉字不走黑体那条常规路(混用时按出现顺序列出)· 没有这枚标签 = 走系统黑体">中文${esc((s.cjkKinds||[]).join('·'))}</span>`
-      :s.cjkState==='missing'?`<span class="chip cap" title="这份档写了字体,但栈里一个中文族都没有 —— 汉字会掉到浏览器默认字体,不受这套风格控制(纯英文产品可忽略)">中文未声明</span>`:'',
-    s.radius>=100?'<span class="chip cap">胶囊圆角</span>':(s.radius>0?`<span class="chip cap">圆角 ${s.radius}px</span>`:''),
-    /* ⚠ 这里**故意不标图标库**(2026-08-25 拿掉了 v0.11.52 那枚 chip):图标库与设计风格
-       **平级** —— 用哪套图标是**项目**的选择(见下面「图标库」那一节 + 群卡的「图标」行),
-       不是这份风格档的属性。在风格卡上标「图标 tabler」会让人以为换风格就换图标,
-       而那正是要拆开的绑定。风格只管**怎么画**图标,那是下面这枚描边标签。 */
-    s.icons&&s.icons.strokeWidth?`<span class="chip cap" title="${esc('这套风格里图标的画法:'+(s.icons.style==='filled'?'实心':'线性')+' · 描边 '+s.icons.strokeWidth+' · 端点 '+(s.icons.linecap||'round')+(s.icons.sizes?' · 尺寸档 '+s.icons.sizes+' 个':'')+'。图形从哪来是另一件事,由项目的图标系统决定')}">图标描边 ${esc(String(s.icons.strokeWidth))}</span>`:''].filter(Boolean).join('');
-  const card=s=>{const ft=feat(s);return `
-    <div class="card" style="min-width:0" data-slug="${esc(s.slug)}">
-      <div class="inline" style="gap:14px;align-items:flex-start">
-        ${swatchSvg(s.layout,106)}
-        <div style="min-width:0;flex:1">
-          <div class="inline" style="gap:7px;align-items:baseline;flex-wrap:wrap">
-            <span style="font-size:13px;font-weight:600">${esc(s.name||s.slug)}</span>${ft}</div>
-          <div class="hint" style="margin-top:5px">${esc(s.description||'—')}</div>
-          ${s.suits?`<div class="hint" style="margin-top:5px;opacity:.8">适合 · ${esc(s.suits)}</div>`:''}
-          <div class="inline" style="gap:4px;flex-wrap:wrap;margin-top:9px">${(s.palette||[]).map(c=>
-            `<span title="${esc(c.key)}: ${esc(c.hex)}" style="width:13px;height:13px;border-radius:2px;background:${esc(c.hex)};box-shadow:inset 0 0 0 1px var(--line);flex:none"></span>`).join('')}</div>
-          <div class="inline" style="gap:6px;flex-wrap:wrap;margin-top:10px">
-            ${s.source==='user'?`<button class="btn primary ic-only" data-styleedit="${esc(s.slug)}" title="改这一套本身(存回同一个名字)—— 正文默认原样保留,除非你勾「按新设定重写正文」" aria-label="修改">${IC.pencil}</button>`:''}
-            <button class="btn ic-only" data-styledup="${esc(s.slug)}" title="以这一套为起点建一个**新的**:色板、圆角、字重都预填好,改成自己的即可(原来那套不动)" aria-label="复制为新款">${IC.copy}</button>
-            ${s.source==='user'?`<button class="btn ghost" data-styledel="${esc(s.slug)}" title="从风格库移除这一套(只删自己建的)"><span>删除</span></button>`:''}
-          </div>
-        </div></div>
-    </div>`;};
-  /* 自定义排最前,并与内置预设**分成两块** —— 库里内置十几种,自己建的那两三套按字母混在
-     中间就得逐个找,而它们恰恰是最常用的。次序由服务端 listStyles 定(同一份也管 CLI 那侧的
-     组内先后),这里只按 source 切块,前端不自己排。
-     ⚠ 分组标题只在**有**自定义时才出现:一套都没有时,孤零零一个「内置预设」标题是纯噪音
-     —— 与上面特征标签同一条判据:常态不用说,例外才值得标。 */
-  const all=styleLib.styles||[];
-  const mine=all.filter(s=>s.source==='user'),stock=all.filter(s=>s.source!=='user');
-  const grid=arr=>`<div class="grid cols2 stagger">${arr.map(card).join('')}</div>`;
-  const head=(label,n,note,top)=>`<div class="inline" style="gap:9px;align-items:baseline;margin:${top}px 0 8px">
-      <span style="font-size:13px;font-weight:600;color:var(--ink)">${label}</span>
-      <span class="hint">${n} 套${note?' · '+note:''}</span></div>`;
-  const body=!all.length?'<div class="empty">风格库是空的</div>'
-    :!mine.length?grid(stock)
-    :head('自定义',mine.length,'这台机器上配的 · 全部群都能用',0)+grid(mine)+head('内置预设',stock.length,'',26)+grid(stock);
-  box.innerHTML=body+`
-    <div class="hint faint" style="margin-top:8px">「${IC.plus} 新建风格」配一套自己的(比如把公司品牌色配成一款)· 已经在某个项目里打磨好的那份,可在「群·项目」页那个群的「设计风格」行收录进来</div>`;
-  /* 卡片动作走事件委托:整块会被「重新扫描 / 保存 / 删除」反复重画,逐个 onclick 绑定
-     每次都要重来一遍,而委托只绑一次在容器上(容器本身不重建)。 */
-  box.onclick=async(e)=>{
-    /* 修改 = 改这一套本身(存回同一个 slug);复制为新款 = 拿它当起点建**另**一套。
-       两者预填数据同源,差别全在 openStyleModal 的模式上。 */
-    const ed=e.target.closest('[data-styleedit]');
-    if(ed){const s=(styleLib.styles||[]).find(x=>x.slug===ed.dataset.styleedit);if(s)openStyleModal(s.form||null,{edit:s});return;}
-    const dup=e.target.closest('[data-styledup]');
-    if(dup){const s=(styleLib.styles||[]).find(x=>x.slug===dup.dataset.styledup);if(s)openStyleModal(s.form||null,{from:s});return;}
-    const del=e.target.closest('[data-styledel]');
-    if(!del)return;
-    const slug=del.dataset.styledel;
-    const s=(styleLib.styles||[]).find(x=>x.slug===slug);
-    if(!await askConfirm('从风格库移除「'+((s&&s.name)||slug)+'」?\n项目里已经用上它的那些不受影响。'))return;
-    del.disabled=true;
-    try{const r=await api('/api/design/styles','DELETE',{slug});
-      styleLib=null;await loadStyleLib();
-      toast(r.revertedToBuiltin?'已移除 · 同名的内置风格重新可用':'已从风格库移除','ok');
-    }catch(err){toast(err.message,'err');if(document.body.contains(del))del.disabled=false;}
-  };
-}
-
-/* ── 新建 / 复制自定义风格 ────────────────────────────────────────────────────
-   为什么是「配一套」而不是「传一份文档」:operator 手里有品牌色和对气质的直觉,没有一份写好的
-   规范 —— 那套 front matter 格式是实现细节,不该要求人手写。所以入口是六项表单,系统去编档。
-   右列**实时预览**是这张表单的全部价值所在:每一项都对应预览图上的一条通道,改哪儿图上立刻变哪儿。
-   ⚠ 预览图元一律由服务端算(POST /api/design/preview → 现成的 swatchSvg 画)—— 布局逻辑只许
-   有一份,前端自己算坐标就会和群里发出去的那张 PNG 长得不一样,而这种不一致没人会当 bug 报。 */
-const NS_SCENES=['内容阅读','品牌门面','工具产品','活动推广','生图插画'];
-/* 载体与场景是两个轴:场景答「做什么」、载体答「在哪儿看」。留空 = 载体无关(常态)。
-   ⚠ 词表与服务端 design.js 的 PLATFORM_WORDS 必须一致 —— 那侧是权威(落盘校验按它);
-   这里多一个词,人挑得到却存不进去。 */
-const NS_PLATFORMS=['小程序','后台网站','网页前台','移动 App','印刷物料'];
-const NS_ROUNDS=[['sharp','直角'],['subtle','微圆'],['soft','柔圆'],['pill','胶囊']];
-/* 三样有预览通道的属性(v0.11.22)。⚠ 档位 id 与服务端 ELEV_LEVELS / STATUS_KEYS 必须一致 ——
-   那侧是权威(落盘校验按它),这边多一个档,人选得到却存不进去。 */
-const NS_ELEVS=[['none','无'],['flat','轻'],['soft','明显'],['color','彩色']];
-const NS_STATUS=[['success','成功'],['warning','警告'],['danger','危险']];
-const /* ⚠ 三个默认值必须过 WCAG AA 正文(配白底 ≥4.5:1)—— 它们会直接落进用户建的档,
-   而 `design doctor` 会把不达标的报成硬问题 ⇒ 那个项目此后每次交付都多一行常驻噪音。
-   审计实测:旧值 warning #D4A017 = 2.38:1 · danger #E53935 = 4.23:1,两个都不达标。
-   新值同色相压明度(#B45309 = 5.02 · #C62828 = 5.62),不是另挑一个能过线的颜色。 */
-NS_STATUS_DEF={success:'#2E7D32',warning:'#B45309',danger:'#C62828'};
-const NS_WEIGHTS=[['light','轻'],['medium','中'],['heavy','重']];
-/* ⚠ 字体不在表单里选(2026-09-02 产品决定去掉整个「字体」栏):中文字体是低频决定,占一格不值;
-   要换字体在群里说一句更省事。生成的档恒定用一套**系统字体优先**的栈,见服务端 SANS_STACK。
-   ⚠ 手写的内置档不受此限 —— 新中式该用宋体、precision-mono 该用等宽,那是它们的设计身份。 */
-const NS_CKEYS=[['bg','底色'],['ink','文字'],['accent','强调'],['muted','次要']];
-const NS_BLANK={name:'',description:'',suits:[],platforms:[],colors:{bg:'#FFFFFF',ink:'#1A1D24',accent:'#6D28D9',muted:'#6B7280'},rounded:'subtle',weight:'medium',elevation:'flat',gradientTo:'',statusColors:null};
-let nsTimer=null,nsSeq=0;
-/* 提炼带回来的两样东西,存在这里而不是 DOM 上:
-   nsExtra = 补充色 [{hex,count,on}](勾选态就是 on) · nsTokens = 字距/描边/间距/字号/行高
-   两者都随 nsReadForm() 一起进预览与保存;弹窗每次打开都重置(见 openStyleModal)。 */
-let nsExtra=[],nsTokens=null,nsSug=null;
-/* 标识的形状。**本文件里只此一份** —— 建风格、收录、由名称推标识三处原本各写一份同样的
-   字面量,改一处漏两处是迟早的事。(与服务端 design.js 那份跨端重复是架构现状,不在这里解) */
-const NS_SLUG_RE=/^[a-z0-9][a-z0-9-]{0,40}$/;
-/* 颜色文本框的归一,与服务端 _normHex 同判:#abc 展开成 #AABBCC,认不出返回 null。
-   ⚠ 认不出时**不许**静默退回取色器的现值 —— 那等于替用户存下一个他没打算要的颜色,
-   而且全程零提示(v0.11.21 审查)。归一给预览用,拦截在保存那一步。 */
-const NS_HEX_RE=/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
-function nsNormHex(v){
-  const m=NS_HEX_RE.exec(String(v==null?'':v).trim());
-  if(!m)return null;
-  const h=m[1];
-  return '#'+(h.length===3?h[0]+h[0]+h[1]+h[1]+h[2]+h[2]:h).toUpperCase();
-}
-/* 压深一个色(勾上「用渐变」时给的起点值)。只服务这一个交互 —— 落盘的渐变两端色以表单为准,
-   服务端不做任何派生,所以这里算得糙一点也不会让档和图对不上。 */
-function nsDarken(hex,t){
-  const n=nsNormHex(hex);if(!n)return'#000000';
-  const c=[1,3,5].map(i=>parseInt(n.slice(i,i+2),16));
-  return '#'+c.map(v=>Math.round(v*(1-t)).toString(16).padStart(2,'0')).join('').toUpperCase();
-}
-/* 四个色框逐个查,返回第一处非法的标签(全合法 ⇒ null)。红字提示与保存拦截共用它。 */
-function nsHexCheck(){
-  let bad=null;
-  for(const [k,l] of NS_CKEYS){
-    const t=$('#nsHex_'+k);if(!t)continue;
-    const ok=!!nsNormHex(t.value);
-    t.style.borderColor=ok?'':'var(--fail)';
-    if(!ok&&!bad)bad=l;
-  }
-  const el=$('#nsColErr');
-  if(el){
-    el.style.display=bad?'block':'none';
-    el.innerHTML=bad?'<span style="color:var(--fail)">'+bad+'不是合法的颜色值 —— 写成 #RRGGBB 或 #RGB;没改对之前存不进去</span>':'';
-  }
-  return bad;
-}
-/* 名称 → 建议标识。只在名称是纯 ASCII 时给得出(中文名转不出有意义的拼写,不硬转) */
-function nsSuggestSlug(name){
-  const s=String(name||'').trim().toLowerCase();
-  if(!s||!/^[\x20-\x7e]+$/.test(s))return'';
-  const out=s.replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,41).replace(/-+$/,'');
-  return NS_SLUG_RE.test(out)?out:'';
-}
-function nsReadForm(){
-  const colors={};
-  for(const [k] of NS_CKEYS){
-    const t=$('#nsHex_'+k),c=$('#nsCol_'+k),v=(t?t.value:'').trim();
-    /* 预览期间可以拿取色器的现值顶上(边填边看不该中途黑屏),但这条路进不了保存 ——
-       nsSave 会先跑 nsHexCheck 把非法值拦下来 */
-    colors[k]=nsNormHex(v)||(c?c.value.toUpperCase():'#000000');
-  }
-  const on=(sel,def)=>{const b=$(sel+' .on');return b?b.dataset.v:def;};
-  return {name:$('#nsName').value,description:$('#nsDesc').value,
-    suits:$$('#nsSuits .nschk.on').map(e=>e.dataset.v),
-    platforms:$$('#nsPlats .nschk.on').map(e=>e.dataset.v),
-    colors,rounded:on('#nsRound','subtle'),weight:on('#nsWeight','medium'),
-    elevation:on('#nsElev','flat'),
-    /* 勾掉即当场清空(不是留着上次填的值不写)—— 所见即所存,与补充色那条同一口径 */
-    gradientTo:$('#nsGradOn').checked?(nsNormHex($('#nsGradHex').value)||$('#nsGradCol').value.toUpperCase()):'',
-    statusColors:$('#nsStatOn').checked
-      ?NS_STATUS.reduce((o,[k])=>{o[k]=nsNormHex($('#nsStHex_'+k).value)||$('#nsSt_'+k).value.toUpperCase();return o;},{})
-      :null,
-    /* 勾掉的补充色**当场从表单里消失** —— 预览的色板条会少一格,所见即所存 */
-    extraColors:nsExtra.filter(x=>x.on).map(x=>x.hex),
-    extraTokens:nsTokens||{}};
-}
-function nsPreview(){
-  clearTimeout(nsTimer);
-  nsTimer=setTimeout(async()=>{
-    const my=++nsSeq, form=nsReadForm();
-    try{const r=await api('/api/design/preview','POST',{form});
-      if(my!==nsSeq)return;                      // 慢请求后到就丢弃,别让旧图盖住新图
-      const el=$('#nsPrev'); if(el)el.innerHTML=swatchSvg(r.card.layout,178);
-    }catch(e){const el=$('#nsPrev'); if(el)el.innerHTML='<span class="hint">预览暂时出不来</span>';}
-  },240);
-}
-/* 提炼回填:只覆盖「参考里读得出来」的那几项(色板/圆角),名称与描述留着不动 ——
-   那两项是人写的,被一次提炼冲掉最恼人。
-   ⚠ 读不到的项**不动表单**:一个颜色都没读到时 form.colors 是模板默认值、没读到圆角时 rounded 是兜底的「微圆」,
-   照填就是把默认值当成提炼结果,还冲掉人已经选好的(实测 linear.app)。字重提炼器根本不读,
-   只有目录里本来就有风格档(styledoc)时才是真值。 */
-function nsFill(f,ev){
-  if(!f)return;
-  const e=ev||{};
-  if(e.colorsFound!==false)for(const [k] of NS_CKEYS){const v=nsNormHex((f.colors||{})[k]);if(!v)continue;
-    $('#nsCol_'+k).value=v;$('#nsHex_'+k).value=v;}
-  if(e.roundedFound!==false&&f.rounded)$$('#nsRound button').forEach(b=>b.classList.toggle('on',b.dataset.v===f.rounded));
-  if((!ev||e.source==='styledoc')&&f.weight)$$('#nsWeight button').forEach(b=>b.classList.toggle('on',b.dataset.v===f.weight));
-  /* ⚠ 字体不在表单里,提炼回填也就无从谈起(提色器本来也读不出中文族) */
-  nsHexCheck();
-}
-/* 提炼带回来的三样属性(v0.11.22)。同一条纪律:**提不出的项一概不动表单** ——
-   traits 里没有的键就是「这份参考里读不出来」,不是「读到了 0」。 */
-function nsFillTraits(tr){
-  if(!tr)return;
-  if(tr.elevation)$$('#nsElev button').forEach(b=>b.classList.toggle('on',b.dataset.v===tr.elevation));
-  if(tr.gradientTo){const v=nsNormHex(tr.gradientTo);
-    if(v){$('#nsGradOn').checked=true;$('#nsGradWrap').style.display='block';$('#nsGradCol').value=v;$('#nsGradHex').value=v;}}
-  if(tr.statusColors&&Object.keys(tr.statusColors).length){
-    $('#nsStatOn').checked=true;$('#nsStatWrap').style.display='block';
-    /* 只填提到的槽:参考里只声明了 danger 的站点,另外两个保持默认值而不是被编出来 ——
-       但三个格子都会随勾选一起存进档,所以提示文案里说清「没提到的是默认值,自己改」 */
-    for(const [k] of NS_STATUS){const v=nsNormHex(tr.statusColors[k]);if(!v)continue;
-      $('#nsSt_'+k).value=v;$('#nsStHex_'+k).value=v;}}
-}
-/* 提炼带回来的建议落进本地状态。两条纪律:
-   ① 描述框**空着才自动填** —— 已经写了字的绝不冲掉(那是人写的,被一次提炼抹掉最恼人);
-      想换成这句,证据区那颗「用这句」点一下。
-   ② 名称一律不动。 */
-function nsApplySuggest(sug){
-  nsExtra=[];nsTokens=null;nsSug=sug||null;
-  /* 「复制为新款」带进来的那块补充色到此作废(nsExtra 已被这次提炼整个换掉)——
-     留着它就是一排点不动、又与实际状态对不上的色块,而且会与证据区撞 id */
-  const cb=$('#nsCopyExtra');if(cb)cb.remove();
-  if(!sug)return;
-  nsExtra=(sug.extraColors||[]).map(c=>({hex:(c&&c.hex)||c,count:(c&&c.count)||0,on:true}));
-  nsTokens=(sug.extraTokens&&Object.keys(sug.extraTokens).length)?sug.extraTokens:null;
-  const d=$('#nsDesc');
-  if(d&&!d.value.trim()&&sug.description){d.value=sug.description;}
-}
-/* 「还读到」那一行:只列真读出来的项,一项都没有就整行不出现(不写「未读到字距」这种废话) */
-function nsTokensSummary(t){
-  if(!t)return'';
-  const p=[];
-  if(t.letterSpacing!=null)p.push('字距 '+t.letterSpacing+'em');
-  if(t.borderWidth!=null)p.push('描边 '+t.borderWidth+'px');
-  if(t.spacingUnit!=null)p.push('间距 '+t.spacingUnit+'px 网格');
-  if(t.headlineSize!=null&&t.bodySize!=null)p.push('标题/正文 '+t.headlineSize+'/'+t.bodySize);
-  if(t.lineHeight!=null)p.push('行高 '+t.lineHeight);
-  return p.join(' · ');
-}
-/* 可勾选补充色块的骨架。**证据区与「复制为新款」共用同一份** —— 两处各写一份,勾选逻辑
-   迟早只改一处。容器 id 由调用方给:证据区每次提炼都整块重画,不能与复制块撞 id。 */
-function nsChipsHtml(id){
-  return '<span id="'+id+'" class="nschips" style="display:inline-flex;vertical-align:-4px;margin-left:2px">'
-    +nsExtra.map((c,i)=>`<span class="nschk${c.on?' on':''}" data-i="${i}"><span class="sw" style="background:${esc(c.hex)}"></span>${esc(c.hex)}${c.count?'<span class="faint"> ×'+c.count+'</span>':''}</span>`).join('')+'</span>';
-}
-/* innerHTML 重写过就要重新挂 —— 所以绑定与骨架分开两个函数 */
-function nsBindChips(id){
-  $$('#'+id+' .nschk').forEach(c=>c.onclick=()=>{
-    const i=+c.dataset.i;if(!nsExtra[i])return;
-    nsExtra[i].on=!nsExtra[i].on;c.classList.toggle('on',nsExtra[i].on);nsPreview();});
-}
-function nsEvidence(ev){
-  const el=$('#nsEv');if(!el||!ev)return;
-  const rows=[];
-  if(ev.source==='styledoc')rows.push('这个目录里已经有一份风格档('+esc(ev.styleDoc||'')+')—— 直接取了它的设定,没有再去猜');
-  else if(ev.source==='url')rows.push('读了 '+(ev.sheets||0)+' 份样式表');
-  else if(ev.source==='dir')rows.push('扫了 '+(ev.files||0)+' 个样式文件');
-  const sw=(ev.colors||[]).map(c=>`<span class="sw" style="background:${esc(c.hex)}"></span>${esc(c.hex)}${c.count?'<span class="faint"> ×'+c.count+'</span>':(c.role?'<span class="faint"> '+esc(c.role)+'</span>':'')}`).join('　');
-  if(sw)rows.push('提到最多的颜色 · '+sw);
-  else if(ev.colorsFound===false)rows.push('没读到颜色,四个颜色保持原样');
-  if((ev.fonts||[]).length)rows.push('字体族 · '+ev.fonts.map(f=>esc(f)).join(' / '));
-  if((ev.radii||[]).length)rows.push('圆角取值 · '+ev.radii.join(' / ')+'px');
-  else if(ev.roundedFound===false)rows.push('没读到圆角设定,圆角保持原样');
-  const ts=nsTokensSummary(nsTokens);
-  if(ts)rows.push('还读到 · '+ts);
-  /* 三样属性也要如实报(v0.11.22):它们已经把表单上的档位改掉了,不说一声就是「悄悄替人做主」。
-     只报**真提到的**那几样 —— traits 里没有的键就是没读出来。 */
-  const tr=(nsSug&&nsSug.traits)||{};
-  const trs=[];
-  if(tr.elevation)trs.push('投影 '+({none:'一处都没有 ⇒ 无',flat:'很浅 ⇒ 轻',soft:'明显',color:'带颜色 ⇒ 彩色'}[tr.elevation]||tr.elevation));
-  if(tr.gradientTo)trs.push('渐变到 <span class="sw" style="background:'+esc(tr.gradientTo)+'"></span>'+esc(tr.gradientTo));
-  if(tr.statusColors)trs.push('状态色 '+Object.keys(tr.statusColors).map(k=>({success:'成功',warning:'警告',danger:'危险'}[k]||k)+' <span class="sw" style="background:'+esc(tr.statusColors[k])+'"></span>').join(' '));
-  if(trs.length)rows.push('还读到 · '+trs.join(' · ')+' <span class="faint">(没提到的那几样保持原样)</span>');
-  if(nsExtra.length)rows.push('补充色(勾上的会一起写进这套风格)· '+nsChipsHtml('nsExtraChips'));
-  if(nsSug&&nsSug.description)rows.push('这一句只说事实,可以直接当描述 · <span class="dim">'+esc(nsSug.description)
-    +'</span> <button type="button" class="btn nsmini" id="nsUseDesc" title="用这句"><span>采用</span></button>');
-  rows.push('<span class="faint">这是起点不是结论 —— 逐项改到满意为止</span>');
-  el.style.display='block';el.className='nsev';el.innerHTML=rows.join('<br>');
-  nsBindChips('nsExtraChips');
-  const ub=$('#nsUseDesc');
-  if(ub)ub.onclick=()=>{const d=$('#nsDesc');if(!d)return;d.value=nsSug.description;nsPreview();};
-}
-function openStyleModal(form,opt){
-  opt=opt||{};
-  const F=Object.assign({},NS_BLANK,form||{},{colors:Object.assign({},NS_BLANK.colors,(form&&form.colors)||{})});
-  /* 每次开窗都从这一份表单重来 —— 上一次提炼留下的补充色不许跟到下一套风格上。
-     「复制为新款」带着源风格的补充色与更多属性进来(补充色默认全勾),新建则两样都是空的。
-     ⚠ nsTokens 必须跟着 —— 少了它,复制出来的那套字距/描边/间距/字号全退回模板值,
-       而界面上一句话都不说(源风格里那几项就这么没了)。 */
-  nsExtra=(F.extraColors||[]).map(hex=>({hex:hex,count:0,on:true}));nsSug=null;
-  nsTokens=(F.extraTokens&&Object.keys(F.extraTokens).length)?F.extraTokens:null;
-  if(opt.from)F.name=(F.name||opt.from.name||'')+' 副本';
-  const seg=(id,list,cur)=>`<div class="segtoggle" id="${id}">${list.map(([v,l])=>
-    `<button type="button" data-v="${v}" class="${v===cur?'on':''}">${l}</button>`).join('')}</div>`;
-  $('#modal').className='modal wide';
-  $('#modal').innerHTML=`<h3>${opt.edit?'修改风格':(opt.from?'复制为新款':'新建风格')}</h3>
-    <div class="nsgrid">
-      <div style="min-width:0">
-        <div class="field">
-          <label class="f">从参考提炼(可选)</label>
-          <div class="inline" style="gap:6px"><input id="nsRef" placeholder="网址;本机目录请点「选目录…」" style="flex:1;min-width:0"/><button class="btn ic-only" id="nsRefDir" style="flex:none" title="从项目根目录里选一个目录" aria-label="选目录…">${IC.folder}</button><button class="btn" id="nsExtract" style="flex:none" title="提炼"><span>提炼</span></button></div>
-          <div class="hint" style="margin-top:5px">按参考里出现最多的色值、字体族与圆角给一套起点,不改动参考本身。要它读懂气质、连细则一起写出来,把参考发到群里说一句更合适。</div>
-          <div id="nsEv" style="display:none"></div>
-        </div>
-        <div class="field"><label class="f">名称</label><input id="nsName" value="${esc(F.name)}" placeholder="如 品牌紫"/></div>
-        <div class="field"><label class="f">一句话描述</label><input id="nsDesc" value="${esc(F.description)}" placeholder="这套风格是什么气质、给谁看"/></div>
-        <div class="field"><label class="f">适用场景</label>
-          <div class="nschips" id="nsSuits">${NS_SCENES.map(w=>
-            `<label class="nschk${(F.suits||[]).includes(w)?' on':''}" data-v="${w}"><input type="checkbox" ${(F.suits||[]).includes(w)?'checked':''}/>${w}</label>`).join('')}</div>
-          <div class="hint" style="margin-top:6px">挑方向时按场景筛 —— 一个都不标就等于挑不到它</div></div>
-        <div class="field"><label class="f">载体(可选)</label>
-          <div class="nschips" id="nsPlats">${NS_PLATFORMS.map(w=>
-            `<label class="nschk${(F.platforms||[]).includes(w)?' on':''}" data-v="${w}"><input type="checkbox" ${(F.platforms||[]).includes(w)?'checked':''}/>${w}</label>`).join('')}</div>
-          <div class="hint" style="margin-top:6px">这套只服务某种载体时才标(小程序和后台网站的圆角、间距、字号本来就该不一样)· <b>留空 = 通用</b>,不挑载体</div></div>
-        <div class="field"><label class="f">色板</label>
-          ${NS_CKEYS.map(([k,l])=>`<div class="nscolor"><span class="lb">${l}</span>
-            <input type="color" id="nsCol_${k}" value="${esc(F.colors[k])}"/>
-            <input type="text" id="nsHex_${k}" class="mono" value="${esc(F.colors[k])}" maxlength="7"/></div>`).join('')}
-          <div id="nsColErr" class="hint" style="display:none;margin-top:4px"></div>
-          <div class="hint" style="margin-top:2px"><b>强调</b>是按钮那块的颜色,也是整套里最显眼的那个 · 深色浅色不用选,底色亮度会自己判</div></div>
-        ${nsExtra.length?`<div class="field" id="nsCopyExtra"><label class="f">带自源风格的补充色</label>
-          ${nsChipsHtml('nsCopyChips')}
-          <div class="hint" style="margin-top:6px">勾上的会一起写进这套风格,勾掉就不带过来 —— 预览的色板条当场少一格</div></div>`:''}
-        <div class="field"><label class="f">圆角</label>${seg('nsRound',NS_ROUNDS,F.rounded)}</div>
-        <div class="field"><label class="f">标题字重</label>${seg('nsWeight',NS_WEIGHTS,F.weight)}</div>
-        <div class="field"><label class="f">投影</label>${seg('nsElev',NS_ELEVS,F.elevation||'flat')}
-          <div class="hint" style="margin-top:6px">这套有没有「层」—— 不写清楚,出图时就会随机长出卡片和投影 · <b>彩色</b>档把投影染成强调色</div></div>
-        <div class="field"><label class="f">强调渐变(可选)</label>
-          <label class="inline" style="gap:6px;cursor:pointer"><input type="checkbox" class="switch" id="nsGradOn" ${F.gradientTo?'checked':''}/> <span class="dim">强调色用渐变</span></label>
-          <div id="nsGradWrap" style="display:${F.gradientTo?'block':'none'};margin-top:8px">
-            <div class="nscolor"><span class="lb">渐变到</span>
-              <input type="color" id="nsGradCol" value="${esc(F.gradientTo||'#000000')}"/>
-              <input type="text" id="nsGradHex" class="mono" value="${esc(F.gradientTo||'')}" maxlength="7"/></div></div>
-          <div class="hint" style="margin-top:6px">从强调色渐到这个色(135°)· 只给主按钮和头图这类大块用 —— 预览图上的按钮当场就是它</div></div>
-        <div class="field"><label class="f">状态色(可选)</label>
-          <label class="inline" style="gap:6px;cursor:pointer"><input type="checkbox" class="switch" id="nsStatOn" ${F.statusColors?'checked':''}/> <span class="dim">这套定了成功 / 警告 / 危险三色</span></label>
-          <div id="nsStatWrap" style="display:${F.statusColors?'block':'none'};margin-top:8px">
-            ${NS_STATUS.map(([k,l])=>`<div class="nscolor"><span class="lb">${l}</span>
-              <input type="color" id="nsSt_${k}" value="${esc((F.statusColors||NS_STATUS_DEF)[k]||NS_STATUS_DEF[k])}"/>
-              <input type="text" id="nsStHex_${k}" class="mono" value="${esc((F.statusColors||NS_STATUS_DEF)[k]||NS_STATUS_DEF[k])}" maxlength="7"/></div>`).join('')}</div>
-          <div class="hint" style="margin-top:6px">只表达语义、不参与视觉风格 —— 它们<b>抢不走强调色</b>(预览图上排在色板右边、画成圆点)</div></div>
-        <div class="field"><label class="f">标识(库里的唯一名字)</label>
-          <input id="nsSlug" class="mono" value="${esc(opt.edit?opt.edit.slug:(opt.from?'':nsSuggestSlug(F.name)))}" placeholder="小写字母、数字与连字符,如 brand-purple" ${opt.edit?'readonly style="opacity:.65;cursor:not-allowed"':''}/>
-          <div class="hint" id="nsSlugHint" style="margin-top:5px">${opt.edit?'改的就是这一套,标识不动 —— 换个标识那是<b>另建一套</b>,用「复制为新款」':'存进库后就用它来指代这一套'}</div>
-          ${opt.edit
-            ? `<label class="inline" style="gap:6px;cursor:pointer;margin-top:9px"><input type="checkbox" id="nsRewrite" style="width:auto"/> <span class="dim">按新设定重写正文</span></label>
-               <div class="hint" style="margin-top:5px">默认<b>只改上面这些设定,正文原样保留</b>(群里一轮轮磨出来的细则不会丢)· 勾上则连正文一起按新设定重新生成,<b>手写的细则会被覆盖</b></div>`
-            : `<label class="inline" style="gap:6px;cursor:pointer;margin-top:9px"><input type="checkbox" id="nsOver" style="width:auto"/> <span class="dim">覆盖库里的同名风格</span></label>`}</div>
-      </div>
-      <div class="nsprev">
-        <label class="f">实时预览</label>
-        <div class="pvbox" id="nsPrev"><span class="spin"></span></div>
-        <div class="hint" style="margin-top:9px">这张图和之后出的图依据同一份设定 —— 图上不对的地方,就是设定还不对</div>
-      </div>
-    </div>
-    <div class="mfoot"><button class="btn" id="nsCancel" title="取消">${IC.x}<span>取消</span></button><button class="btn primary" id="nsSave" title="${opt.edit?'保存修改':'存入风格库'}">${IC.check}<span>保存</span></button></div>`;
-  $('#modalBg').classList.add('show');
-  nsBindChips('nsCopyChips'); /* 「复制为新款」那块补充色:勾选逻辑与证据区共用一份 */
-  for(const [k] of NS_CKEYS){
-    const c=$('#nsCol_'+k),h=$('#nsHex_'+k);
-    c.oninput=()=>{h.value=c.value.toUpperCase();nsHexCheck();nsPreview();};
-    h.oninput=()=>{const n=nsNormHex(h.value);if(n)c.value=n;nsHexCheck();nsPreview();};
-    h.onblur=()=>{const n=nsNormHex(h.value);if(n)h.value=n;nsHexCheck();}; /* 失焦归一:#abc → #AABBCC,让人看见自己填的到底是哪个色 */
-  }
-  /* 场景与载体两组勾选同一套行为(都不进预览图 —— 它们是分类不是视觉设定) */
-  for(const box of ['#nsSuits','#nsPlats'])$$(box+' .nschk').forEach(l=>l.onclick=e=>{e.preventDefault();l.classList.toggle('on');
-    const cb=l.querySelector('input');if(cb)cb.checked=l.classList.contains('on');});
-  for(const id of ['#nsRound','#nsWeight','#nsElev'])$$(id+' button').forEach(b=>b.onclick=()=>{
-    $$(id+' button').forEach(x=>x.classList.remove('on'));b.classList.add('on');nsPreview();});
-  /* 取色器 + 文本框成对联动(与上面四个角色色同一套写法,单独抽出来是因为这两组是可选项、
-     不进 nsHexCheck 那条四色校验;认不出的文本一律以取色器的值为准,绝不静默变成空) */
-  const nsPair=(cid,hid)=>{const c=$(cid),h=$(hid);if(!c||!h)return;
-    c.oninput=()=>{h.value=c.value.toUpperCase();nsPreview();};
-    h.oninput=()=>{const n=nsNormHex(h.value);if(n)c.value=n;nsPreview();};
-    h.onblur=()=>{const n=nsNormHex(h.value);h.value=n||c.value.toUpperCase();};};
-  nsPair('#nsGradCol','#nsGradHex');
-  for(const [k] of NS_STATUS)nsPair('#nsSt_'+k,'#nsStHex_'+k);
-  $('#nsGradOn').onchange=e=>{
-    const on=e.target.checked;$('#nsGradWrap').style.display=on?'block':'none';
-    /* 第一次勾上时给个**看得出是渐变**的起点:强调色压深 30% —— 空着或给纯黑都要人再点一次 */
-    if(on&&!nsNormHex($('#nsGradHex').value)){const d=nsDarken($('#nsHex_accent').value||'#6D28D9',.3);
-      $('#nsGradCol').value=d;$('#nsGradHex').value=d;}
-    nsPreview();};
-  $('#nsStatOn').onchange=e=>{$('#nsStatWrap').style.display=e.target.checked?'block':'none';nsPreview();};
-  const slugHint=()=>{
-    /* 修改模式:标识是锁死的,那句静态提示(「改的就是这一套」)不该被这里的重名判断盖掉 ——
-       而且它给的出路是「勾下面那项覆盖」,可修改模式里根本没有那一项。 */
-    if(opt.edit)return;
-    const el=$('#nsSlugHint'),v=$('#nsSlug').value.trim();
-    const hit=(styleLib&&styleLib.styles||[]).find(x=>x.slug===v);
-    if(!v){el.innerHTML='存进库后就用它来指代这一套';return;}
-    if(!NS_SLUG_RE.test(v)){el.innerHTML='<span style="color:var(--fail)">只能用小写字母、数字与连字符,首位是字母或数字</span>';return;}
-    if(hit&&hit.source==='user')el.innerHTML='<span style="color:var(--risk,var(--fail))">库里已经有同名的「'+esc(hit.name||v)+'」—— 要替换掉它,请勾下面那项</span>';
-    else if(hit)el.innerHTML='与内置的「'+esc(hit.name||v)+'」同名 —— 存下去会盖住它;哪天删掉这一套,内置的那套自动回来';
-    else el.innerHTML='存进库后就用它来指代这一套';
-  };
-  $('#nsSlug').oninput=slugHint;slugHint();
-  /* ⚠ 改名字联动改标识,这条只对**新建**成立:修改模式下标识是这套风格的身份,
-     跟着名字变就会存成**另一套**(旧的还在库里,凭空多一份)。 */
-  $('#nsName').oninput=()=>{const sl=$('#nsSlug');if(!opt.edit&&!sl.dataset.touched){const g=nsSuggestSlug($('#nsName').value);if(g){sl.value=g;slugHint();}}nsPreview();};
-  $('#nsSlug').onkeydown=()=>{$('#nsSlug').dataset.touched='1';};
-  $('#nsDesc').oninput=nsPreview;
-  $('#nsCancel').onclick=closeModal;
-  // 本机目录走同一个目录选择器(天然在项目根目录之内),文本框留给网址;选定即提炼
-  const nsDir=$('#nsRefDir');if(nsDir)nsDir.onclick=()=>openFsPicker((p)=>{if(p){$('#nsRef').value=p;$('#nsExtract').click();}});
-  $('#nsExtract').onclick=async()=>{
-    const ref=$('#nsRef').value.trim();
-    if(!ref){toast('先填一个网址,或本机上项目所在目录的绝对路径','err');return;}
-    const b=$('#nsExtract');b.disabled=true;const old=b.innerHTML;b.innerHTML='<span class="spin"></span>';
-    /* 顺序要紧:先把建议收进状态(nsApplySuggest),证据区才画得出补充色勾选与那句描述 */
-    try{const r=await api('/api/design/extract','POST',{ref});nsFill(r.form,r.evidence);nsFillTraits(r.suggest&&r.suggest.traits);nsApplySuggest(r.suggest);nsEvidence(r.evidence);nsPreview();
-      toast('已给出一套起点 —— 逐项改到满意为止','ok');}
-    catch(e){toast(e.message,'err');}
-    finally{if(document.body.contains(b)){b.disabled=false;b.innerHTML=old;}}
-  };
-  $('#nsSave').onclick=async()=>{
-    /* 先归一(#abc → #AABBCC)再拦:非法值不许带着取色器的旧值溜进保存 */
-    for(const [k] of NS_CKEYS){const t=$('#nsHex_'+k),n=t&&nsNormHex(t.value);if(n)t.value=n;}
-    const bad=nsHexCheck();
-    if(bad){toast(bad+'不是合法的颜色值 —— 写成 #RRGGBB 或 #RGB','err');const t=$('#nsHex_'+(NS_CKEYS.find(([,l])=>l===bad)||[])[0]);if(t)t.focus();return;}
-    const b=$('#nsSave');b.disabled=true;const old=b.innerHTML;b.innerHTML='<span class="spin"></span>';
-    /* 修改模式:恒覆盖同一个 slug(这就是「改这一套」的语义),正文去留由那个勾选决定。
-       ⚠ 结果文案必须点明正文被怎么处理了 —— 不说的话,人以为只动了颜色,其实骨架被重写了。 */
-    const editing=!!opt.edit, rewrite=editing&&$('#nsRewrite')&&$('#nsRewrite').checked;
-    try{const r=await api('/api/design/styles','POST',{form:nsReadForm(),slug:$('#nsSlug').value.trim(),
-        overwrite:editing?true:$('#nsOver').checked, keepProse:editing&&!rewrite});
-      closeModal();styleLib=null;await loadStyleLib();
-      toast(editing
-        ?('已保存修改 · '+(rewrite?'正文已按新设定重写':'正文保持原样(里面写死的色值记得核对)'))
-        :('已存入风格库,全部群都能用'+(r.shadowed?'(它盖住了同名的内置风格)':'')+' · 细则可以在群里让它按这份骨架接着补'),'ok');}
-    catch(e){toast(e.message,'err');if(document.body.contains(b)){b.disabled=false;b.innerHTML=old;}}
-  };
-  nsPreview();
-}
-/* 把某个群项目里打磨好的那份风格档收录进全局库(复制,不动项目里那份) */
-async function openCollectModal(chatId,st,rel){
-  const name=(st&&st.name)||'';
-  const relPick=rel||(st&&st.rel)||'';
-  // 风格库可能还没拉过(收录入口在「群·项目」页,而库住在「模型 · 库」页)——
-  // 没有它就提示不了「和谁重名」,只能等服务端 409,那时用户已经点过保存了
-  if(!styleLib){try{styleLib=await api('/api/design/styles');}catch(e){}}
-  $('#modal').className='modal';
-  $('#modal').innerHTML=`<h3>收录进风格库</h3>
-    <div class="hint" style="margin:-8px 0 18px">把这个项目正在用的那套风格<b>复制</b>一份进全局库 —— 项目里那份原样不动。收录之后,别的群也能直接挑到它。</div>
-    <div class="field"><label class="f">名称(可改)</label><input id="clName" value="${esc(name)}" placeholder="库里显示的名字"/></div>
-    <div class="field"><label class="f">标识(库里的唯一名字)</label>
-      <input id="clSlug" class="mono" placeholder="小写字母、数字与连字符,如 brand-house"/>
-      <div class="hint" id="clHint" style="margin-top:5px">存进库后就用它来指代这一套</div>
-      <label class="inline" style="gap:6px;cursor:pointer;margin-top:9px"><input type="checkbox" id="clOver" style="width:auto"/> <span class="dim">覆盖库里的同名风格</span></label></div>
-    <div class="mfoot"><button class="btn" id="clCancel" title="取消">${IC.x}<span>取消</span></button><button class="btn primary" id="clGo" title="收录">${IC.plus}<span>收录</span></button></div>`;
-  $('#modalBg').classList.add('show');
-  const hint=()=>{
-    const el=$('#clHint'),v=$('#clSlug').value.trim();
-    const hit=(styleLib&&styleLib.styles||[]).find(x=>x.slug===v);
-    if(!v||!NS_SLUG_RE.test(v)){el.innerHTML=v?'<span style="color:var(--fail)">只能用小写字母、数字与连字符,首位是字母或数字</span>':'存进库后就用它来指代这一套';return;}
-    if(hit&&hit.source==='user')el.innerHTML='<span style="color:var(--risk,var(--fail))">库里已经有同名的「'+esc(hit.name||v)+'」—— 要替换掉它,请勾下面那项</span>';
-    else if(hit)el.innerHTML='与内置的「'+esc(hit.name||v)+'」同名 —— 存下去会盖住它';
-    else el.innerHTML='存进库后就用它来指代这一套';
-  };
-  $('#clSlug').oninput=hint;
-  $('#clCancel').onclick=closeModal;
-  $('#clGo').onclick=async()=>{
-    const b=$('#clGo');b.disabled=true;const old=b.innerHTML;b.innerHTML='<span class="spin"></span>';
-    try{await api('/api/design/collect','POST',{chatId,rel:relPick,slug:$('#clSlug').value.trim(),name:$('#clName').value.trim(),overwrite:$('#clOver').checked});
-      closeModal();styleLib=null;
-      if($('#styleLib'))await loadStyleLib();
-      toast('已收录进风格库,全部群都能挑到它','ok');}
-    catch(e){toast(e.message,'err');if(document.body.contains(b)){b.disabled=false;b.innerHTML=old;}}
-  };
-}
-
 /* 展开着的定时任务详情(按 cron id)。必须存在渲染之外 —— 启停任务、切页签回来、群卡上任何
    写操作都会 renderGroups() 重画整块,不记住的话每点一次启停,正读着的全文就没了。 */
 const cronOpen=new Set();
@@ -4692,7 +3988,7 @@ function openGroupPanel(chatId){
 
 /* ── 设置面板 ──
    开合只切类名(动效才连得上);入场做完后挂 settled,之后面板内重画不再重放入场动效。
-   各节按视图的 panel 列表出;旧服务对照路径才有的几行(基础技能、预览、仓库、设计风格、图标、画布、旧定时任务)
+   各节按视图的 panel 列表出;旧服务对照路径才有的几行(基础技能、预览、仓库、画布、旧定时任务)
    照原来的条件画在相应的节里。 */
 const GP={chatId:null,settle:0,clear:0,opener:null,plug:null};
 function gpOpen(chatId,opener){
@@ -4750,8 +4046,8 @@ function groupLegacyRows(g){
     <div class="kv"><span class="kk">workdir</span><span class="vv mono" title="${esc(g.workdir)}">${esc(g.workdir)}</span>${g.exists?'':'<span class="tag bad">workdir 缺失</span>'}</div>`;
   rows.skills=rt?'':`        <div class="kv" style="align-items:flex-start"><span class="kk">基础技能</span>
           <div style="flex:1;min-width:0">
-            <div class="inline" style="gap:6px;flex-wrap:wrap">${isWe?'<span class="chip cap" title="发送(文件/图片/消息) · 拉近 7 天群历史 —— 均针对本群;企业微信没有编辑/撤回/表情回应">企业微信 · 收发群消息</span>':'<span class="chip cap" title="发送(文件/图片/消息) · 拉历史 · 回复/编辑/撤回 · 下载文件 · 表情回应 —— 均针对本群">飞书 · 收发/管理群消息</span>'}<span class="chip cap" title="群里直接对它说「每天9点拉构建报告」就会创建;支持创建/修改/删除定时任务,到点触发执行或只发提醒 —— 下方「定时任务」区可查看/管理">定时任务</span><span class="chip cap" title="按需使用:仅从零设计新产品且未定视觉方向时推荐预设;也可按要求提炼参考并写入项目 DESIGN.md">设计风格档</span></div>
-            <div class="hint" style="margin-top:5px">默认内建 · ${isWe?'企业微信收发/拉历史':'飞书收发/拉历史/回复编辑撤回/下载/表情'} · <b>定时任务</b>(群里说一句即可让 agent 创建/修改) · <b>设计风格档</b>(新产品设计时按需使用) · <b>生图</b>(需机器已登录 codex,借订阅后台生图) · agent 首轮自知(身份/项目/模型/权限/控制台地址 + 已启用插件)${baseSkillNote}</div>
+            <div class="inline" style="gap:6px;flex-wrap:wrap">${isWe?'<span class="chip cap" title="发送(文件/图片/消息) · 拉近 7 天群历史 —— 均针对本群;企业微信没有编辑/撤回/表情回应">企业微信 · 收发群消息</span>':'<span class="chip cap" title="发送(文件/图片/消息) · 拉历史 · 回复/编辑/撤回 · 下载文件 · 表情回应 —— 均针对本群">飞书 · 收发/管理群消息</span>'}<span class="chip cap" title="群里直接对它说「每天9点拉构建报告」就会创建;支持创建/修改/删除定时任务,到点触发执行或只发提醒 —— 下方「定时任务」区可查看/管理">定时任务</span></div>
+            <div class="hint" style="margin-top:5px">默认内建 · ${isWe?'企业微信收发/拉历史':'飞书收发/拉历史/回复编辑撤回/下载/表情'} · <b>定时任务</b>(群里说一句即可让 agent 创建/修改) · <b>生图</b>(需机器已登录 codex,借订阅后台生图) · agent 首轮自知(身份/项目/模型/权限/控制台地址 + 已启用插件)${baseSkillNote}</div>
           </div></div>
 `;
   rows.preview=rtOff('/api/groups/preview')?'':`    <div class="kv"><span class="kk">预览</span><span class="vv inline" style="gap:8px">
@@ -4809,65 +4105,6 @@ function groupLegacyRows(g){
               <button class="btn primary" data-reposave="${esc(g.chatId)}" title="保存并关联:项目目录若还不是 git 仓库则 git init,然后设 origin(幂等);不 clone、不自动提交">${IC.check}<span>保存</span></button>
             </div>
             <div class="hint" style="margin-top:5px">${repoTag?repoTag+' · ':''}保存即关联(git init + 设 origin)· 推送交给 agent · 留空解除${repoWarn}</div>
-          </div></div>
-`;
-  rows.styles=rt?'':`        <div class="kv" style="align-items:flex-start"><span class="kk">设计风格</span>
-          <div style="flex:1;min-width:0">${(g.styles||[]).length
-            ?(g.styles||[]).map(st=>`<div class="inline" style="gap:10px;align-items:flex-start;margin-top:${(g.styles||[]).indexOf(st)?'12px':'0'}">
-                ${swatchSvg(st.layout,58)}
-                <div style="min-width:0;flex:1">
-                  <div class="inline" style="gap:6px;align-items:baseline;flex-wrap:wrap">
-                    <b style="font-size:12px">${esc(st.name||'(未命名)')}</b>
-                    ${st.platform?`<span class="chip tan" title="这份档管这一块">${esc(st.platform)}</span>`:''}
-                    <span class="faint mono" style="font-size:11px">${esc(st.rel||'')}</span></div>
-                  <div class="hint" style="margin-top:3px">${esc(st.description||'—')}</div>
-                  <button class="btn" data-stylecollect="${esc(g.chatId)}" data-stylerel="${esc(st.rel||'')}" title="把这一份复制进全局风格库,之后别的群也能直接挑到它(项目里那份不动)" style="margin-top:8px">${IC.plus}<span>收录</span></button>
-                </div></div>`).join('')
-            :'<span class="dim">未设置 · 仅从零设计新产品且未定方向时推荐风格库</span>'}
-            ${(g.styles||[]).length>1?'<div class="hint faint" style="margin-top:10px">这个项目有多份风格档 —— 出图时按任务挑对应那份(小程序与后台网站的圆角、间距、字号本来就该不一样)</div>':''}
-          </div></div>
-`;
-  rows.icons=rt?'':`        <div class="kv" style="align-items:flex-start"><span class="kk">图标</span>
-          <div style="flex:1;min-width:0">
-            <div class="inline" style="gap:6px;flex-wrap:wrap;align-items:baseline">
-              <select data-iconsys="${esc(g.chatId)}" style="width:auto;min-width:150px">
-                <option value=""${g.icons?'':' selected'}>未选 · 取图标会取不到</option>
-                ${((S&&S.iconSystems)||[]).map(o=>`<option value="${esc(o.system)}"${g.icons&&g.icons.system===o.system?' selected':''}>${esc(o.label)} · ${esc(o.library)}${o.installed?'':'(未安装)'}</option>`).join('')}
-              </select>
-              ${/* 线性/实心:只在这套系统真有两种形态时出现;风格档声明了形态时改这里就去改那几份档,各说各话时才禁用并点名 */''}
-              ${(()=>{
-                if(!(g.icons&&g.icons.known&&(g.icons.styles||[]).length>1))return '';
-                const decl=(g.styles||[]).filter(s=>s.icons&&s.icons.style);
-                const forms=[...new Set(decl.map(s=>s.icons.style))];
-                const conflict=forms.length>1;
-                const cur=(forms.length===1?forms[0]:null)||g.icons.style||'outlined';
-                const nm=s=>s==='filled'?'实心':'线性';
-                return `<select data-iconstyle="${esc(g.chatId)}"${conflict?' disabled':''} title="${esc(conflict?'这个项目的几份风格档形态各不相同 —— 要改去各自那份档里改,这里不替你统一':decl.length?('改这里会同时改这 '+decl.length+' 份风格档里的图标形态'):'线性还是实心 · 写进项目的图标设定')}" style="width:auto">`
-                  +(g.icons.styles||[]).map(s=>`<option value="${esc(s)}"${cur===s?' selected':''}>${nm(s)}</option>`).join('')
-                  +'</select>'
-                  +(conflict?`<span class="chip warn" title="${esc(decl.map(s=>(s.name||s.rel)+' → '+nm(s.icons.style)).join(' · '))}">各档形态不同</span>`
-                    :decl.length?`<span class="chip tan" title="${esc('图标形态由这几份风格档说了算:'+decl.map(s=>s.name||s.rel).join(' · ')+';改上面的下拉会同时改它们')}">跟 ${decl.length} 份风格档联动</span>`:'');
-              })()}
-              ${g.icons&&g.icons.styleUnknown?`<span class="chip warn" title="${esc('图标档里写的形态「'+g.icons.styleUnknown+'」认不出来 —— 现在等于没写(按线性走),不是你以为的那个')}">认不出这个形态</span>`:''}
-              ${g.icons&&g.icons.known===false?'<span class="chip warn" title="档里写的系统名认不出来(手改坏了?)—— 现在等于没选">认不出这个系统名</span>':''}
-              ${g.icons&&g.icons.fallbackUnknown?`<span class="chip warn" title="${esc('档里写的兜底库「'+g.icons.fallbackUnknown+'」认不出来 —— 现在等于没有兜底,而不是去那家找')}">兜底库名认不出</span>`:''}
-              ${g.icons&&g.icons.known&&!g.icons.installed?'<span class="chip warn" title="这套系统的图标包没装在这台机器上 —— 取图标会取不到,装一次即可">库未安装</span>':''}
-              ${g.icons?`<span class="faint mono" style="font-size:11px">${esc(g.icons.rel)}</span>`:''}
-            </div>
-            ${/* 样张缩略图:画实际生效的那种形态(风格档 > 图标档 > 默认),只画一排、不画图标名;数据来自已缓存的图标库 */''}
-            ${g.icons&&g.icons.known&&g.icons.installed
-              ? (()=>{const _d=(g.styles||[]).filter(s=>s.icons&&s.icons.style),_f=[...new Set(_d.map(s=>s.icons.style))];
-                      const ov=_f.length===1?{icons:{style:_f[0]}}:_d[0]||null;
-                      const eff=(ov&&ov.icons.style)||g.icons.style||'outlined';
-                return `<div class="inline" style="gap:9px;align-items:center;margin-top:8px;min-width:0">
-                   <span class="hint" style="flex:none;font-size:11px;opacity:.5">${eff==='filled'?'实心':'线性'}</span>
-                   ${/* flex:1 1 0:这一排的宽度由可用空间决定,不能按内容定宽(否则藏掉几个图标后再也长不回去) */''}
-                   <span class="iconstrip inline" data-sysstrip="${esc(g.icons.system)}" data-sysstyle="${esc(eff)}" data-cell="18" data-gap="11" style="flex:1 1 0;gap:11px;flex-wrap:nowrap;overflow:hidden;color:var(--ink);min-width:0"></span>
-                 </div>`})()
-              : ''}
-            <div class="hint" style="margin-top:6px">${g.icons&&g.icons.known
-              ? `图形从 ${esc(g.icons.library)} 来${g.icons.fallbackLibrary?` · 取不到时去 ${esc(g.icons.fallbackLibrary)} 兜底`:' · 不兜底'} · 语义名 ${g.icons.semantics} 条${g.icons.assets?` · 图标目录 ${esc(g.icons.assets)}`:''}`
-              : '与设计风格<b>平级</b>的另一件事 —— 这里管图形从哪来、叫什么名、线性还是实心;风格管怎么画(描边粗细/端点/尺寸档)'}</div>
           </div></div>
 `;
   rows.board=isWe||rt?'':`<div class="kv" style="align-items:flex-start"><span class="kk">画布</span>
@@ -4933,7 +4170,7 @@ function groupPanelHtml(g,v,open){
       ${sec('权限与行为',access)}
       ${sec('插件',plugins)}
       ${sec('定时任务',sched)}
-      ${sec('设计与画布',L.styles+L.icons+L.board)}
+      ${sec('画布',L.board)}
       ${sec('移除',remove)}
     </div>`;
 }
@@ -5010,8 +4247,6 @@ function gpBind(g,opening){
   gvBindLegacy();
   // ⑥ 移除
   $$('#gsheet [data-gprm]').forEach(b=>b.onclick=()=>{if(b.getAttribute('aria-disabled')==='true')return;rmOpen(b.dataset.gprm);});
-  paintGroupIconStrips();
-  if(typeof refitAllStrips==='function')try{refitAllStrips();}catch(e){}
 }
 // 旧服务对照路径那几行的接线(原样)
 function gvBindLegacy(){
@@ -5027,44 +4262,6 @@ function gvBindLegacy(){
       toast(r.empty?'✓ 可访问 · 远端是空仓库(等首次推送)':('✓ 可访问 · '+r.branches+' 个分支'),'ok');}
     catch(e){toast(e.message,'err');}
     finally{b.disabled=false;b.innerHTML=old;}});
-  // 收录:按钮在哪一行就收哪一份风格档
-  $$('#gsheet [data-stylecollect]').forEach(b=>b.onclick=()=>{const id=b.dataset.stylecollect,rel=b.dataset.stylerel||'';
-    const g=(S.groups||[]).find(x=>x.chatId===id);
-    openCollectModal(id,((g&&g.styles)||[]).find(x=>x.rel===rel)||((g&&g.styles)||[])[0],rel);});
-  // 图标系统:写进项目的 design/icons.md;服务端回 409 时把它给的说明拿来确认一次
-  $$('#gsheet [data-iconsys]').forEach(sel=>{sel.dataset.prev=sel.value;sel.onchange=async()=>{
-    const id=sel.dataset.iconsys,want=sel.value,prev=sel.dataset.prev||'';
-    if(!want){sel.value=prev;toast('要取消图标系统,删掉项目里的 design/icons.md','err');return;}
-    sel.disabled=true;
-    try{
-      let r;
-      try{r=await api('/api/design/icons','POST',{chatId:id,system:want});}
-      catch(e){
-        if(e.status!==409||!e.payload||e.payload.error!=='confirm')throw e;
-        if(!await askConfirm(e.payload.note+'\n\n继续?')){sel.value=prev;return;}
-        r=await api('/api/design/icons','POST',{chatId:id,system:want,force:true});
-      }
-      sel.dataset.prev=want;
-      toast('图标系统已定:'+want+(r&&r.styleDropped?' · ⚠ 这套没有实心,形态已回到线性':' · 已写进项目的 design/icons.md'),'ok');
-      S=await api('/api/state');renderGroups();
-    }catch(e){sel.value=prev;toast(e.message,'err');}
-    finally{sel.disabled=false;}
-  };});
-  // 线性/实心:与系统落同一份档;不传 force,system 一起传(系统不变、只改形态)
-  $$('#gsheet [data-iconstyle]').forEach(sel=>{sel.dataset.prev=sel.value;sel.onchange=async()=>{
-    const id=sel.dataset.iconstyle,want=sel.value,prev=sel.dataset.prev||'';
-    const sysSel=$('#gsheet [data-iconsys="'+id+'"]'),sys=sysSel?sysSel.value:'';
-    if(!sys){sel.value=prev;toast('先选一套图标系统','err');return;}
-    sel.disabled=true;
-    try{
-      const r=await api('/api/design/icons','POST',{chatId:id,system:sys,style:want});
-      sel.dataset.prev=want;
-      const tg=(r&&r.styleTargets)||[];
-      toast('图标形态已定:'+(want==='filled'?'实心':'线性')+(tg.length?' · 已同步改 '+tg.length+' 份风格档('+tg.join('、')+')':''),'ok');
-      S=await api('/api/state');renderGroups();
-    }catch(e){sel.value=prev;toast(e.message,'err');}
-    finally{sel.disabled=false;}
-  };});
   // 旧版定时任务:新建(展开内联表单)/添加/开关/删除
   $$('#gsheet [data-cronnew]').forEach(b=>b.onclick=()=>{const f=b.closest('.kv').querySelector('.cronform');if(!f)return;const show=f.style.display==='none';f.style.display=show?'block':'none';if(show)f.querySelector('.cronexpr').focus();});
   $$('#gsheet [data-cronadd]').forEach(b=>b.onclick=async()=>{const f=b.closest('.cronform');const val=f.querySelector('.cronexpr').value.trim(),kind=f.querySelector('.cronkind').value,text=f.querySelector('.crontext').value.trim();if(!val){toast('填写时间(如「10:20」「07-16 10:20」「每天 09:00」)','err');return;}if(!text){toast(kind==='do'?'填写到点让 agent 做的事':kind==='run'?'填写要跑的命令':'填写要发送的消息','err');return;}const isDate=CRON_ONEOFF.some(re=>re.test(val));const body=isDate?{chatId:b.dataset.cronadd,at:val,kind,text}:{chatId:b.dataset.cronadd,expr:val,kind,text};try{S=await api('/api/groups/cron/add','POST',body);renderGroups();toast(isDate?'已创建一次性任务':'已创建定时任务','ok');}catch(e){toast(e.message,'err');}});
@@ -5469,11 +4666,6 @@ function pathParent(p){
   if(parent==='') return '';
   return win?parent.replace(/\//g,'\\'):parent;
 }
-/* 关闭时把宽度类摘掉:新建风格那张是宽版(左表单右预览),下一张模态框若还挂着 wide 就会
-   凭空撑宽 —— 类留在 DOM 上不会自己掉,而每张模态框都只管自己 innerHTML,谁也不管容器的类。 */
-/* ⚠ 关窗要顺手掐掉新建风格弹窗那个 240ms 的预览节流:它到点会 nsReadForm(),而那时
-   #nsName 这些已经随 innerHTML 一起没了 —— 关窗后立刻开别的弹窗,就在控制台里抛一个
-   看不出来路的 TypeError。nsSeq 一并推进,让已经在飞的那次预览回来也认不出自己是最新的。 */
 /* 「向群里插一句」浮层。入口在概览「群·项目」每一行的 ✎ —— 动作长在对象身上,
    目标群由那一行决定,所以这里不再有下拉。
    ⚠ 两个开关**平级**(不是嵌套):四种组合都要够得着,其中「都不勾」= 群里彻底无痕,
@@ -5591,7 +4783,7 @@ function openSay(chatId){
     }catch(e){ toast(e.message,'err'); sending=false; go.disabled=false; const t2=$('#sayGoTxt'); if(t2) t2.textContent=old; if(v1&&$('#sayT')) preview() }
   };
 }
-function closeModal(){clearTimeout(nsTimer);nsTimer=null;nsSeq++;sayRefresh=null;$('#modalBg').classList.remove('show');$('#modal').className='modal';
+function closeModal(){sayRefresh=null;$('#modalBg').classList.remove('show');$('#modal').className='modal';
   try{upgOnClose();}catch{}} // 升级弹窗:升级照常进行,只收起
 $('#modalBg').onclick=e=>{if(e.target.id==='modalBg')closeModal();};
 
@@ -5855,7 +5047,7 @@ function renderSettings(){
   // 这里只把现状说清:每条根在不在、配置里被忽略的值、哪些群在根外;改要走安装向导或机器上的配置文件。
   const pri=S.projectsRootsInfo||{roots:[],dropped:[],outside:[],configured:null,fromConfig:false};
   const prSection=`<div class="fx-sub" style="margin:30px 0 12px">项目根目录</div>
-    <div class="hint" style="margin-bottom:10px">群项目都放这里 · 选目录、保存群绑定、从本机目录提炼风格,只认这些目录之内的路径${pri.fromConfig?'':' · 当前是默认值'}</div>
+    <div class="hint" style="margin-bottom:10px">群项目都放这里 · 选目录、保存群绑定,只认这些目录之内的路径${pri.fromConfig?'':' · 当前是默认值'}</div>
     <div id="prStatus">${pri.roots.map(r=>`<div class="inline" style="gap:8px;font-size:12px;margin:6px 0"><span class="dot ${r.exists?'ok':'warn'}"></span><span class="mono">${esc(r.root)}</span>${r.exists?'':'<span class="faint">不存在 —— 在服务器上建好即可</span>'}</div>`).join('')}
       ${(pri.dropped||[]).map(d=>`<div class="hint" style="color:var(--fail)">${IC.x} 配置里已忽略 ${esc(d.value)}:${esc(d.why)}</div>`).join('')}
       ${(pri.outside||[]).length?`<div class="hint" style="margin-top:6px">${IC.warn} ${pri.outside.length} 个群在根之外:${esc(pri.outside.map(o=>gName((S.groups||[]).find(x=>x.chatId===o.chatId)||o)||o.chatId).join('、'))} —— 照常运行,改目录时须搬进根内</div>`:''}
@@ -6973,13 +6165,10 @@ $$('nav button').forEach(b=>b.onclick=()=>{
   if(b.dataset.tab==='overview'&&typeof activityPanel!=='undefined'){try{activityPanel.reset();}catch{}}
   if(b.dataset.tab==='overview')mvEnter();
   if(b.dataset.tab==='playground'&&lc.chat){lcStick();lcSync();}
-  // ⚠ 刚切过来这一页才第一次有真实宽度 —— 之前画的样张排是按宽度 0 算的(等于没算)。
-  //   不在这儿补一次,那排图就会被 overflow:hidden 切掉半个。
-  try{refitAllStrips();}catch{}
 });
 
 async function loadUsage(){loadUsageView();try{usage=await api('/api/usage'+(langOf()==='en'?'?lang=en':''));renderProviders();}catch(e){}}
-async function load(){try{S=await api('/api/state');seedCodexStatus();await syncActivity(false);renderAll();startClock();loadUsage();loadMachineView();autoVerifyCodex();autoVerifyClaude();warmCodexModels();preloadStyleI18n();}catch(e){if(e.message==='需要登录')return;$('#overview').innerHTML='<div class="empty" style="padding:48px;text-align:center;color:var(--fail)">✕ 加载失败:'+esc(e.message)+'<br><br><span class="faint">确认后台服务正在运行</span></div>';toast('加载失败:'+e.message,'err');}}
+async function load(){try{S=await api('/api/state');seedCodexStatus();await syncActivity(false);renderAll();startClock();loadUsage();loadMachineView();autoVerifyCodex();autoVerifyClaude();warmCodexModels();}catch(e){if(e.message==='需要登录')return;$('#overview').innerHTML='<div class="empty" style="padding:48px;text-align:center;color:var(--fail)">✕ 加载失败:'+esc(e.message)+'<br><br><span class="faint">确认后台服务正在运行</span></div>';toast('加载失败:'+e.message,'err');}}
 $('#refresh').onclick=()=>{load();toast('已刷新','ok');};
 /* 主题:跟随系统(默认)→ 亮色 → 暗色,三态轮换。独立于 renderAll —— 切主题不重渲染卡片。
    data-theme-pref = 用户选的档(system / light / dark);data-theme = 算好的 light / dark,样式只认后者。
@@ -7614,20 +6803,10 @@ const I18N_EN=[
   ["添加模型","Add model"],
   ["插件库 · MCP","Plugin library · MCP"],
   ["本机装好的 MCP · 按运行时分两套 · 命令行安装、即时刷新","MCP servers installed on this machine · two sets, one per runtime · installed from the command line, refreshes instantly"],
-  ["设计风格库","Design style library"],
   ["按需管理","Manage on demand"],
   ["按需查看","View on demand"],
   ["仅在全新产品且未定方向时按需使用预设","Use presets on demand only for a new product with no visual direction"],
-  ["重新扫描风格预设(导入或改过自定义风格后用)","Rescan style presets (after importing or editing a custom style)"],
   ["重新扫描","Rescan"],
-  ["用一张表单配一套自己的风格:色板、圆角、字重逐项定,右侧实时看效果。存进库后全部群都能用","Build your own style with a form: set palette, radius and weight one by one, with a live preview on the right. Once saved to the library every group can use it"],
-  ["＋ 新建风格","+ New style"],
-  ["图标由风格档的 tokens 实时派生,改了色板/圆角当场跟着变 · 在群里说一句即可给某个项目定风格 · 当前哪个项目用哪套,看「群·项目」页群卡的「设计风格」行","Swatches derive live from the style profile tokens — change the palette or radius and they follow · say a word in the group to set a project's style · which project uses which style is on the group card's \"Design style\" row on the Groups · Projects page"],
-  ["图标库","Icon library"],
-  ["与设计风格","Sits "],
-  ["平级","alongside design style"],
-  [":风格管怎么画(颜色/字体/圆角/描边),图标库管图形从哪来、叫什么名 · 一个项目分别选,在「群·项目」页那个群的「图标」行",": style says how to draw (colors / fonts / radius / stroke), the icon library says where the shapes come from and what they are called · chosen separately per project, on that group's \"Icons\" row on the Groups · Projects page"],
-  ["风格库已重新扫描","Style library rescanned"],
   ["暂时取不到额度,显示的仍是上一次的值","Could not fetch the quota right now; the value shown is still the previous one"],
   ["测试中","Testing"],
   ["暂无 · 用下方命令添加","None yet · add with the command below"],
@@ -7717,25 +6896,7 @@ const I18N_EN=[
   ["只读","Read-only"],
   ["开发","Develop"],
   ["全信任","Full trust"],
-  ["样张取不到","Samples unavailable"],
-  ["风格档/图标档声明的是实心,但这套系统没有实心目录 —— 实际取到的是下面这排线性图","The style / icon profile declares filled, but this system has no filled set — what you actually get is the outlined row below"],
-  ["这套没有实心","No filled form"],
-  ["图标库读取失败","Could not load the icon library"],
-  ["这套的图标包没装在这台机器上(几个包合计约 160MB,不随产品分发)—— 别的功能不受影响,但选了它取图标会取不到。装一次即可","This icon package is not installed on this machine (the packages total about 160MB and do not ship with the product) — nothing else is affected, but icon lookups will fail if you choose it. Install it once"],
   ["未安装","Not installed"],
-  ["线性","Outlined"],
-  ["实心","Filled"],
-  ["这套没有实心 —— 要实心得选另一套","This set has no filled form — choose another set for filled icons"],
-  ["每套的画法","Every set draws its icons "],
-  ["逐个都不一样","differently, one by one"],
-  [",连叫法都不同(同一个「更多」:more-horizontal / dots / dots-three)—— 换一套是换一整套图形和名字,不是换个皮肤。已选的那套写在项目里,跟着代码走",", and even the names differ (the same \"more\": more-horizontal / dots / dots-three) — switching sets means switching the whole set of shapes and names, not just a skin. The chosen set is written into the project and travels with the code"],
-  ["这套风格是按这个载体定的(小程序与后台网站的圆角、间距、字号本就不该一样)","This style is set for this platform (a mini program and an admin site should not share the same radii, spacing, and type sizes)"],
-  ["底色为深色","Dark background"],
-  ["深色","Dark"],
-  ["衬线","Serif"],
-  ["字体族里有等宽(代码/数据)","Font stack includes a monospace face (code/data)"],
-  ["等宽","Mono"],
-  ["这套风格的汉字不走黑体那条常规路(混用时按出现顺序列出)· 没有这枚标签 = 走系统黑体","Chinese text in this style does not take the usual sans-serif route (mixed kinds listed in order of appearance) · no tag = system sans-serif"],
   ["中文宋体","Chinese: serif"],
   ["中文圆体","Chinese: rounded"],
   ["中文手写","Chinese: handwritten"],
@@ -7752,50 +6913,19 @@ const I18N_EN=[
   ["中文黑体·宋体","Chinese: sans·serif"],
   ["中文黑体·圆体","Chinese: sans·rounded"],
   ["中文黑体·手写","Chinese: sans·handwritten"],
-  ["这份档写了字体,但栈里一个中文族都没有 —— 汉字会掉到浏览器默认字体,不受这套风格控制(纯英文产品可忽略)","This profile declares fonts but none in the stack covers Chinese — Chinese text falls back to the browser default font, outside this style's control (ignore for English-only products)"],
-  ["中文未声明","Chinese undeclared"],
-  ["胶囊圆角","Pill corners"],
-  ["改这一套本身(存回同一个名字)—— 正文默认原样保留,除非你勾「按新设定重写正文」","Edit this style in place (saved under the same name) — the body text is kept as is unless you tick \"Rewrite body text from the new settings\""],
   ["修改","Edit"],
-  ["以这一套为起点建一个**新的**:色板、圆角、字重都预填好,改成自己的即可(原来那套不动)","Create a new style starting from this one: palette, radius, and weight are prefilled — make it your own (the original stays untouched)"],
-  ["复制为新款","Duplicate as new"],
-  ["从风格库移除这一套(只删自己建的)","Remove this style from the library (custom styles only)"],
   ["删除","Delete"],
-  ["风格库是空的","The style library is empty"],
   ["内置预设","Built-in presets"],
   ["这张模型卡还没填 API Key","This model card has no API Key yet"],
   ["「","\""],
-  ["新建风格」配一套自己的(比如把公司品牌色配成一款)· 已经在某个项目里打磨好的那份,可在「群·项目」页那个群的「设计风格」行收录进来","New style\" creates one of your own (e.g. your company brand color as a style) · a style already polished in a project can be collected from the \"Design style\" row of that group on the Groups · Projects page"],
-  ["已移除 · 同名的内置风格重新可用","Removed · the built-in style with the same identifier is available again"],
-  ["已从风格库移除","Removed from the style library"],
   ["适合","Good for"],
-  ["内容阅读","Reading"],
-  ["品牌门面","Brand showcase"],
-  ["工具产品","Product UI"],
-  ["活动推广","Campaigns"],
-  ["生图插画","Image & illustration"],
-  ["小程序","Mini program"],
-  ["后台网站","Admin site"],
-  ["网页前台","Web front end"],
-  ["移动 App","Mobile app"],
-  ["印刷物料","Print materials"],
-  ["直角","Sharp"],
-  ["微圆","Subtle"],
-  ["柔圆","Soft"],
-  ["胶囊","Pill"],
   ["无","None"],
   ["轻","Light"],
-  ["明显","Pronounced"],
-  ["彩色","Colored"],
   ["成功","Success"],
   ["警告","Warning"],
-  ["危险","Danger"],
   ["中","Medium"],
   ["重","Heavy"],
-  ["底色","Background"],
   ["文字","Text"],
-  ["强调","Accent"],
-  ["次要","Muted"],
   ["底色不是合法的颜色值 —— 写成 #RRGGBB 或 #RGB;没改对之前存不进去","Background is not a valid color — use #RRGGBB or #RGB; it cannot be saved until fixed"],
   ["文字不是合法的颜色值 —— 写成 #RRGGBB 或 #RGB;没改对之前存不进去","Text is not a valid color — use #RRGGBB or #RGB; it cannot be saved until fixed"],
   ["强调不是合法的颜色值 —— 写成 #RRGGBB 或 #RGB;没改对之前存不进去","Accent is not a valid color — use #RRGGBB or #RGB; it cannot be saved until fixed"],
@@ -7804,89 +6934,18 @@ const I18N_EN=[
   ["文字不是合法的颜色值 —— 写成 #RRGGBB 或 #RGB","Text is not a valid color — use #RRGGBB or #RGB"],
   ["强调不是合法的颜色值 —— 写成 #RRGGBB 或 #RGB","Accent is not a valid color — use #RRGGBB or #RGB"],
   ["次要不是合法的颜色值 —— 写成 #RRGGBB 或 #RGB","Muted is not a valid color — use #RRGGBB or #RGB"],
-  ["预览暂时出不来","Preview unavailable right now"],
-  ["提到最多的颜色 ·","Most-used colors ·"],
-  ["没读到圆角设定,圆角保持原样","No radius setting found; the radius stays as it was"],
-  ["没读到颜色,四个颜色保持原样","No colors found; the four colors stay as they were"],
-  ["还读到","Also read"],
   ["投影 一处都没有 ⇒ 无","Shadow: none anywhere ⇒ None"],
   ["投影 很浅 ⇒ 轻","Shadow: very faint ⇒ Light"],
   ["投影 明显","Shadow: Pronounced"],
   ["投影 带颜色 ⇒ 彩色","Shadow: tinted ⇒ Colored"],
-  ["渐变到","Gradient to"],
   ["状态色 成功","Status colors: Success"],
   ["状态色 警告","Status colors: Warning"],
   ["状态色 危险","Status colors: Danger"],
-  ["(没提到的那几样保持原样)","(unmentioned ones stay as they were)"],
-  ["补充色(勾上的会一起写进这套风格)·","Extra colors (ticked ones are written into this style) ·"],
-  ["这一句只说事实,可以直接当描述 ·","This sentence states only facts and can serve as the description ·"],
-  ["用这句","Use this"],
-  ["这是起点不是结论 —— 逐项改到满意为止","This is a starting point, not a verdict — adjust each item until it looks right"],
-  ["修改风格","Edit style"],
-  ["新建风格","New style"],
-  ["从参考提炼(可选)","Extract from a reference (optional)"],
-  ["网址;本机目录请点「选目录…」","URL; for a local folder click \"Choose folder…\""],
-  ["从项目根目录里选一个目录","Pick a folder under the project root"],
-  ["选目录…","Choose folder…"],
   ["提炼","Extract"],
-  ["按参考里出现最多的色值、字体族与圆角给一套起点,不改动参考本身。要它读懂气质、连细则一起写出来,把参考发到群里说一句更合适。","Builds a starting point from the most common colors, font families, and radii in the reference, without touching the reference itself. To have it read the mood and write out the details too, send the reference to the group and ask there."],
   ["名称","Name"],
-  ["如 品牌紫","e.g. Brand purple"],
-  ["一句话描述","One-line description"],
-  ["这套风格是什么气质、给谁看","What mood this style has and who it is for"],
-  ["适用场景","Suitable scenes"],
-  ["挑方向时按场景筛 —— 一个都不标就等于挑不到它","Candidates are filtered by scene — tag none and it can never be picked"],
-  ["载体(可选)","Platform (optional)"],
-  ["这套只服务某种载体时才标(小程序和后台网站的圆角、间距、字号本来就该不一样)·","Tag only when this style serves one platform (a mini program and an admin site should not share radii, spacing, and type sizes) · "],
-  ["留空 = 通用","blank = general"],
-  [",不挑载体",", no platform preference"],
-  ["色板","Palette"],
-  ["是按钮那块的颜色,也是整套里最显眼的那个 · 深色浅色不用选,底色亮度会自己判"," is the button color and the most prominent one in the set · no need to choose dark or light; it is judged from the background brightness"],
-  ["带自源风格的补充色","Extra colors from the source style"],
-  ["勾上的会一起写进这套风格,勾掉就不带过来 —— 预览的色板条当场少一格","Ticked ones are written into this style; untick to leave them out — the preview palette strip loses a swatch right away"],
-  ["圆角","Corner radius"],
-  ["标题字重","Heading weight"],
-  ["投影","Shadow"],
-  ["这套有没有「层」—— 不写清楚,出图时就会随机长出卡片和投影 ·","Whether this style has \"layers\" — leave it unspecified and cards and shadows will pop up at random in generated images · "],
-  ["档把投影染成强调色"," tints shadows with the accent color"],
-  ["强调渐变(可选)","Accent gradient (optional)"],
-  ["强调色用渐变","Use a gradient for the accent"],
-  ["从强调色渐到这个色(135°)· 只给主按钮和头图这类大块用 —— 预览图上的按钮当场就是它","Fades from the accent to this color (135°) · only for large areas like primary buttons and hero images — the button in the preview shows it right away"],
-  ["状态色(可选)","Status colors (optional)"],
-  ["这套定了成功 / 警告 / 危险三色","This style defines success / warning / danger colors"],
-  ["只表达语义、不参与视觉风格 —— 它们","Semantic only, not part of the visual style — they "],
-  ["抢不走强调色","never take over the accent"],
-  ["(预览图上排在色板右边、画成圆点)"," (shown as dots to the right of the palette in the preview)"],
-  ["标识(库里的唯一名字)","Identifier (unique name in the library)"],
-  ["小写字母、数字与连字符,如 brand-purple","Lowercase letters, digits, and hyphens, e.g. brand-purple"],
-  ["改的就是这一套,标识不动 —— 换个标识那是","You are editing this very style; the identifier stays — a new identifier means "],
-  ["另建一套","creating another style"],
-  [",用「复制为新款」",", use \"Duplicate as new\""],
-  ["存进库后就用它来指代这一套","Once saved, this is how the style is referred to"],
-  ["按新设定重写正文","Rewrite body text from the new settings"],
-  ["只改上面这些设定,正文原样保留",": only the settings above change and the body text is kept as is"],
-  ["(群里一轮轮磨出来的细则不会丢)· 勾上则连正文一起按新设定重新生成,"," (details refined turn by turn in the group are not lost) · tick to regenerate the body text from the new settings too; "],
-  ["手写的细则会被覆盖","handwritten details will be overwritten"],
-  ["覆盖库里的同名风格","Overwrite the library style with the same identifier"],
-  ["实时预览","Live preview"],
-  ["这张图和之后出的图依据同一份设定 —— 图上不对的地方,就是设定还不对","This image and every image generated later follow the same settings — whatever looks wrong here means the settings are still wrong"],
   ["保存修改","Save changes"],
-  ["存入风格库","Save to style library"],
-  ["只能用小写字母、数字与连字符,首位是字母或数字","Only lowercase letters, digits, and hyphens; must start with a letter or digit"],
-  ["先填一个网址,或本机上项目所在目录的绝对路径","Enter a URL first, or the absolute path of the project folder on this machine"],
-  ["已给出一套起点 —— 逐项改到满意为止","Starting point ready — adjust each item until it looks right"],
   ["已保存修改 · 正文已按新设定重写","Changes saved · body text rewritten from the new settings"],
   ["已保存修改 · 正文保持原样(里面写死的色值记得核对)","Changes saved · body text kept as is (double-check any hard-coded color values in it)"],
-  ["已存入风格库,全部群都能用 · 细则可以在群里让它按这份骨架接着补","Saved to the style library, available to all groups · ask in the group to flesh out the details on this skeleton"],
-  ["已存入风格库,全部群都能用(它盖住了同名的内置风格) · 细则可以在群里让它按这份骨架接着补","Saved to the style library, available to all groups (it shadows the built-in style with the same identifier) · ask in the group to flesh out the details on this skeleton"],
-  ["收录进风格库","Collect into style library"],
-  ["把这个项目正在用的那套风格","Puts a "],
-  ["一份进全局库 —— 项目里那份原样不动。收录之后,别的群也能直接挑到它。"," of the style this project is using into the global library — the project's own copy stays untouched. Once collected, other groups can pick it directly."],
-  ["名称(可改)","Name (editable)"],
-  ["库里显示的名字","Name shown in the library"],
-  ["小写字母、数字与连字符,如 brand-house","Lowercase letters, digits, and hyphens, e.g. brand-house"],
-  ["收录","Collect"],
-  ["已收录进风格库,全部群都能挑到它","Collected into the style library; all groups can pick it"],
   ["白名单","Allowlist"],
   ["read-only 沙箱:只读、不改文件","read-only sandbox: read only, no file changes"],
   ["dontAsk:仅放行下方 allow/deny 白名单 + 内置只读集,其余自动拒(fail-closed)","dontAsk: only the allow/deny allowlist below plus the built-in read-only set pass; everything else is auto-denied (fail-closed)"],
@@ -7924,10 +6983,8 @@ const I18N_EN=[
   ["群里直接对它说「每天9点拉构建报告」就会创建;支持创建/修改/删除定时任务,到点触发执行或只发提醒 —— 下方「定时任务」区可查看/管理","Just tell it in the group \"pull the build report at 9 every day\" and it creates one; supports creating/editing/deleting scheduled tasks that run the agent or just send a reminder when due — view/manage them in the \"Scheduled tasks\" section below"],
   ["定时任务","Scheduled tasks"],
   ["按需使用:仅从零设计新产品且未定视觉方向时推荐预设;也可按要求提炼参考并写入项目 DESIGN.md","On demand: presets are recommended only for a new product with no visual direction; references can also be extracted and saved to the project DESIGN.md when requested"],
-  ["设计风格档","Design style profiles"],
   ["默认内建 · 飞书收发/拉历史/回复编辑撤回/下载/表情 ·","Built in by default · Feishu send/receive, history, reply/edit/recall, download, reactions · "],
   ["(群里说一句即可让 agent 创建/修改) ·"," (one sentence in the group lets the agent create or edit them) · "],
-  ["(新产品设计时按需使用) ·"," (used on demand for new product design) · "],
   ["生图","Image generation"],
   ["(需机器已登录 codex,借订阅后台生图) · agent 首轮自知(身份/项目/模型/权限/控制台地址 + 已启用插件)"," (requires codex signed in on this machine; generates via the subscription in the background) · agent self-awareness on the first turn (identity/project/model/permissions/console URL + enabled plugins)"],
   ["(需机器已登录 codex,借订阅后台生图) · agent 首轮自知(身份/项目/模型/权限/控制台地址 + 已启用插件) ·"," (requires codex signed in on this machine; generates via the subscription in the background) · agent self-awareness on the first turn (identity/project/model/permissions/console URL + enabled plugins) · "],
@@ -8098,24 +7155,8 @@ const I18N_EN=[
   ["已关联 · 项目目录已 git init","Linked · project folder initialized with git init"],
   ["已关联 · origin 已更新","Linked · origin updated"],
   ["已关联","Linked"],
-  ["设计风格","Design style"],
   ["(未命名)","(untitled)"],
-  ["这份档管这一块","This profile covers this platform"],
-  ["把这一份复制进全局风格库,之后别的群也能直接挑到它(项目里那份不动)","Copy this profile into the global style library so other groups can pick it too (the project copy stays untouched)"],
-  ["未设置 · 仅从零设计新产品且未定方向时推荐风格库","Not set · the style library is recommended only for a new product with no visual direction"],
-  ["这个项目有多份风格档 —— 出图时按任务挑对应那份(小程序与后台网站的圆角、间距、字号本来就该不一样)","This project has several style profiles — the matching one is chosen per task when generating images (a mini program and an admin site should not share radii, spacing, and type sizes)"],
   ["图标","Icons"],
-  ["未选 · 取图标会取不到","Not chosen · icon lookups will fail"],
-  ["这个项目的几份风格档形态各不相同 —— 要改去各自那份档里改,这里不替你统一","This project's style profiles disagree on the icon form — change it in each profile; nothing is unified here"],
-  ["线性还是实心 · 写进项目的图标设定","Outlined or filled · written into the project icon settings"],
-  ["各档形态不同","Profiles differ"],
-  ["认不出这个形态","Unknown form"],
-  ["档里写的系统名认不出来(手改坏了?)—— 现在等于没选","The system name in the profile is not recognized (edited by hand?) — it currently counts as unset"],
-  ["认不出这个系统名","Unknown system name"],
-  ["兜底库名认不出","Unknown fallback library"],
-  ["这套系统的图标包没装在这台机器上 —— 取图标会取不到,装一次即可","This icon system's package is not installed on this machine — icon lookups will fail; install it once"],
-  ["库未安装","Library not installed"],
-  ["的另一件事 —— 这里管图形从哪来、叫什么名、线性还是实心;风格管怎么画(描边粗细/端点/尺寸档)"," as a separate concern — this decides where shapes come from, what they are called, and outlined or filled; the style decides how they are drawn (stroke width/caps/size steps)"],
   ["画布","Board"],
   ["已创建","Created"],
   ["打开画板","Open board"],
@@ -8192,9 +7233,6 @@ const I18N_EN=[
   ["已暂停 · 群内已通知","Paused · group notified"],
   ["已恢复 · 群内已通知","Resumed · group notified"],
   ["权限已保存 · 下轮生效","Permissions saved · takes effect next turn"],
-  ["要取消图标系统,删掉项目里的 design/icons.md","To remove the icon system, delete design/icons.md in the project"],
-  ["先选一套图标系统","Choose an icon system first"],
-  ["图标形态已定:实心","Icon form set: filled"],
   ["图标形态已定:线性","Icon form set: outlined"],
   ["⚠ 完全访问:跳过所有权限校验与目录围栏 — 群里任何成员的一条消息都能在这台机器上执行任意操作。\n仅限完全可信的私人群。","⚠ Full access: skips all permission checks and the folder fence — one message from any member of the group can run anything on this machine.\nOnly for fully trusted private groups."],
   ["已设为完全访问 · 下轮生效","Set to full access · takes effect from the next turn"],
@@ -8327,8 +7365,8 @@ const I18N_EN=[
   ["停止","Stop"],
   ["(无输出)","(no output)"],
   ["(已停止)","(stopped)"],
-  ["群项目都放这里 · 选目录、保存群绑定、从本机目录提炼风格,只认这些目录之内的路径","All group projects live here · choosing a folder, saving a group binding, and extracting a style from a local folder only accept paths inside these folders"],
-  ["群项目都放这里 · 选目录、保存群绑定、从本机目录提炼风格,只认这些目录之内的路径 · 当前是默认值","All group projects live here · choosing a folder, saving a group binding, and extracting a style from a local folder only accept paths inside these folders · currently the default"],
+  ["群项目都放这里 · 选目录、保存群绑定,只认这些目录之内的路径","All group projects live here · choosing a folder and saving a group binding only accept paths inside these folders"],
+  ["群项目都放这里 · 选目录、保存群绑定,只认这些目录之内的路径 · 当前是默认值","All group projects live here · choosing a folder and saving a group binding only accept paths inside these folders · currently the default"],
   ["不存在 —— 在服务器上建好即可","Does not exist — just create it on the server"],
   ["这里只读,控制台不提供修改。要改,在服务器上编辑配置文件里的","Read-only here — the console offers no way to change it. To change it, edit "],
   ["(一个路径或数组,认 ~);改后即时生效,不用重启。"," in the config file on the server (one path, or an array; ~ is accepted); changes apply immediately, no restart needed."],
@@ -8925,7 +7963,6 @@ const I18N_EN=[
   ["点保存生效","Takes effect when saved"],
   ["只读：能看不能改文件，也不能联网发送。","Read-only: it can read files but not change them, and cannot send over the network."],
   ["Codex 的插件对所有 Codex 群一起生效，在「模型 · 库」页管理。","Codex plugins apply to every Codex group; manage them on the Models page."],
-  ["设计与画布","Design and board"],
   ["不再处理这里的消息，文件保留。","Stops handling messages here. Files stay."],
   ["移除群项目…","Remove group project…"],
   ["移除项目…","Remove project…"],
@@ -8993,7 +8030,6 @@ const I18N_EN=[
   ["结束","End"],
   ["提交","Submit"],
   ["检测","Check"],
-  ["采用","Use"],
   ["移除…","Remove\u2026"],
   ["进度","Progress"],
   ["指南","Guide"],
@@ -9229,40 +8265,17 @@ const I18N_EN_RX=[
   [/^(\d+) 个群已开始新的一段对话$/,"$1 group(s) started a new conversation"],
   [/^已添加 (\S+)$/,"Added $1"],
   [/^叫法:(.+)$/,"Naming: $1"],
-  [/^(\d+) 个图标 · 语义名 (\d+) 条 · 兜底 (.+)$/,"$1 icons · $2 semantic names · fallback $3"],
-  [/^(\d+) 个图标 · 语义名 (\d+) 条$/,"$1 icons · $2 semantic names"],
-  [/^语义名 (\d+) 条 · 兜底 (.+)$/,"$1 semantic names · fallback $2"],
-  [/^语义名 (\d+) 条$/,"$1 semantic names"],
-  [/^装上 (.+) 后这里会出样张$/,"Install $1 and samples will appear here"],
-  [/^风格库读取失败:(.+)$/,"Failed to load the style library: $1"],
   // 三种及以上的组合(上面成对的穷举只到两种):逐个换成英文名,别留半句中文(「手绘温度」是宋体·黑体·手写)
   [/^中文((?:宋体|圆体|手写|黑体)(?:·(?:宋体|圆体|手写|黑体))+)$/,(all,k)=>"Chinese: "+k.split("·").map(x=>({宋体:"serif",圆体:"rounded",手写:"handwritten",黑体:"sans"}[x])).join("·")],
   [/^圆角 (\d+(?:\.\d+)?)px$/,"Radius $1px"],
-  [/^这套风格里图标的画法:实心 · 描边 (\S+) · 端点 (\S+) · 尺寸档 (\d+) 个。图形从哪来是另一件事,由项目的图标系统决定$/,"How this style draws icons: filled · stroke $1 · caps $2 · $3 size steps. Where the shapes come from is a separate matter, decided by the project icon system"],
-  [/^这套风格里图标的画法:线性 · 描边 (\S+) · 端点 (\S+) · 尺寸档 (\d+) 个。图形从哪来是另一件事,由项目的图标系统决定$/,"How this style draws icons: outlined · stroke $1 · caps $2 · $3 size steps. Where the shapes come from is a separate matter, decided by the project icon system"],
-  [/^这套风格里图标的画法:实心 · 描边 (\S+) · 端点 (\S+)。图形从哪来是另一件事,由项目的图标系统决定$/,"How this style draws icons: filled · stroke $1 · caps $2. Where the shapes come from is a separate matter, decided by the project icon system"],
-  [/^这套风格里图标的画法:线性 · 描边 (\S+) · 端点 (\S+)。图形从哪来是另一件事,由项目的图标系统决定$/,"How this style draws icons: outlined · stroke $1 · caps $2. Where the shapes come from is a separate matter, decided by the project icon system"],
-  [/^图标描边 (\S+)$/,"Icon stroke $1"],
-  [/^(\d+) 套 · 这台机器上配的 · 全部群都能用$/,"$1 styles · configured on this machine · available to all groups"],
   [/^1 套$/,"1 style"],
   [/^(\d+) 套$/,"$1 styles"],
-  [/^从风格库移除「(.+)」\?\n项目里已经用上它的那些不受影响。$/,"Remove \"$1\" from the style library?\nProjects already using it are not affected."],
   [/^字距 (\S+)em$/,"Letter spacing $1em"],
   [/^描边 (\S+)px$/,"Stroke $1px"],
   [/^间距 (\S+)px 网格$/,"$1px spacing grid"],
   [/^标题\/正文 (\S+)$/,"Heading/body $1"],
   [/^行高 (\S+)$/,"Line height $1"],
   [/^投影 (\w+)$/,"Shadow $1"],
-  [/^这个目录里已经有一份风格档\((.+)\)—— 直接取了它的设定,没有再去猜$/,"This folder already has a style profile ($1) — its settings were used directly, no guessing"],
-  [/^读了 1 份样式表$/,"Read 1 stylesheet"],
-  [/^读了 (\d+) 份样式表$/,"Read $1 stylesheets"],
-  [/^扫了 1 个样式文件$/,"Scanned 1 style file"],
-  [/^扫了 (\d+) 个样式文件$/,"Scanned $1 style files"],
-  [/^字体族 · (.+)$/,"Font families · $1"],
-  [/^圆角取值 · (.+)px$/,"Radius values · $1px"],
-  [/^库里已经有同名的「(.+)」—— 要替换掉它,请勾下面那项$/,"The library already has \"$1\" under this identifier — to replace it, tick the option below"],
-  [/^与内置的「(.+)」同名 —— 存下去会盖住它;哪天删掉这一套,内置的那套自动回来$/,"Shares its identifier with the built-in \"$1\" — saving will shadow it; delete this style later and the built-in one comes back"],
-  [/^与内置的「(.+)」同名 —— 存下去会盖住它$/,"Shares its identifier with the built-in \"$1\" — saving will shadow it"],
   [/^(danger-full-access|bypassPermissions):跳过所有权限校验与目录围栏,可读写整机$/,"$1: skips all permission checks and the folder fence; can read and write the whole machine"],
   [/^项目目录的 origin 与配置一致:(.+)$/,"The project folder's origin matches the config: $1"],
   [/^配置里关联着 (.+),但项目目录已不是 git 仓库 —— 点「保存」可重新关联$/,"The config links $1, but the project folder is no longer a git repository — click \"Save\" to relink"],
@@ -9274,22 +8287,11 @@ const I18N_EN_RX=[
   [/^一次性 (.+)$/,"One-off $1"],
   [/^(\d+) 字$/,"$1 chars"],
   [/^(.+) · (.+)\(未安装\)$/,"$1 · $2 (not installed)"],
-  [/^改这里会同时改这 (\d+) 份风格档里的图标形态$/,"Changing this also changes the icon form in $1 style profiles"],
-  [/^图标形态由这几份风格档说了算:(.+);改上面的下拉会同时改它们$/,"Icon form is decided by these style profiles: $1; changing the dropdown above changes them too"],
-  [/^跟 (\d+) 份风格档联动$/,"Linked to $1 style profiles"],
   [/^图标档里写的形态「(.+)」认不出来 —— 现在等于没写\(按线性走\),不是你以为的那个$/,"The form \"$1\" in the icon profile is not recognized — it currently counts as unset (outlined), not what you intended"],
   [/^档里写的兜底库「(.+)」认不出来 —— 现在等于没有兜底,而不是去那家找$/,"The fallback library \"$1\" in the profile is not recognized — there is currently no fallback, rather than looking there"],
-  [/^图形从 (.+) 来 · 取不到时去 (.+) 兜底 · 语义名 (\d+) 条 · 图标目录 (.+)$/,"Shapes from $1 · falls back to $2 when missing · $3 semantic names · icon folder $4"],
-  [/^图形从 (.+) 来 · 取不到时去 (.+) 兜底 · 语义名 (\d+) 条$/,"Shapes from $1 · falls back to $2 when missing · $3 semantic names"],
-  [/^图形从 (.+) 来 · 不兜底 · 语义名 (\d+) 条 · 图标目录 (.+)$/,"Shapes from $1 · no fallback · $2 semantic names · icon folder $3"],
-  [/^图形从 (.+) 来 · 不兜底 · 语义名 (\d+) 条$/,"Shapes from $1 · no fallback · $2 semantic names"],
   [/^已切到 (.+) · 会话已重置,下条消息生效$/,"Switched to $1 · session reset; takes effect from the next message"],
   [/^已保存 (.+) · daemon 未运行下次生效$/,"Saved $1 · the daemon is not running; takes effect next time it runs"],
   [/^([\s\S]*)\n\n继续\?$/,"$1\n\nContinue?"],
-  [/^图标系统已定:(.+) · ⚠ 这套没有实心,形态已回到线性$/,"Icon system set: $1 · ⚠ this set has no filled form; form reverted to outlined"],
-  [/^图标系统已定:(.+) · 已写进项目的 design\/icons\.md$/,"Icon system set: $1 · written to the project design/icons.md"],
-  [/^图标形态已定:实心 · 已同步改 (\d+) 份风格档\((.+)\)$/,"Icon form set: filled · also updated $1 style profiles ($2)"],
-  [/^图标形态已定:线性 · 已同步改 (\d+) 份风格档\((.+)\)$/,"Icon form set: outlined · also updated $1 style profiles ($2)"],
   [/^✓ 可访问 · (\d+) 个分支$/,"✓ Reachable · $1 branches"],
   [/^已填入「(.+)」预设 — 可手改,点「保存权限」生效$/,"Filled in the \"$1\" preset — you can edit it by hand; click \"Save permissions\" to apply"],
   [/^已停用 (\d+) 个$/,"$1 turned off"],
@@ -9444,7 +8446,7 @@ function trSeg(k){
 }
 /* 单串翻译:中文态原样返回;英文态按「精确 → 正则 → 按「 · 」拆段」查,前后空白原样包回去,
    都不中返回原串。
-   ⚠ 拆段兜底是必须的:连接健康度、插件摘要、风格证据行这些是把可变片段用「 · 」拼成**一个**
+   ⚠ 拆段兜底是必须的:连接健康度、插件摘要这些是把可变片段用「 · 」拼成**一个**
    文本节点的,组合数几十上百种,穷举不了 —— 整串不中就逐段查,有一段命中就按原分隔符拼回去
    (一段都不中则原样返回,不留半吊子)。 */
 function trText(s){
@@ -9723,7 +8725,7 @@ function concCapField(value,durable,running){
   return `<div class="field" style="flex:1;margin-bottom:0"><label class="f">并发上限</label><input id="aConc" type="number" ${durable?'min="1" max="32"':'min="0"'} value="${esc(value)}"/>
           <div class="hint" style="margin-top:5px">${durable?(pending?`当前运行 ${esc(running)} 个，重启服务后改为 ${esc(value)} 个`:'同时运行的群任务数 · 1–32 · 重启服务后生效'):'同时运行的群任务数 · 0 = 不限'}</div></div>`;
 }
-const RUNTIME_DISABLED_SELECTORS='.gpv,[data-gcfg],[data-cronnew],[data-cronadd],[data-crontgl],[data-cronrm],[data-reposave],[data-repotest],[data-iconuse],[data-iconsys],[data-iconstyle],[data-stylecollect],#amDel,#pgSend,#pgNew,#fSave,#slSave,#wSave,#styleNew,[data-styleedit],[data-styledup],[data-styledel],#nsSave,#nsExtract,#clSave,[data-pvstop],[data-lvkill],[data-lvkillall]';
+const RUNTIME_DISABLED_SELECTORS='.gpv,[data-gcfg],[data-cronnew],[data-cronadd],[data-crontgl],[data-cronrm],[data-reposave],[data-repotest],#amDel,#pgSend,#pgNew,#fSave,#slSave,#wSave,[data-pvstop],[data-lvkill],[data-lvkillall]';
 // 持久处理流程按服务端白名单放行:前端照同一份名单判断某个动作能不能做,而不是一刀切。
 function runtimeAllows(method,path){
   const caps=S&&S.runtimeCapabilities;if(!caps)return true;

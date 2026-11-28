@@ -17,7 +17,7 @@ const READ_PATHS = ['/api/wecom/chats', '/api/wecom/attach', '/api/feishu/attach
   '/api/usage/view',
   // The overview's disk and memory line; reads this machine, writes nothing.
   '/api/machine/view',
-  '/api/plugins', '/api/design/styles', '/api/design/icons', '/api/fs/listdir',
+  '/api/plugins', '/api/fs/listdir',
   '/api/feishu/admin-candidates', '/api/feishu/org-users', '/api/feishu/resolve-contact',
   '/api/feishu/chats', '/api/feishu/chat-members', '/api/update', '/api/claude/models',
   '/api/groups/model-options',

@@ -1,5 +1,40 @@
 [
   {
+    "version": "1.5.6",
+    "date": "2026-11-28",
+    "name": "The design style and icon libraries are gone; fixes for recalls, queue notices and the usage card",
+    "items": [
+      {
+        "t": "The design style and icon libraries are gone",
+        "d": "The style library and icon library folds on the console's Models page and the Design style and Icons rows in group settings are removed, and agents no longer read a project's style file or draw to an icon system. An icon library setting left in an older config is no longer read and causes no error."
+      },
+      {
+        "t": "A recalled follow-up no longer reaches the runner",
+        "d": "A follow-up recalled just as its queue notice was being sent could still be passed to Codex. A recall is now noted the moment it arrives, so the message is neither admitted nor merged into the current task."
+      },
+      {
+        "t": "Queue notices no longer promise the wrong place",
+        "d": "When the running task can still take follow-ups in the same thread, a new message is told \"Received — joins the current task, or runs after it\" instead of being told it runs after the current task and then joining it."
+      },
+      {
+        "t": "File names with spaces are hidden whole",
+        "d": "In subagent titles on the reply card and in /status, a path whose last name has spaces (Private Design.md, say) used to be hidden only up to the space. The whole path is now replaced by ‹path›, quoted or with escaped spaces as well."
+      },
+      {
+        "t": "Usage and sign-in status are not overwritten by late answers",
+        "d": "After signing in again, a check sent before the sign-in that answers late no longer brings back a \"not signed in\" or the old account's Codex usage. When a Codex answer has no usage numbers for now, the overview keeps the last ones and fades them instead of going back to \"Awaiting a report\"."
+      },
+      {
+        "t": "Notices name the service's own key when it is the one at fault",
+        "d": "When a Claude Code model card has no key and runs on the ANTHROPIC_API_KEY in the SintBot service's environment, a refused or used-up key is named as that key, and the admin is asked to check or remove it rather than to check the card's key."
+      },
+      {
+        "t": "Small changes",
+        "d": "The follow-up mark is now ↳. A final reply drops trailing blank lines, so a one-line answer no longer leaves a tall empty card. The license notice and the package author now read SintLab."
+      }
+    ]
+  },
+  {
     "version": "1.5.5",
     "date": "2026-11-28",
     "name": "A new look for the console; fixes for follow-ups, the usage card and account notices",

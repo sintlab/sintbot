@@ -19,9 +19,8 @@
 //   ⇒ **配置只有 `cfg.proxy` 一个来源**,daemon 与子进程走同一份,不会各读各的。
 //
 // ⭐ 零依赖能解:HTTP `CONNECT` + `tls.connect` 包成 `https.Agent` 子类,REST 与 WS
-//   **共用同一个 agent**。⇒ `src/design.js`「从参考提炼」段头那条「要支持得引依赖 —— 这是零依赖守则
-//   不换的东西」**已被推翻**(要引依赖的是 undici 的 `ProxyAgent`/`setGlobalDispatcher`,
-//   那是另一条路)。⚠ REST 必须从 `fetch` 换成 `node:https` —— **`fetch` 没有挂 agent 的口子**。
+//   **共用同一个 agent**(不用引 undici 的 `ProxyAgent`/`setGlobalDispatcher`)。
+//   ⚠ REST 必须从 `fetch` 换成 `node:https` —— **`fetch` 没有挂 agent 的口子**。
 //
 // ⚠ **只支持 `http://` 的代理**(明文 HTTP CONNECT)。`socks5://` / `https://` 一律不认:
 //   把 SOCKS 端口当 HTTP 代理发 CONNECT,在 Clash 的 mixed-port 上会**恰好碰对**(同一端口
@@ -310,7 +309,7 @@ function createProxyFetch(proxyUrl, { noProxy = '', agent: injectedAgent = null,
           return resolve(request(next, nextInit, depth + 1))
         }
         // init.maxBytes(非标准,fetch 会忽略它):响应体边收边数,到线就**截断**并断开 —— 这条路把整个响应
-        // 攒进内存,不封顶的话一个几百 MB 的响应就能把 daemon 撑爆(风格提炼会替人去拉任意公网页面)。
+        // 攒进内存,不封顶的话一个几百 MB 的响应就能把 daemon 撑爆。
         // 截断而不是报错:要的往往只是开头(HTML 的 <head> 里就是全部样式表链接)。响应带 capped / truncated 两个标记。
         const chunks = []
         let got = 0

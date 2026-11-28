@@ -21,7 +21,7 @@ function chooseRegistry(configured, officialReachable) {
   return { registry: MIRROR, reason: 'mirror' }
 }
 
-// pkg 可以是一个包名,也可以是一组(设计图标库四个包一条命令装齐)
+// pkg 可以是一个包名,也可以是一组(一组时一条命令装齐)
 function installArgs(pkg, registry) {
   const packages = [].concat(pkg)
   // Claude's npm package needs both its platform optional dependency and postinstall.
@@ -76,7 +76,7 @@ function installGlobal(name, { run = runNpm, log = () => {}, probe = probeCli, b
   return { ...result, ok: verification.ok, verification }
 }
 
-// 按包名装(一个或一组),选源同上。只给向导装确定的包用(Claude Code / Codex / 设计图标库),不接用户输入的名字
+// 按包名装(一个或一组),选源同上。只给向导装确定的包用(Claude Code / Codex),不接用户输入的名字
 function installPackages(pkg, { run = runNpm, log = () => {} } = {}) {
   const { registry, reason } = pickRegistry(run)
   if (reason === 'mirror') log(`npm 官方源连不上,改用国内镜像 ${MIRROR}`)

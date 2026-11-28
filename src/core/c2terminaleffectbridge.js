@@ -32,6 +32,18 @@ const LOCAL_EFFECTS = new Set(['markTainted', 'clearTainted',
 // messages while result.text contains only the last one. Keep this projection
 // process-local: the durable terminal payload is validated by the core and
 // never stores model text in the journal.
+// A model answer may end in a run of blank lines and bare <br> lines (seen
+// 2026-11-28: one line of answer, then eight "\n\n\n<br>", and a card with a
+// tall empty block under it). Only that tail goes: a <br> that is not on a line
+// of its own, one indented as code (four spaces or a tab), and everything
+// before the tail, are kept as written.
+const BR_LINE_END = /\n {0,3}<br\s*\/?>$/i
+function trimReplyTail(text) {
+  let out = text.trimEnd()
+  while (BR_LINE_END.test(out)) out = out.replace(BR_LINE_END, '').trimEnd()
+  return out || text
+}
+
 function terminalReplyText(payload) {
   if (!payload || typeof payload.resultText !== 'string' ||
       typeof payload.bufferText !== 'string' ||
@@ -47,8 +59,8 @@ function terminalReplyText(payload) {
       .state.outcome.status === 'error') return payload.source === 'runner-exit'
         ? INTERRUPTED_NOTICE : FAILURE_NOTICE
   }
-  return (payload.answerText.trim() ? payload.answerText : payload.bufferText) ||
-    payload.resultText
+  return trimReplyTail((payload.answerText.trim() ? payload.answerText : payload.bufferText) ||
+    payload.resultText)
 }
 
 function prepareTerminalEffectBridge({ runtime, payloadHandles, receiptId, chatId,

@@ -157,10 +157,13 @@ function authProbe(bin = 'codex', timeoutMs = 12000) {
 const CACHE = new Map() // bin -> { at, val }
 const PENDING = new Map() // bin -> Promise<judgeAuth 结果>
 // The last limits the service gave for each bin, and when (bin -> { at, usage }).
-// Only an answer the service accepted replaces them; an ask that reaches
-// nothing or a refused sign-in leaves them and their time as they were, so
-// whoever shows them can tell how old they are.
+// Only an accepted answer that holds limits replaces them; an ask that reaches
+// nothing, a refused sign-in or an answer with no limits in it (both windows
+// empty, no credits) leaves them and their time as they were, so whoever
+// shows them can tell how old they are.
 const USAGE = new Map()
+// Moved by a new sign-in: a probe that started asking before it stores nothing.
+let SIGN_IN = 0
 const TTL = 60_000
 // 写缓存的唯一入口(cachedAuthProbe / peekAuthProbe / 控制台验证接口都经这里,规则一致):
 // 服务端拒绝过令牌(dead)之后,「探不到」(未验证)**不许**把它洗掉 —— 那只说明这会儿连不上,不说明令牌好了;
@@ -172,7 +175,7 @@ function storeAuthProbe(bin, val) {
   const next = keep ? prev.val : val
   const now = Date.now()
   CACHE.set(bin, { at: now, storedAt: now, val: next })
-  if (val && val.verified && val.ok) USAGE.set(bin, { at: now, usage: val.usage || null })
+  if (val && val.verified && val.ok && val.usage) USAGE.set(bin, { at: now, usage: val.usage })
   return next
 }
 // The last limits the service gave and when they were read ({ at, usage }),
@@ -182,8 +185,14 @@ function lastUsage(bin = 'codex') {
   const u = USAGE.get(bin)
   return u ? { at: u.at, usage: u.usage } : null
 }
-// Forgets the limits read (a new sign-in: they may be another account's).
-function clearUsage() { USAGE.clear() }
+// A sign-in has just finished: what was known may be another account's. The
+// answers, the limits read and any probe still asking with the old sign-in are
+// dropped; that probe still answers whoever was waiting on it, but its answer
+// is not stored, and the next ask starts a probe of its own.
+function newSignIn() { SIGN_IN++; PENDING.clear(); CACHE.clear(); USAGE.clear() }
+// Which sign-in an answer belongs to: a caller that keeps its own copy reads
+// this before it asks and keeps the answer only if it has not changed.
+const signInGeneration = () => SIGN_IN
 // When the cached answer was obtained (milliseconds), or null before any.
 // Forcing a new probe (clearCache) does not change it.
 function authProbeAt(bin = 'codex') {
@@ -193,8 +202,9 @@ function authProbeAt(bin = 'codex') {
 function refreshAuthProbe(bin) {
   let p = PENDING.get(bin)
   if (!p) {
+    const signIn = SIGN_IN
     p = authProbe(bin)
-      .then((val) => storeAuthProbe(bin, val))
+      .then((val) => (signIn === SIGN_IN ? storeAuthProbe(bin, val) : val))
       .finally(() => { if (PENDING.get(bin) === p) PENDING.delete(bin) })
     PENDING.set(bin, p)
   }
@@ -343,4 +353,4 @@ function formatUsage(u, lang = 'zh') {
   return parts.join(' │ ') || null
 }
 
-module.exports = { authProbeAt, lastUsage, clearUsage, loginStatus, cachedLoginStatus, clearLoginCache, rateLimits, listModels, parseLoginStatus, mapRateLimits, mapModels, formatUsage, windowLabel, PRESET_MODELS, judgeAuth, authProbe, cachedAuthProbe, peekAuthProbe, clearCache, decodeAuthJson, readAuthFile, describeLogin }
+module.exports = { authProbeAt, lastUsage, newSignIn, signInGeneration, loginStatus, cachedLoginStatus, clearLoginCache, rateLimits, listModels, parseLoginStatus, mapRateLimits, mapModels, formatUsage, windowLabel, PRESET_MODELS, judgeAuth, authProbe, cachedAuthProbe, peekAuthProbe, clearCache, decodeAuthJson, readAuthFile, describeLogin }

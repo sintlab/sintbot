@@ -52,14 +52,20 @@ function loginStatus(bin = 'claude', timeoutMs = 8000) {
 // 每次都 spawn 一个进程没必要。登录态分钟级变化足够,取 60s。
 const CACHE = new Map() // bin -> { at, val }
 const TTL = 60_000
+// clearCache 一次就加一:之前起的检测跑完照样回给等它的人,但不写缓存 —— 刚登录完时,
+// 登录前起的那次「未登录」晚到一步,会带着新时间戳把卡片压红一分钟。
+let GEN = 0
 async function cachedLoginStatus(bin = 'claude', ttl = TTL) {
   const c = CACHE.get(bin)
   if (c && Date.now() - c.at < ttl) return c.val
+  const gen = GEN
   const val = await loginStatus(bin)
-  CACHE.set(bin, { at: Date.now(), val })
+  if (gen === GEN) CACHE.set(bin, { at: Date.now(), val })
   return val
 }
-function clearCache() { CACHE.clear() } // 「重新检测」按钮:绕过 TTL
+function clearCache() { GEN++; CACHE.clear() } // 「重新检测」按钮、登录完成、升级后:绕过 TTL
+// 调用方自己另存一份时用:问之前记下,回来时变了就别存(同上,登录前起的检测晚到)。
+const cacheGeneration = () => GEN
 
 // 登录态 → 一行人话(卡片 chip / doctor 详情共用,措辞单一事实源)。
 function describeLogin(s) {
@@ -71,4 +77,4 @@ function describeLogin(s) {
   return { level: 'ok', text: bits.join(' · ') }
 }
 
-module.exports = { loginStatus, cachedLoginStatus, clearCache, parseAuthStatus, describeLogin }
+module.exports = { loginStatus, cachedLoginStatus, clearCache, cacheGeneration, parseAuthStatus, describeLogin }

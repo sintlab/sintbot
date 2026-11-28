@@ -114,25 +114,50 @@ const orNull = (value) => (typeof value === 'string' ? value : null)
 // (/Volumes/Work/Vault) is no less private than a home. A path here is an
 // absolute one at least two names deep (a lone `/status` stays), one under a
 // home folder (~/a, ~name/a), one on a drive (C:\a, C:/a) or a file:// address.
-// Folder names under a home, a volume or a drive may hold single spaces
-// (/Volumes/My Drive/Clients); punctuation right after a path stays outside the
-// label. Relative names (src/a.js), fractions and web addresses are
-// left as they are.
+// Names may hold spaces: a quoted path ("…", '…', `…`, 「…」, “…”) is replaced
+// up to its closing quote, a space escaped the shell way (My\ File.md) belongs
+// to the name, a folder name under a home, a volume or a drive may hold single
+// spaces (/Volumes/My Drive/Clients), and a bare last name runs on over a few
+// words to a file name (/Volumes/Work/Private Design.md). Punctuation right
+// after a path stays outside the label. Relative names (src/a.js), fractions
+// and web addresses are left as they are.
 const { redact } = require('../core/redact')
 const PATH_LABEL = '‹path›'
-const NAME = "[^\\s/\\\\'\"`，。；：、！？「」『』（）《》]+"
+const STOP = "\\s/\\\\'\"`，。；：、！？「」『』（）《》“”‘’"
+// One name: a backslash before any character but a slash keeps that character
+// in the name (`My\ File.md`). On a drive the backslash parts names instead.
+const NAME = `(?:[^${STOP}]|\\\\[^\\n/])+`
+const DRIVE_NAME = `[^${STOP}]+`
 // Under a home or a volume a folder name may hold single spaces when another
 // name follows it, unless it starts with a file name (a.js to src/b.js).
-const NAME_SPACED = `(?:[^\\s/\\\\'"\`.，。；：、！？「」『』（）《》]+(?: ${NAME})+(?=/)|${NAME})`
+const NAME_SPACED = `(?:[^${STOP}.]+(?: ${NAME})+(?=/)|${NAME})`
+// A bare last name runs on over up to five words when the last of them is a
+// file name (Private Design.md, Q4.2026 Budget.pdf), across one space or more;
+// words never take sentence marks, so `notes, then a.md` stops at the comma.
+// A first word that is itself a file name runs on too (a.md and b.md goes
+// whole): masking a word too many is the safe side.
+const WORD = `[^${STOP},;:!?()\\[\\]]+`
+const SPACED_FILE = `(?<=[/\\\\][^${STOP},;:!?()\\[\\]]+)(?: +${WORD}){0,4}? +${WORD}\\.[A-Za-z][A-Za-z0-9]{0,7}` +
+  `(?=[,.;:!?)\\]]*(?:[${STOP}]|$))`
 const PATH_IN_TITLE = new RegExp("(?<![\\w.~/\\\\-])(?:file://)?(?:" +
   `/(?:Users|home|Volumes)(?:/${NAME_SPACED})+` +
   `|/${NAME}(?:/${NAME})+` +
   `|~[\\w.-]*(?:/${NAME_SPACED})+` +
-  `|[A-Za-z]:[\\\\/]${NAME}(?:(?: ${NAME})*[\\\\/]${NAME})*)`, 'g')
+  `|[A-Za-z]:[\\\\/]${DRIVE_NAME}(?:(?: ${DRIVE_NAME})*[\\\\/]${DRIVE_NAME})*)(?:${SPACED_FILE})?`, 'g')
+// Quoted: what opens like a path (two names deep, under a home, on a drive)
+// is a path up to the closing quote, spaces and all. A quote right after a
+// letter is an apostrophe (Bob's), not an opening.
+const QUOTED_PATHS = ['""', "''", '``', '「」', '『』', '“”', '‘’'].map(([open, close]) => new RegExp(
+  `(?<!\\w)${open}(?=(?:file://)?(?:/[^/\\n${close}]+/|~[\\w.-]*/|[A-Za-z]:[\\\\/]))[^\\n${close}]{1,512}${close}`, 'g'))
 const TRAILING_MARKS = /[,.;:!?)\]]+$/
-const titleOf = (value) => (typeof value === 'string'
-  ? redact(value).replace(PATH_IN_TITLE, found => PATH_LABEL + (found.match(TRAILING_MARKS)?.[0] || ''))
-  : null)
+const maskPaths = (text) => QUOTED_PATHS
+  .reduce((out, quoted) => out.replace(quoted, found => found[0] + PATH_LABEL + found[found.length - 1]), text)
+  .replace(PATH_IN_TITLE, found => PATH_LABEL + (found.match(TRAILING_MARKS)?.[0] || ''))
+// The core keeps a few dozen characters of a title, so only its start is
+// read: the quoted-path rules above look ahead to a closing mark, and a long
+// title full of unclosed quotes would otherwise take seconds.
+const TITLE_READ = 2048
+const titleOf = (value) => (typeof value === 'string' ? maskPaths(redact(value.slice(0, TITLE_READ))) : null)
 
 // What one line of the executor's output says about subagents, as the event
 // the core takes, or null when the line says nothing about them. Only the

@@ -10,13 +10,13 @@ const { redact } = require('./redact')
 const { fmtStamp, normalizeTz } = require('./time')
 const { settleUsage, manifestPolicy, manifestHeader, manifestContext, manifestFeatures, manifestSkills,
   followupEnabled, systemAppendix, turnPrompt, engineTerminalStep, engineQueueStep,
-  idleCompactPlan, idleCompactSettle, idleCompactHold, compactEvent, classifyError, scheduleStep, unfinishedStep, briefStep, agentsView, quotaNotice, failureNotice, terminalClosure } = require('../agent/privatecore')
+  idleCompactPlan, idleCompactSettle, idleCompactHold, compactEvent, classifyError, scheduleStep, unfinishedStep, briefStep, agentsView, quotaNotice, failureNotice, queueNotice, terminalClosure } = require('../agent/privatecore')
 const { taskId } = require('./enginecheckpoint')
 const { prepareCardTerminalPath } = require('./c2cardterminalpath')
 const { terminalReplyText, terminalNoticeText, TERMINAL_NOTICES } = require('./c2terminaleffectbridge')
 const { createC2TurnProjection } = require('./c2turnprojection')
 const { prepareC2RunnerInput, prepareC2CompactionInput } = require('./c2runnerinput')
-const { runsOnSignIn } = require('../agent/runner')
+const { runsOnSignIn, runsOnServiceKey } = require('../agent/runner')
 const { continueC2Successor } = require('./c2successorbridge')
 const { rejectC2Input } = require('./c2inputrejection')
 const progress = require('./turnprogress')
@@ -185,6 +185,10 @@ const T = {
   queued: ({ ahead = 0, joins = 0 } = {}) => ahead > 0
     ? `◐ 已排队 — 前面还有 ${ahead} 件在排队，轮到后${joins > 0 ? `与同一线程的前 ${joins} 条一并处理` : '单独处理'}`
     : joins > 0 ? `◐ 已排队 — 当前任务结束后与前面 ${joins} 条一并处理` : '◐ 已排队 — 当前任务结束后处理',
+  // A queued message the running task may still take as a follow-up (the
+  // core says so): it is not promised a later turn; the card tells once the
+  // task has taken it.
+  queuedMayJoin: '◐ 已收到 — 会并入当前任务，或在它结束后处理',
   queueFull: '排队的任务已满，这条消息没有处理，请等当前任务结束后重发。',
   busyUnavailable: '当前任务正在收尾，这条消息没有处理，请稍后重发。',
   // The Stop of one round (Slack's button under "Working…"): that round only.
@@ -324,6 +328,8 @@ const T = {
   // quotaFailure above stays the canonical text the terminal path settles.
   quotaNotice: kind => (kind === 'claude-subscription'
     ? 'Claude Code 订阅额度已用完，本次任务未完成。若已执行过工具，请先核对实际结果；额度恢复后重新发送，或用 /model 换一个模型。本次请求不会自动重试。'
+    : kind === 'service-key'
+      ? 'SintBot 服务环境里的 ANTHROPIC_API_KEY 额度已用完，本次任务未完成。若已执行过工具，请先核对实际结果；补充额度后重新发送，或去掉服务环境里的这个 Key（这张卡随后改用本机的 Claude Code 登录），或用 /model 换一个模型。本次请求不会自动重试。'
     : kind === 'key'
       ? '当前模型的额度已用完，本次任务未完成。若已执行过工具，请先核对实际结果；补充额度后重新发送，或用 /model 换一个模型。本次请求不会自动重试。'
       : T.quotaFailure),
@@ -333,6 +339,8 @@ const T = {
     ? 'Codex 登录已失效或账号暂时不可用，本次任务未完成。请管理员在控制台重新登录 Codex 后再发送。若已执行过工具，请先核对实际结果。本次请求不会自动重试。'
     : kind === 'claude-sign-in'
       ? 'Claude Code 登录已失效或账号暂时不可用，本次任务未完成。请管理员在控制台重新登录 Claude Code 后再发送。若已执行过工具，请先核对实际结果。本次请求不会自动重试。'
+      : kind === 'service-key'
+        ? 'SintBot 服务环境里的 ANTHROPIC_API_KEY 无效、已过期或账号不可用，本次任务未完成。请管理员检查或去掉服务环境里的这个 Key（这张卡随后改用本机的 Claude Code 登录），或用 /model 换一个模型。若已执行过工具，请先核对实际结果。本次请求不会自动重试。'
       : kind === 'key'
         ? '当前模型的 Key 无效、已过期或账号不可用，本次任务未完成。请管理员在控制台检查这张模型卡的 Key 后再发送，或用 /model 换一个模型。若已执行过工具，请先核对实际结果。本次请求不会自动重试。'
         : TERMINAL_NOTICES.zh.failure),
@@ -341,7 +349,9 @@ const T = {
     ? 'Codex 登录已失效或账号暂时不可用，这条消息没有处理。请管理员在控制台重新登录 Codex 后再发送。'
     : kind === 'claude-sign-in'
       ? 'Claude Code 登录已失效或账号暂时不可用，这条消息没有处理。请管理员在控制台重新登录 Claude Code 后再发送。'
-      : '当前模型的 Key 无效、已过期或账号不可用，这条消息没有处理。请管理员在控制台检查这张模型卡的 Key 后再发送，或用 /model 换一个模型。'),
+      : kind === 'service-key'
+        ? 'SintBot 服务环境里的 ANTHROPIC_API_KEY 无效、已过期或账号不可用，这条消息没有处理。请管理员检查或去掉服务环境里的这个 Key（这张卡随后改用本机的 Claude Code 登录），或用 /model 换一个模型。'
+        : '当前模型的 Key 无效、已过期或账号不可用，这条消息没有处理。请管理员在控制台检查这张模型卡的 Key 后再发送，或用 /model 换一个模型。'),
   cardFooter: ({ ms, tokens }) => {
     const parts = [`耗时 ${cardDuration(ms)}`]
     const tokenLabel = n => n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n)
@@ -351,7 +361,7 @@ const T = {
     return parts.join(' · ')
   },
   // Under a reply card: whose follow-ups joined the task it answers.
-  cardJoined: names => `\n\n↪ 已加入 ${names.join('、')} 的补充`,
+  cardJoined: names => `\n\n↳ 已加入 ${names.join('、')} 的补充`,
 }
 // The English table. Commands are written plainly (never in backticks or
 // quotes) so a platform with another command prefix can rewrite them, and
@@ -362,6 +372,7 @@ const T_EN = {
   queued: ({ ahead = 0, joins = 0 } = {}) => ahead > 0
     ? `◐ Queued — ${ahead} ${plural(ahead, 'task is', 'tasks are')} ahead; then it runs ${joins > 0 ? `together with the ${joins} earlier ${plural(joins, 'message', 'messages')} in the same thread` : 'on its own'}`
     : joins > 0 ? `◐ Queued — runs after the current task, together with the ${joins} earlier ${plural(joins, 'message', 'messages')}` : '◐ Queued — runs after the current task',
+  queuedMayJoin: '◐ Received — joins the current task, or runs after it',
   queueFull: 'The queue is full, so this message was not handled. Please resend it after the current task finishes.',
   busyUnavailable: 'The current task is wrapping up, so this message was not handled. Please resend it in a moment.',
   roundEnded: 'This round has already ended; there is nothing to stop.',
@@ -470,6 +481,8 @@ const T_EN = {
   quotaFailure: 'The Codex subscription quota is used up, so this task was not completed. If any tools had already run, check what actually happened first; send it again once the quota is back, or switch models with /model. This request is not retried automatically.',
   quotaNotice: kind => (kind === 'claude-subscription'
     ? 'The Claude Code subscription quota is used up, so this task was not completed. If any tools had already run, check what actually happened first; send it again once the quota is back, or switch models with /model. This request is not retried automatically.'
+    : kind === 'service-key'
+      ? "The ANTHROPIC_API_KEY in the SintBot service's environment has run out of quota, so this task was not completed. If any tools had already run, check what actually happened first; send it again once it has been topped up, remove that key from the service's environment (the card then uses this Mac's Claude Code sign-in), or switch models with /model. This request is not retried automatically."
     : kind === 'key'
       ? "This model's quota is used up, so this task was not completed. If any tools had already run, check what actually happened first; send it again once the quota has been topped up, or switch models with /model. This request is not retried automatically."
       : T_EN.quotaFailure),
@@ -477,6 +490,8 @@ const T_EN = {
     ? 'The Codex sign-in has expired or the account is unavailable, so this task was not completed. Ask an admin to sign in to Codex again in the console, then send it again. If any tools had already run, check what actually happened first. This request is not retried automatically.'
     : kind === 'claude-sign-in'
       ? 'The Claude Code sign-in has expired or the account is unavailable, so this task was not completed. Ask an admin to sign in to Claude Code again in the console, then send it again. If any tools had already run, check what actually happened first. This request is not retried automatically.'
+      : kind === 'service-key'
+        ? "The ANTHROPIC_API_KEY in the SintBot service's environment is invalid, expired or its account is unavailable, so this task was not completed. Ask an admin to check that key or remove it from the service's environment (the card then uses this Mac's Claude Code sign-in), or switch models with /model. If any tools had already run, check what actually happened first. This request is not retried automatically."
       : kind === 'key'
         ? "The current model's key is invalid, expired or its account is unavailable, so this task was not completed. Ask an admin to check this model card's key in the console, then send it again, or switch models with /model. If any tools had already run, check what actually happened first. This request is not retried automatically."
         : TERMINAL_NOTICES.en.failure),
@@ -484,7 +499,9 @@ const T_EN = {
     ? 'The Codex sign-in has expired or the account is unavailable, so this message was not handled. Ask an admin to sign in to Codex again in the console, then send it again.'
     : kind === 'claude-sign-in'
       ? 'The Claude Code sign-in has expired or the account is unavailable, so this message was not handled. Ask an admin to sign in to Claude Code again in the console, then send it again.'
-      : "The current model's key is invalid, expired or its account is unavailable, so this message was not handled. Ask an admin to check this model card's key in the console, then send it again, or switch models with /model."),
+      : kind === 'service-key'
+        ? "The ANTHROPIC_API_KEY in the SintBot service's environment is invalid, expired or its account is unavailable, so this message was not handled. Ask an admin to check that key or remove it from the service's environment (the card then uses this Mac's Claude Code sign-in), or switch models with /model."
+        : "The current model's key is invalid, expired or its account is unavailable, so this message was not handled. Ask an admin to check this model card's key in the console, then send it again, or switch models with /model."),
   cardFooter: ({ ms, tokens }) => {
     const parts = [`Took ${cardDuration(ms, 'en')}`]
     const tokenLabel = n => n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n)
@@ -493,7 +510,7 @@ const T_EN = {
     }
     return parts.join(' · ')
   },
-  cardJoined: names => `\n\n↪ Follow-ups from ${names.join(', ')} were added`,
+  cardJoined: names => `\n\n↳ Follow-ups from ${names.join(', ')} were added`,
 }
 // A sentence that exists in one language only would be said in the wrong one,
 // or not at all: both tables must have the same entries of the same kind.
@@ -911,14 +928,16 @@ _failureNoticeText(chatId, text, failed, account = false) {
     if (account && text === TERMINAL_NOTICES.zh.failure) return this._accountNoticeText(chatId)
     return this._chatLang(chatId) === 'en' ? terminalNoticeText(text, 'en') : text
   }
-// What a model card's turns run on, for the notices below: Codex or not, and
-// a subscription (the machine's own sign-in) or a key. Judged by what the
-// runner really uses (agent/runner.js): a Codex card always runs on the Codex
-// sign-in, whatever endpoint or key it names; a Claude Code card runs on a key
-// when its child gets one, the service's own ANTHROPIC_API_KEY included.
-// Without a card given, the conversation's current one.
+// What a model card's turns run on, for the notices below: Codex or not, a
+// subscription (the machine's own sign-in) or a key, and whether that key is
+// the service's own. Judged by what the runner really uses (agent/runner.js):
+// a Codex card always runs on the Codex sign-in, whatever endpoint or key it
+// names; a Claude Code card runs on a key when its child gets one, and a card
+// without one of its own runs on the service's ANTHROPIC_API_KEY when the
+// service has it. Without a card given, the conversation's current one.
 _noticeFacts(chatId, provider = this._resolveProvider(chatId, this._resolveGroup(chatId) || {}).provider) {
-    return { codex: provider?.runner === 'codex', subscription: runsOnSignIn(provider) }
+    return { codex: provider?.runner === 'codex', subscription: runsOnSignIn(provider),
+      serviceKey: runsOnServiceKey(provider) }
   }
 // The used-up-quota notice names what ran out for this conversation: its
 // executor's subscription, or the model card's own quota when the card has an
@@ -945,12 +964,12 @@ _accountNoticeText(chatId, said = this._texts(chatId)) {
   }
 // The same choice for a start refused for the account before the executor
 // began, from the card that turn ran on: sign in to Codex or Claude Code
-// again, or check the card's key. Without an answer it keeps the notice the
-// core gave.
+// again, check the card's key, or the service's own key when the card has
+// none. Without an answer it keeps the notice the core gave.
 _preStartAccountNotice(chatId, provider, fallback) {
     try {
       const kind = failureNotice({ account: true, ...this._noticeFacts(chatId, provider) }).kind
-      return ['codex-sign-in', 'claude-sign-in', 'key'].includes(kind)
+      return ['codex-sign-in', 'claude-sign-in', 'key', 'service-key'].includes(kind)
         ? this._texts(chatId).preStartAccountNotice(kind) : fallback
     } catch (error) {
       try { this.log(`account notice wording not chosen: ${error?.message || error}`) } catch {}
@@ -1557,6 +1576,8 @@ async _runDurableV2Message(msg, platform, arrival) {
     // Codex) without waiting again. Recalled while it waited: it has no
     // receipt, so it is only dropped.
     if (arrival.leave()) {
+      const noted = this.durableV2Recalls?.get(`${msg.chatId}\n${msg.msgId}`)
+      if (noted) noted.dropped = true
       this.log(`group ${msg.chatId}: message recalled before admission`)
       return { ignored: true, reason: 'recalled-before-admission' }
     }
@@ -1809,11 +1830,12 @@ async _queueDurableV2Notice(rt, msg, platform, receiptId) {
     catch (error) { authority.close(); throw error }
     const notice = authority.prepareQueueNotice({ receiptId,
       chatId: msg.chatId, payloadHandles: this.durableV2Payloads })
+    const text = this._queueNoticeText(rt, msg, notice)
     const noticePromise = authority.executeQueueNotice({
       effectId: notice.effectId, receiptId, chatId: msg.chatId,
       payloadHandles: this.durableV2Payloads,
       assertWriterLock: this.durableV2AssertWriterLock,
-      perform: ({ target }) => platform.replyOnce(target, this._texts(msg.chatId).queued(notice), ENGINE_NOTICE),
+      perform: ({ target }) => platform.replyOnce(target, text, ENGINE_NOTICE),
       confirm: response => response?.code === 0 &&
         /^om_[A-Za-z0-9_-]{1,124}$/.test(response?.data?.message_id || ''),
     })
@@ -1822,6 +1844,29 @@ async _queueDurableV2Notice(rt, msg, platform, receiptId) {
       if (rt.v2QueueNoticePromise === noticePromise) rt.v2QueueNoticePromise = null
     }
     return { receiptId, queued: true, staged: true, ingressClosed: !!authority.blocked }
+  }
+
+// The words of a queued message's notice. Whether the running task may still
+// take it as a follow-up, so that it is not promised a later turn, is the
+// binary core's answer (ABI 52). The host passes whether that task still
+// reads this chat's queue for follow-ups (they are open for it, it is not
+// wrapping up, and its runner has not taken follow-ups yet or is still taking
+// the ones queued before), and the threads. Without an answer it keeps the
+// notice of the message's place in the queue.
+_queueNoticeText(rt, msg, notice) {
+    const said = this._texts(msg.chatId)
+    try {
+      const handover = !!(rt.v2FollowupEnabled && rt.v2NormalRouteActive && rt.v2Controller &&
+        !rt.v2Controller.signal.aborted && !rt.v2RunnerStopVerified && !rt.v2TerminalStarted &&
+        !rt.v2StreamQuiescing && !rt.v2SteerClosing &&
+        (!rt.v2SteerControl || rt.v2SteerDrainAhead?.() === true))
+      const { kind } = queueNotice({ handover, scheduled: isScheduledMessage(msg),
+        ...this._durableV2ThreadFacts(rt, msg) })
+      return kind === 'may-join' ? said.queuedMayJoin : said.queued(notice)
+    } catch (error) {
+      try { this.log(`queue notice wording not chosen: ${error?.message || error}`) } catch {}
+      return said.queued(notice)
+    }
   }
 
 // A queued message is settled for waiting when its notice is confirmed, or
@@ -2690,6 +2735,9 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
               await this._durableV2SettleCard(rt)
               if (!steerAlive()) break
               if (!rt.v2QueueReceiptIds?.includes(id)) continue
+              // Recalled while the service waits to apply it: it keeps its
+              // place until the recall cancels it, and never reaches the task.
+              if (this._durableV2RecallNoted(chatId, this.durableV2Payloads.requireQueued(id).msg?.msgId)) continue
               // The core declines another thread's message: it keeps its place.
               await this._runDurableV2Steer(rt, id)
               handing = null
@@ -4045,14 +4093,39 @@ requestDurableV2Stop(chatId) {
     }
   }
 
+  // A recall the service cannot apply yet, because an outbound effect of the
+  // group is on its way, is noted here the moment it is heard. Nothing is
+  // written: a message still on its way to a receipt is dropped before
+  // admission, and a queued follow-up is not handed to the running task,
+  // until handleRecall applies the recall once that effect has settled.
+  noteRecall({ chatId, msgId } = {}) {
+    if (typeof chatId !== 'string' || !chatId || typeof msgId !== 'string' || !msgId) return false
+    const key = `${chatId}\n${msgId}`
+    const arriving = this.durableV2Arrivals?.get(key)
+    if (arriving) for (const entry of arriving) entry.recalled = true
+    const noted = this.durableV2Recalls ||= new Map()
+    if (!noted.has(key)) noted.set(key, { dropped: false })
+    // Bounded: a recall the service gave up on is forgotten in time.
+    while (noted.size > 64) noted.delete(noted.keys().next().value)
+    return true
+  }
+
+  _durableV2RecallNoted(chatId, msgId) {
+    return typeof msgId === 'string' && !!this.durableV2Recalls?.has(`${chatId}\n${msgId}`)
+  }
+
   handleRecall({ chatId, msgId } = {}) {
     if (!chatId || !msgId) return false
     // Still on its way to a receipt (waiting for the card or for another
     // follow-up's call): it is dropped there, before admission.
     const arriving = this.durableV2Arrivals?.get(`${chatId}\n${msgId}`)
     if (arriving) for (const entry of arriving) entry.recalled = true
+    // Noted earlier and already dropped before admission: that was this recall.
+    const noted = this.durableV2Recalls?.get(`${chatId}\n${msgId}`)
+    if (noted) this.durableV2Recalls.delete(`${chatId}\n${msgId}`)
+    const dropped = !!arriving || noted?.dropped === true
     const rt = this.rts.get(chatId)
-    if (!rt || !this.durableV2NormalRoute || !rt.v2NormalRouteActive) return !!arriving
+    if (!rt || !this.durableV2NormalRoute || !rt.v2NormalRouteActive) return dropped
     const authority = this.durableV2Runtime
     const receiptId = taskId({ source: 'message', chatId, sourceId: msgId })
     if (rt.v2QueueReceiptIds?.includes(receiptId)) {
@@ -4072,7 +4145,7 @@ requestDurableV2Stop(chatId) {
       if (rt.v2Controller) { try { rt.v2Controller.abort() } catch { authority?.close() } }
       return true
     }
-    return !!arriving
+    return dropped
   }
 
 }

@@ -44,6 +44,18 @@ function runsOnSignIn(provider) {
   return !set(env.ANTHROPIC_BASE_URL) && !set(env.ANTHROPIC_AUTH_TOKEN) && !set(env.ANTHROPIC_API_KEY)
 }
 
+// Whether a Claude Code card that runs on a key runs on the service's own
+// ANTHROPIC_API_KEY: the card gives no endpoint, token or key of its own, so
+// its child keeps the one in the service's environment. A notice about a
+// refused or used-up key then names that key, not the card's.
+function runsOnServiceKey(provider) {
+  if (!provider || typeof provider !== 'object' || provider.runner === 'codex') return false
+  const env = claudeAgent.buildEnv(provider)
+  const set = value => typeof value === 'string' && !!value.trim()
+  return !set(env.ANTHROPIC_BASE_URL) && !set(env.ANTHROPIC_AUTH_TOKEN) && set(env.ANTHROPIC_API_KEY) &&
+    !set(provider.env?.ANTHROPIC_API_KEY)
+}
+
 const isClosedRunnerResult = value => [claudeAgent, codexAgent, codexApp].some(agent => agent.isClosedRunnerResult(value))
 const isClosedRunnerError = value => [claudeAgent, codexAgent, codexApp].some(agent => agent.isClosedRunnerError(value))
-module.exports = { runTurn, compactSession, probeVersion: claudeAgent.probeVersion, isClosedRunnerResult, isClosedRunnerError, runsOnSignIn }
+module.exports = { runTurn, compactSession, probeVersion: claudeAgent.probeVersion, isClosedRunnerResult, isClosedRunnerError, runsOnSignIn, runsOnServiceKey }

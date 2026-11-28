@@ -1,9 +1,9 @@
-// ABI v50 adapter for the built-in decision core. Manifest assembly still stays in JS.
+// ABI v52 adapter for the built-in decision core. Manifest assembly still stays in JS.
 const fs = require('node:fs')
 const path = require('node:path')
 const { createHash } = require('node:crypto')
 
-const EXPECTED_SHA256 = 'bd0d0854934255e18c94014d0bacb5ed742046d2dd33ff839d164e200e7564ef'
+const EXPECTED_SHA256 = '66afa81d729f0bddcb7289290d9c5998b721f74ceaaf0bbe672890ef0839683f'
 let bytes
 try {
   bytes = fs.readFileSync(path.join(__dirname, 'privatecore.wasm'))
@@ -26,7 +26,7 @@ try {
 } catch (cause) {
   throw new Error('SintBot binary core cannot start on this runtime', { cause })
 }
-if (core.abi_version() !== 50) throw new Error('SintBot binary core ABI mismatch')
+if (core.abi_version() !== 52) throw new Error('SintBot binary core ABI mismatch')
 const encoder = new TextEncoder()
 const decoder = new TextDecoder('utf-8', { fatal: true })
 
@@ -1180,7 +1180,8 @@ function agentsView(input) {
 }
 
 // ABI 45: which wording a turn that ended on a used-up quota is told with.
-const QUOTA_NOTICE_KINDS = ['codex-subscription', 'claude-subscription', 'key']
+// ABI 52 adds "service-key": the key came from the service's environment.
+const QUOTA_NOTICE_KINDS = ['codex-subscription', 'claude-subscription', 'key', 'service-key']
 function quotaNotice(input) {
   const value = coreJson('quota_notice', input, 'choose the quota notice')
   if (!isObject(value) || !QUOTA_NOTICE_KINDS.includes(value.kind)) {
@@ -1191,11 +1192,22 @@ function quotaNotice(input) {
 
 // ABI 48: which wording a turn closed as a definite failure is told with; a
 // failure the runner put down to the account names what to sign in again.
-const FAILURE_NOTICE_KINDS = ['failure', 'codex-sign-in', 'claude-sign-in', 'key']
+const FAILURE_NOTICE_KINDS = ['failure', 'codex-sign-in', 'claude-sign-in', 'key', 'service-key']
 function failureNotice(input) {
   const value = coreJson('failure_notice', input, 'choose the failure notice')
   if (!isObject(value) || !FAILURE_NOTICE_KINDS.includes(value.kind)) {
     throw new Error('SintBot binary core returned an invalid failure notice')
+  }
+  return value
+}
+
+// ABI 52: which wording a queued message's notice is told with. A message the
+// running task may still take as a follow-up is not promised a later turn.
+const QUEUE_NOTICE_KINDS = ['queued', 'may-join']
+function queueNotice(input) {
+  const value = coreJson('queue_notice', input, 'choose the queue notice')
+  if (!isObject(value) || !QUEUE_NOTICE_KINDS.includes(value.kind)) {
+    throw new Error('SintBot binary core returned an invalid queue notice')
   }
   return value
 }
@@ -1261,4 +1273,4 @@ function modelDefaults(runner) {
   return value
 }
 
-module.exports = { ...entries, terminalClosure: guarded(terminalClosure), claudeEventRole: guarded(claudeEventRole), agentsStep: guarded(agentsStep), agentsView: guarded(agentsView), quotaNotice: guarded(quotaNotice), failureNotice: guarded(failureNotice), modelDefaults: guarded(modelDefaults), claudePluginPlan: guarded(claudePluginPlan), identityView: guarded(identityView), idleCompactHold: guarded(idleCompactHold), contextView: guarded(contextView), proxyView: guarded(proxyView), scheduleStep: guarded(scheduleStep), unfinishedStep: guarded(unfinishedStep), firstUseStep: guarded(firstUseStep), briefStep: guarded(briefStep), groupsView: guarded(groupsView), usageView: guarded(usageView), machineView: guarded(machineView), resumeCheck: guarded(resumeCheck), classifyErrorCode: guarded(classifyErrorCode), engineStep, resetBinaryCore, HUMAN_BY_KIND: HUMAN, slackManifestShapeOk }
+module.exports = { ...entries, terminalClosure: guarded(terminalClosure), claudeEventRole: guarded(claudeEventRole), agentsStep: guarded(agentsStep), agentsView: guarded(agentsView), quotaNotice: guarded(quotaNotice), failureNotice: guarded(failureNotice), queueNotice: guarded(queueNotice), modelDefaults: guarded(modelDefaults), claudePluginPlan: guarded(claudePluginPlan), identityView: guarded(identityView), idleCompactHold: guarded(idleCompactHold), contextView: guarded(contextView), proxyView: guarded(proxyView), scheduleStep: guarded(scheduleStep), unfinishedStep: guarded(unfinishedStep), firstUseStep: guarded(firstUseStep), briefStep: guarded(briefStep), groupsView: guarded(groupsView), usageView: guarded(usageView), machineView: guarded(machineView), resumeCheck: guarded(resumeCheck), classifyErrorCode: guarded(classifyErrorCode), engineStep, resetBinaryCore, HUMAN_BY_KIND: HUMAN, slackManifestShapeOk }

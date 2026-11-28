@@ -1,9 +1,9 @@
-// ABI v49 adapter for the built-in decision core. Manifest assembly still stays in JS.
+// ABI v50 adapter for the built-in decision core. Manifest assembly still stays in JS.
 const fs = require('node:fs')
 const path = require('node:path')
 const { createHash } = require('node:crypto')
 
-const EXPECTED_SHA256 = '9260e7c26765a1d4e3bb82178842a2656906c381c65462786e2dc3cceb981739'
+const EXPECTED_SHA256 = 'bd0d0854934255e18c94014d0bacb5ed742046d2dd33ff839d164e200e7564ef'
 let bytes
 try {
   bytes = fs.readFileSync(path.join(__dirname, 'privatecore.wasm'))
@@ -26,7 +26,7 @@ try {
 } catch (cause) {
   throw new Error('SintBot binary core cannot start on this runtime', { cause })
 }
-if (core.abi_version() !== 49) throw new Error('SintBot binary core ABI mismatch')
+if (core.abi_version() !== 50) throw new Error('SintBot binary core ABI mismatch')
 const encoder = new TextEncoder()
 const decoder = new TextDecoder('utf-8', { fatal: true })
 

@@ -104,12 +104,35 @@ async function agentRuntime(location) {
 }
 
 const orNull = (value) => (typeof value === 'string' ? value : null)
-// A subagent's title is shown in the running reply, shortened on the way.
-// Secrets and home paths are taken out while it is still whole: a shortened
-// secret no longer looks like one.
+// A subagent's title is shown in the running reply and in /status, shortened
+// on the way. Secrets and paths are taken out while it is still whole: a
+// shortened secret no longer looks like one, and a shortened path still names
+// what lies under it.
+//
+// A path is replaced whole by one neutral label, wherever it starts: every
+// name under a home folder can be a private project, and a mounted volume
+// (/Volumes/Work/Vault) is no less private than a home. A path here is an
+// absolute one at least two names deep (a lone `/status` stays), one under a
+// home folder (~/a, ~name/a), one on a drive (C:\a, C:/a) or a file:// address.
+// Folder names under a home, a volume or a drive may hold single spaces
+// (/Volumes/My Drive/Clients); punctuation right after a path stays outside the
+// label. Relative names (src/a.js), fractions and web addresses are
+// left as they are.
 const { redact } = require('../core/redact')
-const HOME_PATH = /(?:\/Users|\/home|[A-Za-z]:\\Users)[\\/][^\s\\/'"]+/g
-const titleOf = (value) => (typeof value === 'string' ? redact(value).replace(HOME_PATH, '~') : null)
+const PATH_LABEL = '‹path›'
+const NAME = "[^\\s/\\\\'\"`，。；：、！？「」『』（）《》]+"
+// Under a home or a volume a folder name may hold single spaces when another
+// name follows it, unless it starts with a file name (a.js to src/b.js).
+const NAME_SPACED = `(?:[^\\s/\\\\'"\`.，。；：、！？「」『』（）《》]+(?: ${NAME})+(?=/)|${NAME})`
+const PATH_IN_TITLE = new RegExp("(?<![\\w.~/\\\\-])(?:file://)?(?:" +
+  `/(?:Users|home|Volumes)(?:/${NAME_SPACED})+` +
+  `|/${NAME}(?:/${NAME})+` +
+  `|~[\\w.-]*(?:/${NAME_SPACED})+` +
+  `|[A-Za-z]:[\\\\/]${NAME}(?:(?: ${NAME})*[\\\\/]${NAME})*)`, 'g')
+const TRAILING_MARKS = /[,.;:!?)\]]+$/
+const titleOf = (value) => (typeof value === 'string'
+  ? redact(value).replace(PATH_IN_TITLE, found => PATH_LABEL + (found.match(TRAILING_MARKS)?.[0] || ''))
+  : null)
 
 // What one line of the executor's output says about subagents, as the event
 // the core takes, or null when the line says nothing about them. Only the

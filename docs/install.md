@@ -6,7 +6,7 @@ You need a Mac, Node.js 22 or newer, and projects stored on that Mac. The setup 
 
 ## Desktop app
 
-On a Mac, [download SintBot for macOS](https://github.com/sintlab/sintbot-desktop/releases/latest), drag it to Applications and open it. Node.js is included. Choose a project, then connect Slack, scan with Feishu, scan with WeCom to create a bot, or start locally. Closing the window keeps the service running. Quitting SintBot stops it until you next log in or open the app. From app 0.2.0 on macOS 13 and later, SintBot opens when you log in, as a menu bar icon only; turn that off under More in its menu or in System Settings > Login Items. Remove Background Service preserves configuration and history.
+On a Mac, [download SintBot for macOS](https://github.com/sint908/sintbot-desktop/releases/latest), drag it to Applications and open it. Node.js is included. Choose a project, then connect Slack, scan with Feishu, scan with WeCom to create a bot, or start locally. Closing the window keeps the service running. Quitting SintBot stops it until you next log in or open the app. From app 0.2.0 on macOS 13 and later, SintBot opens when you log in, as a menu bar icon only; turn that off under More in its menu or in System Settings > Login Items. Remove Background Service preserves configuration and history.
 
 For Slack, follow the [Slack connection and usage guide](./platforms/slack.md). For WeCom, follow the separate [connection and usage guide](./platforms/wecom.md).
 

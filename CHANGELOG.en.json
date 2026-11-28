@@ -1,5 +1,32 @@
 [
   {
+    "version": "1.5.5",
+    "date": "2026-11-28",
+    "name": "A new look for the console; fixes for follow-ups, the usage card and account notices",
+    "items": [
+      {
+        "t": "The console has a new look",
+        "d": "The console follows SintBot's new brand guidelines: black, white and grey, with one orange kept for things in progress and things waiting for you. The header uses the new wordmark, and keys, switches, inputs and lamps share one style. Status lamps are green when all is well, red on an error and orange while something runs. Keys and the sidebar read Chinese in the Chinese interface and English in the English one. Both the light and the dark appearance have the new look."
+      },
+      {
+        "t": "A follow-up and a queued message arriving together no longer put the conversation on hold",
+        "d": "When a message was waiting on the reply card while a follow-up landed in the running task, the moment was sometimes treated as a fault and the conversation was put on hold. Now the two are handled one after the other. Follow-ups that arrive before the runner is ready keep their order; when no room is left, a later message joins the current task as before."
+      },
+      {
+        "t": "The usage card marks numbers that are out of date",
+        "d": "When the Codex usage is more than ten minutes old, or the last check did not succeed, the usage card still shows the last numbers it read but fades them; hover over them for a note that they are old. After a new sign-in the old account's numbers are no longer carried over."
+      },
+      {
+        "t": "Account and quota notices follow the credential actually used",
+        "d": "In a Codex conversation the notices always speak of the Codex sign-in: an expired sign-in asks to sign in to Codex again, and a used-up quota says the Codex subscription quota ran out, even when the model card holds a key. When a Claude Code model card's own key is refused before the task starts, the notice asks to check that card's key instead of signing in again."
+      },
+      {
+        "t": "Three small fixes",
+        "d": "A follow-up recalled while it waits behind another one is dropped instead of reaching Codex. A file path in a subagent title on the reply card is replaced by ‹path›; before, only paths in the home folder were hidden. With the reply card's timed refresh turned off, a subagent that starts while the card is still being made shows as soon as the card opens."
+      }
+    ]
+  },
+  {
     "version": "1.5.4",
     "date": "2026-11-26",
     "name": "The overview shows this Mac's disk space and memory; an expired sign-in says what to sign in again",

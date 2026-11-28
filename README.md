@@ -38,7 +38,7 @@ SintBot is free and open source, distributed under the [PolyForm Shield License 
 
 ## Quick start
 
-**1. Install.** On a Mac, [download the desktop app](https://github.com/sintlab/sintbot-desktop/releases/latest) (Apple silicon or Intel), drag it to Applications and open it. Node.js is included, and the setup page opens by itself.
+**1. Install.** On a Mac, [download the desktop app](https://github.com/sint908/sintbot-desktop/releases/latest) (Apple silicon or Intel), drag it to Applications and open it. Node.js is included, and the setup page opens by itself.
 
 Prefer the terminal? With Node.js 22 or newer:
 

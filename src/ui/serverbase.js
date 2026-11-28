@@ -508,8 +508,9 @@ function createUiServer({ configPath, identityDir = null, pluginHome = null, get
     }
     return counts
   }
-  // A Codex subscription's facts from its own probe (the last answer, which a
-  // console that confirmed the sign-in may have kept the usage of).
+  // A Codex subscription's facts from its own probe: the last limits the
+  // service gave and when they were read, and when Codex was last asked,
+  // whatever came back. Whether a share is shown as current is the core's.
   const codexLogin = (p) => p.runner === 'codex' && !p.baseUrl
   const CODEX_FRESH_MS = 10 * 60_000
   const CODEX_WAIT_MS = 8_000
@@ -519,11 +520,11 @@ function createUiServer({ configPath, identityDir = null, pluginHome = null, get
   ])
   const codexFacts = () => {
     const probe = codexstatus.peekAuthProbe('codex', CODEX_FRESH_MS)
-    const at = codexstatus.authProbeAt ? codexstatus.authProbeAt('codex') : null
-    if (probe && probe.dead) return { usage: { source: 'codex', rateLimits: null, dead: true }, at }
-    if (probe && probe.usage) return { usage: { source: 'codex', rateLimits: probe.usage }, at }
-    if (codexStatusCache && codexStatusCache.usage) return { usage: { source: 'codex', rateLimits: codexStatusCache.usage }, at: codexStatusCache.at || null }
-    return probe ? { usage: { source: 'codex', rateLimits: null }, at } : { usage: { source: 'pending' }, at: null }
+    const checkedAt = codexstatus.authProbeAt('codex')
+    if (probe && probe.dead) return { usage: { source: 'codex', rateLimits: null, dead: true, readAt: null, checkedAt }, at: checkedAt }
+    const last = codexstatus.lastUsage('codex')
+    if (last && last.usage) return { usage: { source: 'codex', rateLimits: last.usage, readAt: last.at, checkedAt }, at: last.at }
+    return probe ? { usage: { source: 'codex', rateLimits: null, readAt: null, checkedAt }, at: checkedAt } : { usage: { source: 'pending' }, at: null }
   }
   // Every configured model card in the library's order (the same `configured`
   // as the state's model list), hidden ones too, with its groups in use and its
@@ -731,7 +732,7 @@ function createUiServer({ configPath, identityDir = null, pluginHome = null, get
   // phase 2 must present the token, after readyAt, before expiresAt. Dangerous
   // operations are audited to ~/.sbot/audit.jsonl.
   const disbandPending = new Map() // chatId -> { token, readyAt, expiresAt, users, names }
-  let codexStatusCache = null // { at, login, usage } — codex 订阅登录态+额度缓存(供 /api/state 回填 + verify 60s 去抖)
+  let codexStatusCache = null // { login, usage, envWarningsByProvider } — codex 订阅登录态+额度,供 /api/state 回填卡片
   let claudeStatusCache = null // { at, login } — Claude 订阅登录态(`claude auth status --json`),同上回填
   const cxCli = codexCli || createCodexCli() // injected only by tests and previews (never install for real there)
   const clCli = claudeCli || createClaudeCli() // likewise
@@ -742,7 +743,7 @@ function createUiServer({ configPath, identityDir = null, pluginHome = null, get
     binOf: runner => runner === 'claude' ? (loadConfig(configPath).agent.bin || 'claude') : 'codex',
     env: () => { const cfg = loadConfig(configPath); applyProxyEnv(cfg); return process.env },
     onDone: runner => {
-      if (runner === 'claude') { claudeStatusCache = null; claudestatus.clearCache() } else { codexStatusCache = null; codexstatus.clearCache() }
+      if (runner === 'claude') { claudeStatusCache = null; claudestatus.clearCache() } else { codexStatusCache = null; codexstatus.clearCache(); codexstatus.clearUsage() }
       probeCache = null
       audit.append({ kind: 'runner-login', runner, ok: true, ts: Date.now() })
     } })
@@ -3323,9 +3324,12 @@ function createUiServer({ configPath, identityDir = null, pluginHome = null, get
         const envWarningsByProvider = Object.fromEntries(Object.entries(loadConfig(configPath).providers || {})
           .filter(([, x]) => x && x.runner === 'codex').map(([n, x]) => [n, envWarningsFor('codex', x)]))
         const login = { ok: true, verified: !!probe.verified, loggedIn: !!(probe.ok || (!probe.verified && file.exists && !file.expired)), dead: !!probe.dead, mode: file.mode || 'chatgpt', level: d.level, text: d.text }
-        let usage = probe.usage || null
-        if (!usage && !probe.dead && codexStatusCache && codexStatusCache.usage) usage = codexStatusCache.usage // 探不到时保住旧额度(同前端那条「同一份状态两个消费者」的教训)
-        codexStatusCache = { at: Date.now(), login, usage, envWarningsByProvider } // cached into /api/state so the card survives a page reload
+        // An ask that reaches nothing keeps the last limits the service gave
+        // (the card says the sign-in is unverified). They keep the time they
+        // were read, in codexstatus: nothing here dates them again.
+        const last = probe.dead ? null : codexstatus.lastUsage('codex')
+        const usage = probe.usage || (last && last.usage) || null
+        codexStatusCache = { login, usage, envWarningsByProvider } // cached into /api/state so the card survives a page reload
         return sendJSON(res, 200, { login, usage, envWarningsByProvider })
       }
       if (p === '/api/playground/run' && req.method === 'POST') {

@@ -156,6 +156,11 @@ function authProbe(bin = 'codex', timeoutMs = 12000) {
 // 共用一个 app-server 进程,而不是各起一个。
 const CACHE = new Map() // bin -> { at, val }
 const PENDING = new Map() // bin -> Promise<judgeAuth 结果>
+// The last limits the service gave for each bin, and when (bin -> { at, usage }).
+// Only an answer the service accepted replaces them; an ask that reaches
+// nothing or a refused sign-in leaves them and their time as they were, so
+// whoever shows them can tell how old they are.
+const USAGE = new Map()
 const TTL = 60_000
 // 写缓存的唯一入口(cachedAuthProbe / peekAuthProbe / 控制台验证接口都经这里,规则一致):
 // 服务端拒绝过令牌(dead)之后,「探不到」(未验证)**不许**把它洗掉 —— 那只说明这会儿连不上,不说明令牌好了;
@@ -167,8 +172,18 @@ function storeAuthProbe(bin, val) {
   const next = keep ? prev.val : val
   const now = Date.now()
   CACHE.set(bin, { at: now, storedAt: now, val: next })
+  if (val && val.verified && val.ok) USAGE.set(bin, { at: now, usage: val.usage || null })
   return next
 }
+// The last limits the service gave and when they were read ({ at, usage }),
+// or null before any answer it accepted. `at` equals authProbeAt when the
+// latest answer was that read.
+function lastUsage(bin = 'codex') {
+  const u = USAGE.get(bin)
+  return u ? { at: u.at, usage: u.usage } : null
+}
+// Forgets the limits read (a new sign-in: they may be another account's).
+function clearUsage() { USAGE.clear() }
 // When the cached answer was obtained (milliseconds), or null before any.
 // Forcing a new probe (clearCache) does not change it.
 function authProbeAt(bin = 'codex') {
@@ -328,4 +343,4 @@ function formatUsage(u, lang = 'zh') {
   return parts.join(' │ ') || null
 }
 
-module.exports = { authProbeAt, loginStatus, cachedLoginStatus, clearLoginCache, rateLimits, listModels, parseLoginStatus, mapRateLimits, mapModels, formatUsage, windowLabel, PRESET_MODELS, judgeAuth, authProbe, cachedAuthProbe, peekAuthProbe, clearCache, decodeAuthJson, readAuthFile, describeLogin }
+module.exports = { authProbeAt, lastUsage, clearUsage, loginStatus, cachedLoginStatus, clearLoginCache, rateLimits, listModels, parseLoginStatus, mapRateLimits, mapModels, formatUsage, windowLabel, PRESET_MODELS, judgeAuth, authProbe, cachedAuthProbe, peekAuthProbe, clearCache, decodeAuthJson, readAuthFile, describeLogin }

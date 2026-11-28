@@ -38,7 +38,7 @@ SintBot 免费开源，按 [PolyForm Shield 1.0.0 许可](./LICENSE) 分发。
 
 ## 快速开始
 
-**1. 安装。** 在 Mac 上[下载桌面 App](https://github.com/sintlab/sintbot-desktop/releases/latest)（M 芯片或 Intel 芯片），拖进「应用程序」后打开。App 自带 Node.js，打开后接入页会自己出来。
+**1. 安装。** 在 Mac 上[下载桌面 App](https://github.com/sint908/sintbot-desktop/releases/latest)（M 芯片或 Intel 芯片），拖进「应用程序」后打开。App 自带 Node.js，打开后接入页会自己出来。
 
 习惯用终端的话，需要 Node.js 22 及以上：
 

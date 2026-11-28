@@ -16,6 +16,7 @@ const { prepareCardTerminalPath } = require('./c2cardterminalpath')
 const { terminalReplyText, terminalNoticeText, TERMINAL_NOTICES } = require('./c2terminaleffectbridge')
 const { createC2TurnProjection } = require('./c2turnprojection')
 const { prepareC2RunnerInput, prepareC2CompactionInput } = require('./c2runnerinput')
+const { runsOnSignIn } = require('../agent/runner')
 const { continueC2Successor } = require('./c2successorbridge')
 const { rejectC2Input } = require('./c2inputrejection')
 const progress = require('./turnprogress')
@@ -335,6 +336,12 @@ const T = {
       : kind === 'key'
         ? '当前模型的 Key 无效、已过期或账号不可用，本次任务未完成。请管理员在控制台检查这张模型卡的 Key 后再发送，或用 /model 换一个模型。若已执行过工具，请先核对实际结果。本次请求不会自动重试。'
         : TERMINAL_NOTICES.zh.failure),
+  // The same, for a start refused before the executor began: nothing ran.
+  preStartAccountNotice: kind => (kind === 'codex-sign-in'
+    ? 'Codex 登录已失效或账号暂时不可用，这条消息没有处理。请管理员在控制台重新登录 Codex 后再发送。'
+    : kind === 'claude-sign-in'
+      ? 'Claude Code 登录已失效或账号暂时不可用，这条消息没有处理。请管理员在控制台重新登录 Claude Code 后再发送。'
+      : '当前模型的 Key 无效、已过期或账号不可用，这条消息没有处理。请管理员在控制台检查这张模型卡的 Key 后再发送，或用 /model 换一个模型。'),
   cardFooter: ({ ms, tokens }) => {
     const parts = [`耗时 ${cardDuration(ms)}`]
     const tokenLabel = n => n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n)
@@ -473,6 +480,11 @@ const T_EN = {
       : kind === 'key'
         ? "The current model's key is invalid, expired or its account is unavailable, so this task was not completed. Ask an admin to check this model card's key in the console, then send it again, or switch models with /model. If any tools had already run, check what actually happened first. This request is not retried automatically."
         : TERMINAL_NOTICES.en.failure),
+  preStartAccountNotice: kind => (kind === 'codex-sign-in'
+    ? 'The Codex sign-in has expired or the account is unavailable, so this message was not handled. Ask an admin to sign in to Codex again in the console, then send it again.'
+    : kind === 'claude-sign-in'
+      ? 'The Claude Code sign-in has expired or the account is unavailable, so this message was not handled. Ask an admin to sign in to Claude Code again in the console, then send it again.'
+      : "The current model's key is invalid, expired or its account is unavailable, so this message was not handled. Ask an admin to check this model card's key in the console, then send it again, or switch models with /model."),
   cardFooter: ({ ms, tokens }) => {
     const parts = [`Took ${cardDuration(ms, 'en')}`]
     const tokenLabel = n => n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n)
@@ -666,6 +678,8 @@ class Engine {
     this.activity = options.activity || null
     this.tz = normalizeTz(cfg.timezone)
     this.rts = new Map()
+    // Messages on their way to a receipt, by chat and message ID (see runDurableV2Message).
+    this.durableV2Arrivals = new Map()
   }
 
   // Read-only diagnostics must never change admission, delivery or settlement.
@@ -806,7 +820,7 @@ abortDurableV2FaultTurn(turn) {
 // recovery notice. An unknown verdict, a witness that cannot be recorded (a
 // merged batch, a changed authority) or a core failure leaves the start
 // unknown, as before: the runner rejects and the group is held.
-_durableV2PreStartFailure({ rt, chatId, receiptId, capability, facts }) {
+_durableV2PreStartFailure({ rt, chatId, receiptId, capability, facts, provider = null }) {
     const known = value => typeof value === 'string' && value ? value : null
     const runner = ['codex-exec', 'claude-code', 'codex-app-server'].includes(facts?.runner) ? facts.runner : null
     if (!runner) throw new Error('C2 pre-start failure names no supported runner')
@@ -818,7 +832,10 @@ _durableV2PreStartFailure({ rt, chatId, receiptId, capability, facts }) {
     const witnessed = capability.onSpawnFailed({ backend: runner, code: 'PRE_START_ERROR',
       turnStarted: false, closed: true })
     if (witnessed !== true) throw new Error('C2 runner not-started witness was not confirmed')
-    rt.v2PreStartNotice = { receiptId, notice: decision.notice, resetSession: decision.resetSession === true }
+    // Refused for the account: the notice names the credential this turn used.
+    const notice = decision.reason === 'account'
+      ? this._preStartAccountNotice(chatId, provider, decision.notice) : decision.notice
+    rt.v2PreStartNotice = { receiptId, notice, resetSession: decision.resetSession === true }
     return { notStarted: true }
   }
 
@@ -894,21 +911,14 @@ _failureNoticeText(chatId, text, failed, account = false) {
     if (account && text === TERMINAL_NOTICES.zh.failure) return this._accountNoticeText(chatId)
     return this._chatLang(chatId) === 'en' ? terminalNoticeText(text, 'en') : text
   }
-// What the conversation's current model card runs on, for the two notices
-// below: Codex or not, and a subscription (no endpoint or key of its own).
-_noticeFacts(chatId) {
-    const { provider } = this._resolveProvider(chatId, this._resolveGroup(chatId) || {})
-    const env = provider?.env || {}
-    // A Claude Code card with no endpoint or key of its own still runs on
-    // ANTHROPIC_API_KEY when the service itself was started with one (the
-    // executor's environment lets it through): that key's quota ran out
-    // then, not the subscription.
-    // A card that sets ANTHROPIC_API_KEY itself (even to nothing) replaces it.
-    const inheritedKey = provider?.runner !== 'codex' && !Object.hasOwn(env, 'ANTHROPIC_API_KEY') &&
-      typeof process.env.ANTHROPIC_API_KEY === 'string' && !!process.env.ANTHROPIC_API_KEY.trim()
-    const subscription = !!provider && !provider.baseUrl && !provider.apiKey && !inheritedKey &&
-      !['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'OPENAI_BASE_URL', 'OPENAI_API_KEY'].some(key => env[key])
-    return { codex: provider?.runner === 'codex', subscription }
+// What a model card's turns run on, for the notices below: Codex or not, and
+// a subscription (the machine's own sign-in) or a key. Judged by what the
+// runner really uses (agent/runner.js): a Codex card always runs on the Codex
+// sign-in, whatever endpoint or key it names; a Claude Code card runs on a key
+// when its child gets one, the service's own ANTHROPIC_API_KEY included.
+// Without a card given, the conversation's current one.
+_noticeFacts(chatId, provider = this._resolveProvider(chatId, this._resolveGroup(chatId) || {}).provider) {
+    return { codex: provider?.runner === 'codex', subscription: runsOnSignIn(provider) }
   }
 // The used-up-quota notice names what ran out for this conversation: its
 // executor's subscription, or the model card's own quota when the card has an
@@ -931,6 +941,20 @@ _accountNoticeText(chatId, said = this._texts(chatId)) {
     } catch (error) {
       try { this.log(`account notice wording not chosen: ${error?.message || error}`) } catch {}
       return said.accountNotice('failure')
+    }
+  }
+// The same choice for a start refused for the account before the executor
+// began, from the card that turn ran on: sign in to Codex or Claude Code
+// again, or check the card's key. Without an answer it keeps the notice the
+// core gave.
+_preStartAccountNotice(chatId, provider, fallback) {
+    try {
+      const kind = failureNotice({ account: true, ...this._noticeFacts(chatId, provider) }).kind
+      return ['codex-sign-in', 'claude-sign-in', 'key'].includes(kind)
+        ? this._texts(chatId).preStartAccountNotice(kind) : fallback
+    } catch (error) {
+      try { this.log(`account notice wording not chosen: ${error?.message || error}`) } catch {}
+      return fallback
     }
   }
 
@@ -1384,17 +1408,32 @@ async _durableV2ApplyModel(chatId, group, pw, { sender = 'unknown', said = '', s
 // frames now wait (see _durableV2CardAtRest) until this caller has reached its
 // next asynchronous step: the hold is released one turn of the event loop
 // later, after every promise continuation that follows this call.
+// The callers themselves take turns. Two of them released by the same write
+// used to go on together: one started its queue notice and the other's step
+// (a landed follow-up recorded) then met that notice on its way and faulted
+// the group. A caller now waits until the one before it has settled the card
+// and started its own next step, then finds that step's notice and waits for
+// it like any other.
 async _durableV2SettleCard(rt) {
-    while (rt.v2QueueNoticePromise) await rt.v2QueueNoticePromise
-    if (rt.v2StreamChain) await rt.v2StreamChain
-    if (!rt.v2CardBinding?.opened) return
-    let release
-    const hold = new Promise(resolve => { release = resolve })
-    const holds = rt.v2CardSettles ||= new Set()
-    holds.add(hold)
-    const free = () => { holds.delete(hold); release() }
-    try { await rt.v2CardBinding.path.flushForTerminal() } catch (error) { free(); throw error }
-    setImmediate(free)
+    const prior = rt.v2CardTurn
+    let pass
+    const turn = new Promise(resolve => { pass = resolve })
+    rt.v2CardTurn = prior ? prior.then(() => turn) : turn
+    let free = () => {}
+    try {
+      if (prior) await prior
+      while (rt.v2QueueNoticePromise) await rt.v2QueueNoticePromise
+      if (rt.v2StreamChain) await rt.v2StreamChain
+      if (rt.v2CardBinding?.opened) {
+        let release
+        const hold = new Promise(resolve => { release = resolve })
+        const holds = rt.v2CardSettles ||= new Set()
+        holds.add(hold)
+        free = () => { holds.delete(hold); release() }
+        await rt.v2CardBinding.path.flushForTerminal()
+      }
+    } catch (error) { free(); pass(); throw error }
+    setImmediate(() => { free(); pass() })
 }
 
 // A frame of the running task waits here while the card is being settled for
@@ -1407,7 +1446,39 @@ async _durableV2CardAtRest(rt) {
     }
 }
 
+// A message is followed from the moment it arrives here until it gets its
+// receipt. Before that it may wait (for the reply card, for another
+// follow-up's call to Codex) where neither the service's ingress order nor a
+// receipt knows it; a recall meanwhile marks it, and it is dropped right
+// before admission instead of reaching the running task.
 async runDurableV2Message(msg, platform) {
+    const arrival = this._durableV2Arrive(msg)
+    try { return await this._runDurableV2Message(msg, platform, arrival) }
+    finally { arrival.leave() }
+}
+
+// Only a message that can get a receipt is followed; a command never does.
+_durableV2Arrive(msg) {
+    if (typeof msg?.chatId !== 'string' || !msg.chatId || typeof msg.msgId !== 'string' || !msg.msgId ||
+        typeof msg.text !== 'string' || msg.text.trim().startsWith('/')) return { leave: () => false }
+    const key = `${msg.chatId}\n${msg.msgId}`
+    const entry = { recalled: false }
+    const arrivals = this.durableV2Arrivals ||= new Map()
+    let entries = arrivals.get(key)
+    if (!entries) arrivals.set(key, entries = new Set())
+    entries.add(entry)
+    let left = false
+    return { leave: () => {
+      if (!left) {
+        left = true
+        entries.delete(entry)
+        if (!entries.size && arrivals.get(key) === entries) arrivals.delete(key)
+      }
+      return entry.recalled
+    } }
+}
+
+async _runDurableV2Message(msg, platform, arrival) {
     if (msg?.text?.trim() === '/stop') {
       // Stop where it is said: typed as a reply in a thread it reaches that
       // thread's running task only, like the Stop button there (the core
@@ -1482,6 +1553,13 @@ async runDurableV2Message(msg, platform) {
     }
     const rt = this._rt(msg.chatId)
     if (rt.v2QueueNoticePromise) await rt.v2QueueNoticePromise
+    // From here the message gets its receipt (and a follow-up its call to
+    // Codex) without waiting again. Recalled while it waited: it has no
+    // receipt, so it is only dropped.
+    if (arrival.leave()) {
+      this.log(`group ${msg.chatId}: message recalled before admission`)
+      return { ignored: true, reason: 'recalled-before-admission' }
+    }
     const before = authority.snapshot()
     const receiptId = taskId({ source: 'message', chatId: msg.chatId,
       sourceId: msg.msgId })
@@ -1560,10 +1638,20 @@ async runDurableV2Message(msg, platform) {
         catch (error) { authority.close(); throw error }
         // A message a scheduled task posted never joins the running task: the
         // core closes follow-ups for it, so it waits its turn like any other.
-        const joinable = scheduledTurnPolicy(isScheduledMessage(msg), ready, null).followups
-        const queued = this.stageDurableV2Message(msg, platform, {
-          busy: { followups: joinable, waitable, ...this._durableV2ThreadFacts(rt, msg) },
-          accept: route => route === 'join' ? joinable : waitable })
+        // While follow-ups queued before the runner was ready are still being
+        // handed over, a new message that can wait queues behind them, so the
+        // runner gets them in the order they arrived.
+        const behindDrain = waitable && rt.v2SteerDrainAhead?.() === true
+        const stage = canJoin => {
+          const joinable = scheduledTurnPolicy(isScheduledMessage(msg), canJoin, null).followups
+          return this.stageDurableV2Message(msg, platform, {
+            busy: { followups: joinable, waitable, ...this._durableV2ThreadFacts(rt, msg) },
+            accept: route => route === 'join' ? joinable : waitable })
+        }
+        let queued = stage(ready && !behindDrain)
+        // No room left to wait behind them: it joins the task as before rather
+        // than being turned away. A refused message wrote nothing.
+        if (behindDrain && ready && queued.route === 'refuse') queued = stage(true)
         if (queued.route === 'refuse') {
           const full = queued.refusal === 'full'
           throw rejectC2Input('C2 v2 busy message refused before receipt', {
@@ -2585,17 +2673,35 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
         rt.v2SteerControl = control
         // Receipts arriving before control readiness already have a durable
         // queue notice. Pull only those still queued in this generation.
+        // Each one takes its turn at the card like a new message, so a message
+        // arriving between two of them never starts its notice under one.
+        // The queue is read afresh after each hand-over, so a message that
+        // queued behind them meanwhile is handed over in its turn too.
+        const handed = new Set()
+        let handing = null
+        // A scheduled task's message keeps its place: it is never a follow-up.
+        const nextFollowup = () => (rt.v2QueueReceiptIds || []).find(id => !handed.has(id) &&
+          scheduledTurnPolicy(isScheduledMessage(this.durableV2Payloads.requireQueued(id).msg), true, null).followups)
         const drain = async () => {
-          await this._durableV2SettleCard(rt)
-          for (const id of [...(rt.v2QueueReceiptIds || [])]) {
-            if (!steerAlive()) break
-            if (!rt.v2QueueReceiptIds?.includes(id)) continue
-            // A scheduled task's message keeps its place too: it is never a follow-up.
-            if (!scheduledTurnPolicy(isScheduledMessage(this.durableV2Payloads.requireQueued(id).msg), true, null).followups) continue
-            // The core declines another thread's message: it keeps its place.
-            await this._runDurableV2Steer(rt, id)
+          try {
+            for (let id = nextFollowup(); id; id = nextFollowup()) {
+              handed.add(id)
+              handing = id
+              await this._durableV2SettleCard(rt)
+              if (!steerAlive()) break
+              if (!rt.v2QueueReceiptIds?.includes(id)) continue
+              // The core declines another thread's message: it keeps its place.
+              await this._runDurableV2Steer(rt, id)
+              handing = null
+            }
+          } finally {
+            handing = null
+            if (rt.v2SteerDrainAhead === drainAhead) rt.v2SteerDrainAhead = null
           }
         }
+        // One is on its way or another still waits to be handed over.
+        const drainAhead = () => steerAlive() && (handing !== null || !!nextFollowup())
+        rt.v2SteerDrainAhead = drainAhead
         rt.v2SteerDrain = drain().catch(error => {
           authority.close(); controller?.abort(); throw error
         })
@@ -2685,6 +2791,9 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
       }
       let pulseLine = ''
       let statusText = null
+      // A change of the status that came due while the card was still being
+      // made: it is applied as soon as the card opens.
+      let statusPending = false
       const refreshStatus = () => { statusText = [pulseLine, ...whoLines()].filter(Boolean).join('\n') }
       const cardStatus = () => {
         if (!splitStatus) return ''
@@ -2727,6 +2836,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
             const opened = await path.open()
             rt.v2CardBinding = { path, receiptId, turnToken,
               generation, opened }
+            if (statusPending) { statusPending = false; refreshStatus() }
           }
           if (rt.v2CardBinding.opened) rt.v2CardBinding.path.update(text + joinedLine(), cardStatus())
         })
@@ -2849,7 +2959,10 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
         // One pulse frame, for the timer and for a change among the subagents.
         const pulseFrame = () => {
           const binding = rt.v2CardBinding
-          if (progressClosed() || !binding?.opened || binding.generation !== generation) return
+          if (progressClosed()) return
+          // No card yet: the status it opens with may already be out of date.
+          if (!binding) { statusPending = true; return }
+          if (!binding.opened || binding.generation !== generation) return
           cardTouchedAt = statusTouchedAt = Date.now()
           const sinceAlive = Date.now() - (rt.v2AliveAt || pulseFrom)
           const lang = this._chatLang(chatId)
@@ -3035,7 +3148,7 @@ async startDurableV2Runner({ chatId, receiptId, turnToken, effectId } = {}) {
           return ack
         },
         onSpawnFailed: value => this._durableV2SpawnWitness({ chatId, capability, value }),
-        onPreStartFailure: facts => this._durableV2PreStartFailure({ rt, chatId, receiptId, capability, facts }),
+        onPreStartFailure: facts => this._durableV2PreStartFailure({ rt, chatId, receiptId, capability, facts, provider }),
         onSteerReady, onSteerLanded,
         log: this.log })
       rt.v2Compacted = false // 「进度可能已折叠」只带一轮
@@ -3934,8 +4047,12 @@ requestDurableV2Stop(chatId) {
 
   handleRecall({ chatId, msgId } = {}) {
     if (!chatId || !msgId) return false
+    // Still on its way to a receipt (waiting for the card or for another
+    // follow-up's call): it is dropped there, before admission.
+    const arriving = this.durableV2Arrivals?.get(`${chatId}\n${msgId}`)
+    if (arriving) for (const entry of arriving) entry.recalled = true
     const rt = this.rts.get(chatId)
-    if (!rt || !this.durableV2NormalRoute || !rt.v2NormalRouteActive) return false
+    if (!rt || !this.durableV2NormalRoute || !rt.v2NormalRouteActive) return !!arriving
     const authority = this.durableV2Runtime
     const receiptId = taskId({ source: 'message', chatId, sourceId: msgId })
     if (rt.v2QueueReceiptIds?.includes(receiptId)) {
@@ -3955,7 +4072,7 @@ requestDurableV2Stop(chatId) {
       if (rt.v2Controller) { try { rt.v2Controller.abort() } catch { authority?.close() } }
       return true
     }
-    return false
+    return !!arriving
   }
 
 }

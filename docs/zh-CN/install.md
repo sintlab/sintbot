@@ -6,7 +6,7 @@
 
 ## 桌面 App
 
-Mac 可[下载 SintBot](https://github.com/sintlab/sintbot-desktop/releases/latest)，拖到「应用程序」后打开。App 自带 Node.js；选择项目后，可接入 Slack、扫码接入飞书、扫码创建企业微信机器人，或直接本机对话。关窗口后服务继续运行；退出 SintBot 会停止服务，下次登录或打开 App 时恢复。App 0.2.0 起，在 macOS 13 及以上登录 Mac 时会自动打开，只出菜单栏图标；可在菜单「更多」或「系统设置 › 登录项」里关掉。「移除后台服务」保留配置与历史。
+Mac 可[下载 SintBot](https://github.com/sint908/sintbot-desktop/releases/latest)，拖到「应用程序」后打开。App 自带 Node.js；选择项目后，可接入 Slack、扫码接入飞书、扫码创建企业微信机器人，或直接本机对话。关窗口后服务继续运行；退出 SintBot 会停止服务，下次登录或打开 App 时恢复。App 0.2.0 起，在 macOS 13 及以上登录 Mac 时会自动打开，只出菜单栏图标；可在菜单「更多」或「系统设置 › 登录项」里关掉。「移除后台服务」保留配置与历史。
 
 企业微信请查看独立的[接入与使用指南](./platforms/wecom.md)，Slack 请查看 [Slack 接入与使用指南](./platforms/slack.md)。
 

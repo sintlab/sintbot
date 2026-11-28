@@ -30,6 +30,20 @@ function compactSession(opts) {
   return claudeAgent.compactSession({ ...opts, autocompactTokens: compact > 0 ? Math.min(1_000_000, Math.max(100_000, Math.floor(compact))) : 0 })
 }
 
+// Whether a model card's turns run on the machine's own sign-in (Codex or
+// Claude Code) rather than a key, judged the way each runner builds its child.
+// Both Codex runners read no credential from the card and drop OPENAI_API_KEY,
+// so a Codex card always runs on the Codex sign-in. A Claude Code child runs
+// on a key when its environment ends up with an endpoint or a token: the
+// card's own, or the service's ANTHROPIC_API_KEY that it lets through.
+function runsOnSignIn(provider) {
+  if (!provider || typeof provider !== 'object') return false
+  if (provider.runner === 'codex') return true
+  const env = claudeAgent.buildEnv(provider)
+  const set = value => typeof value === 'string' && !!value.trim()
+  return !set(env.ANTHROPIC_BASE_URL) && !set(env.ANTHROPIC_AUTH_TOKEN) && !set(env.ANTHROPIC_API_KEY)
+}
+
 const isClosedRunnerResult = value => [claudeAgent, codexAgent, codexApp].some(agent => agent.isClosedRunnerResult(value))
 const isClosedRunnerError = value => [claudeAgent, codexAgent, codexApp].some(agent => agent.isClosedRunnerError(value))
-module.exports = { runTurn, compactSession, probeVersion: claudeAgent.probeVersion, isClosedRunnerResult, isClosedRunnerError }
+module.exports = { runTurn, compactSession, probeVersion: claudeAgent.probeVersion, isClosedRunnerResult, isClosedRunnerError, runsOnSignIn }
